@@ -3,6 +3,12 @@
 > 项目来源：https://sjcx.zjnu.edu.cn/home/notice/detail?newsId=10420&typeName=通知公告
 > 抓取时间：2026年9月17日
 
+## 🔄 版本控制约定
+
+- **远程仓库**：https://github.com/linbing-wolf/gcs-test.git（分支 `main`）
+- **规则**：每次对项目文件进行修改/新增/整理后，**必须执行 `git add -A` + `git commit` + `git push origin main`**，保持远程与本地同步
+- **环境备注**：本机 Git 已配置代理（127.0.0.1:26561）；PowerShell 中 git 的 stderr 红色提示不代表失败，以 `main -> main` 及退出码 0 为准
+
 ## 📁 目录结构
 
 ```
