@@ -1,0 +1,29 @@
+# Windows 系统文件
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 临时文件
+*.tmp
+*.bak
+.backup/
+
+# 百度网盘上传残留配置（非大赛材料）
+*.baiduyun.uploading.cfg
+
+# 日志
+*.log
+
+# 操作系统临时目录
+Temp/
+temp/
