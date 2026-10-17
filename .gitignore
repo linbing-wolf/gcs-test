@@ -37,6 +37,7 @@ temp/
 !/.gitattributes
 !/README.md
 !/stm32-car-test/
+!/test-code/
 !/文档/
 !/附件/
 
