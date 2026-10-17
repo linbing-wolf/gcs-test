@@ -1,0 +1,31 @@
+{
+  "operation": "verify flashed vectors, software reset and startup check; no UART/motion commands",
+  "registers": {
+    "VTOR": "0x8000000",
+    "USART3_CR1": "0x202c",
+    "USART3_BRR": "0x16c",
+    "CAN_ESR": "0x0",
+    "CAN_TSR": "0x1c000003",
+    "CAN_BTR": "0x180006",
+    "clock_ms": "0x480",
+    "rx_flags": "0x0",
+    "clock_ms_later": "0x57a",
+    "CAN_ESR_later": "0x0"
+  },
+  "keyFlashVectorsMatch": true,
+  "resetSent": true,
+  "state": "State.RUNNING",
+  "canRamWords": [
+    "0x0",
+    "0x400",
+    "0xf3030004",
+    "0x6b02",
+    "0x2000000",
+    "0x0",
+    "0x400",
+    "0xf3050004",
+    "0x6b0001ab",
+    "0x6b00",
+    "0x1"
+  ]
+}

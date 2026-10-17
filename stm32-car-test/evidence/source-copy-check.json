@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "compiledUnits": 65,
+  "sourceHashes": {
+    "src/main_table_nav.c": "0e5b870cc15857ce6865e00ba3e6cf99aa835d5353dfa4021b585cc094211410",
+    "src/motion.c": "e2bc6bbe591552686164ef30bf2a6b581b7d9a32488e703fbaa84ff7e2dee21a",
+    "src/motion.h": "ae796a30dfd989789fe86d85a99ba71a3d577d4b1f4396fde5b662ea9d318820",
+    "src/navigation.c": "486ea55234c7f4c06cde124d88a648c55cf75ab496de9e767068770dff42dbed",
+    "src/navigation.h": "8ceca96da3782188a4a86bc013982ea429b6f126567da78045721a89f255f609",
+    "src/road_map.c": "3f250812af62541d29c5725bf8d1d8f4e05fac7323282f862146e77f5c1d464f",
+    "src/road_map.h": "bcdbad7089a77b1742b7e1884a46d8b3e90c735172fccd3c526f957f10dc755b",
+    "src/structure.h": "31dd9201d104589221d757b79c371bc8836cdb1364b07018e6f1a4d5abe55fb2"
+  },
+  "scope": "source copy and project dependency remapping; not a new board test"
+}

@@ -1,0 +1,17 @@
+{
+  "tests": [
+    {
+      "compilerExit": 1,
+      "compileRejected": true,
+      "packageRejected": true,
+      "parameter": "CAR_MAP_TOP_INSET_MM"
+    },
+    {
+      "compilerExit": 1,
+      "compileRejected": true,
+      "packageRejected": true,
+      "parameter": "CAR_MAP_BOTTOM_INSET_MM"
+    }
+  ],
+  "passed": true
+}

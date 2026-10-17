@@ -30,3 +30,35 @@ temp/
 
 # 参考开源仓库（第三方代码，仅本地参考，不推送到 gcs-test）
 参考开源/
+
+# 当前目录还有其他本地项目；本轮仅纳入程序和原有资料。
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/stm32-car-test/
+!/文档/
+!/附件/
+
+# 本地凭据不入库（只按文件名忽略）。
+.env
+.env.*
+auth.json
+*.pem
+*.key
+
+# 本地运行产物与 IDE 界面状态。
+*.exe
+__pycache__/
+*.pyc
+/stm32-car-test/keil/*.uvguix.*
+/stm32-car-test/keil/OBJ/*
+!/stm32-car-test/keil/OBJ/table_navigation.axf
+!/stm32-car-test/keil/OBJ/table_navigation.hex
+!/stm32-car-test/keil/OBJ/table_navigation.map
+/stm32-car-test/evidence/native-*/
+/stm32-car-test/evidence/heading-native-*/
+/stm32-car-test/evidence/map-native-*/
+
+# 清单中的历史验证日志随程序交接；临时运行目录仍按上方规则忽略。
+!/stm32-car-test/evidence/**/*.log

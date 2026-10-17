@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "exitCode": 0,
+  "scope": "host command/state/motor submission checks; not board runtime",
+  "sourceSha256": "13bfa2b7ecd14f26b14e2965d4eed03c40ae3ed0e884de9791116732a1e284da",
+  "output": [
+    "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+    "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+    "PASS entry: 46223 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks"
+  ]
+}

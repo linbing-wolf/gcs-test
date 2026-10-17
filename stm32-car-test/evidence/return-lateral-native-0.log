@@ -1,0 +1,20 @@
+PASS route A: 18 forward segments, 16 turns, 14480 mm, return heading +Y (simulated)
+PASS route C: 18 forward segments, 16 turns, 14480 mm, return heading +Y (simulated)
+PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, test mode and stop priority; no motion triggered
+PASS XM1601: exact CRLF/continuous packets, fragmented ACK, no premature READY, QR line assembly, burst results, UART/queue/line overflow recovery, invalid ACK timeout, explicit baud/reinit, timer wrap and stop priority; no motion or Flash writes
+PASS entry: 59249 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks
+PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity
+PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap
+PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses
+Lateral plant observation (simulation only): max lateral coordinate error 1.9mm; unobserved forward/back displacement 100.4mm under persistent yaw disturbance and retained translation feedforward
+Start 60mm plant observation (simulation only): lateral error 0.2mm, forward/back displacement 0.2mm
+PASS lateral closed loop: 30 left/right-distance-speed cases; live yaw disturbance recovery; 60RPM cap, encoder X scale, terminal overshoot correction, four-wheel stop, stale IMU/telemetry/ACK, frozen encoder, CAN/stop priority, timer wrap; physical accuracy unverified
+PASS continuous route A: 14480mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 41.1mm (simulated)
+PASS continuous route C: 14480mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 44.3mm (simulated)
+PASS right-gripper gating: F west / D east / H south; reverse-approach disturbance recovery; no job advance on moving wheel-4, invalid IMU or stop during station alignment
+PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed
+PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation
+PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward travel, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs
+PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A right / C left 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8
+PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history
+PASS heading/feedback: 1189771 assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions

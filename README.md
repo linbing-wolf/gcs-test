@@ -1,3 +1,17 @@
+# 工创小车项目
+
+当前程序整理日期：2026-10-17。
+
+- **队友从这里开始：[交接说明](stm32-car-test/docs/队友交接.md)**，包含接线、编译、发车和待验收项。
+- [程序 README](stm32-car-test/README.md)：唯一工程 `stm32-car-test/keil/TableNavigation.uvprojx`。
+- [Git 协作](stm32-car-test/docs/Git协作.md)：克隆、分支、提交与同步。
+- `stm32-car-test/src/` 为当前应用，`lookup/` 为离线查表，`vendor/` 为随包驱动。
+- `文档/`、`附件/` 为原仓库资料，保留原有历史；下方原备赛说明保留作参考。
+
+当前程序含 IMU 连续转向/直行/横移闭环和 A/C 固定路线。工位夹取动作尚未执行，扫码结果仅打印，不驱动任务编排。本次整理未修改运动逻辑；仿真与历史编译结果不代表当前车辆已验收。
+
+---
+
 # 🏆 第十三届中国大学生工程实践与创新能力大赛（浙师大校赛）备赛资料包
 
 > 项目来源：https://sjcx.zjnu.edu.cn/home/notice/detail?newsId=10420&typeName=通知公告
@@ -6,11 +20,11 @@
 
 ---
 
-## 🔄 版本控制约定
+## 版本控制与当前程序
 
-- **远程仓库**：https://github.com/linbing-wolf/gcs-test.git（分支 `main`）
-- **规则**：每次对项目文件进行修改/新增/整理后，**必须执行 `git add -A` + `git commit` + `git push origin main`**，保持远程与本地同步
-- **环境备注**：本机 Git 已配置代理（127.0.0.1:26561）；PowerShell 中 git 的 stderr 红色提示不代表失败，以 `main -> main` 及退出码 0 为准
+当前小车程序已纳入本仓库，日常开发入口为 `stm32-car-test/`。修改先检查差异、验证，再按具体文件提交；团队使用分支协作。操作见 [Git 协作](stm32-car-test/docs/Git协作.md)。
+
+以下为 2026-09-17 的备赛资料，涉及的硬件、时间和方案属于历史调研，当前程序以顶部交接说明及源码为准。
 
 ---
 

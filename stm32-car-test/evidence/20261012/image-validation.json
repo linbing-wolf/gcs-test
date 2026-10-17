@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "axfLoadBytesCompared": 424252,
+  "hexDataBytes": 424252,
+  "hexSegments": [
+    [
+      134217728,
+      134641980
+    ]
+  ],
+  "vectors": {
+    "SP": "0x20000bd8",
+    "Reset": "0x8000269",
+    "CAN1_RX0": "0x8002f0d",
+    "USART3": "0x8006f0b",
+    "TIM5": "0x8007029"
+  },
+  "hashes": {
+    "table_navigation.axf": "875e50a6c41ff812a7d5026196a0c1cbb932a760d02841c7c92fc609112b1468",
+    "table_navigation.hex": "aab953102572eeb069c59196181fc377e040445101fefd1d2c790fd3a545fcdd",
+    "table_navigation.map": "9fb0635ec9b52f71f2f6548d7903da663f155a15281020574b13dafbe7f1c9af"
+  }
+}
