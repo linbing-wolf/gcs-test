@@ -1,0 +1,81 @@
+{
+  "scope": "same probe and simulated plant, before source snapshot versus final current source; not real vehicle time",
+  "imuPeriodMs": {
+    "A": 100,
+    "C": 50
+  },
+  "before": {
+    "A": {
+      "movingCount": 18,
+      "movingAvgMs": 59.0,
+      "movingMaxMs": 64,
+      "reuses": 0,
+      "totalSimMs": 151800,
+      "baselineCount": 18,
+      "baselineAvgMs": 59.0,
+      "sameHeadingAlignments": 7
+    },
+    "C": {
+      "movingCount": 18,
+      "movingAvgMs": 59.3,
+      "movingMaxMs": 64,
+      "reuses": 0,
+      "totalSimMs": 152200,
+      "baselineCount": 18,
+      "baselineAvgMs": 59.3,
+      "sameHeadingAlignments": 7
+    }
+  },
+  "after": {
+    "A": {
+      "movingCount": 18,
+      "movingAvgMs": 22.6,
+      "movingMaxMs": 29,
+      "reuses": 6,
+      "totalSimMs": 149670,
+      "baselineCount": 18,
+      "baselineAvgMs": 1.0,
+      "sameHeadingAlignments": 1
+    },
+    "C": {
+      "movingCount": 18,
+      "movingAvgMs": 23.4,
+      "movingMaxMs": 29,
+      "reuses": 6,
+      "totalSimMs": 149670,
+      "baselineCount": 18,
+      "baselineAvgMs": 1.0,
+      "sameHeadingAlignments": 1
+    }
+  },
+  "probeSha256": "27a7d36f183be589d2863eb12c169606b5cd6aa2d7a47a5cc5a73667ebacbcf6",
+  "beforeSourceHashes": {
+    "src/main_table_nav.c": "0af92567f5dd6c04e46d214cacf74beaa6661b3abcd6725a724da59baf8c2343",
+    "src/car_config.h": "88301e31e17b891281762179ff120249da9a42a6f239dab5e0d48f02d4dd2ff4",
+    "src/heading_control.c": "ab311be8bbe6016dff1fd61c844737001adc02025e6fdfa7f3032eedffceb94c",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
+    "tests/verify_entry.c": "6d93268b5df6d00cd2d3a1522d9e934d8f7b7e072fc62ff0cf4573b8567a6ea7",
+    "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
+    "lookup/table_data.h": "3dfa385b61cb7b84967e2b1dfad424f6a54c9100615eab64b515c0d962815547"
+  },
+  "afterSourceHashes": {
+    "src/main_table_nav.c": "f8407c75296a3789c262d3d65fd6fcf343880ed81dd7484e036641b5ade28e60",
+    "src/car_config.h": "88301e31e17b891281762179ff120249da9a42a6f239dab5e0d48f02d4dd2ff4",
+    "src/heading_control.c": "ab311be8bbe6016dff1fd61c844737001adc02025e6fdfa7f3032eedffceb94c",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
+    "tests/verify_entry.c": "6d93268b5df6d00cd2d3a1522d9e934d8f7b7e072fc62ff0cf4573b8567a6ea7",
+    "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
+    "lookup/table_data.h": "3dfa385b61cb7b84967e2b1dfad424f6a54c9100615eab64b515c0d962815547"
+  },
+  "hardwareAccessed": false
+}

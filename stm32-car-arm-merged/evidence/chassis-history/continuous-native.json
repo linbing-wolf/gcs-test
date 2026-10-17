@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "scope": "host mocks and simulated heading, not physical vehicle",
+  "imuUartVariants": [
+    0,
+    1
+  ],
+  "sourceHashes": {
+    "src/main_table_nav.c": "750a922ed6a7ab0e955bf6442857733ee528ec4aa60e8c5efeebf7ec90e37776",
+    "src/car_config.h": "1273c3431663cf823db199a4b6a9303c4f2c84b67a2e1b0457721a1b20e4a03c",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/heading_control.c": "66f1fb3e2d8004b5d674248f596ec3cda7401cf33e0c5994c4c45bb36acc4592",
+    "src/heading_control.h": "526b291029063ea1a5d1b8be8e9b67c36aba61f857fa931e5aaecbc2116be1b9",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "d87c2723dc7e0121637e28d7c5faf8f6992adcd08b541201fe7b1cf6ac4e1c12",
+    "lookup/route_table.c": "dcb8855c454a1eafce8ad9ed5077c5f414a9716bb026171aecd366733b5a26c0",
+    "tests/verify_entry.c": "7d8caaa3933152d7ea6f79ba46031ad2e572b1c356840a067c73067e31c7d129",
+    "tests/entry_host_io.h": "ddaec282ea8bce666eb7dd4581caec1652bfb03ff60ffcbd2a0ded1a9816f158",
+    "tests/verify_heading.c": "9c395a558f2586b8e52cacbba7aad36708327c0156355d8a68879885701d1c66",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "6ff83e94362015ebc6c741e27a8c04b7e5c2d34eaed191ded9287537db20a776",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923"
+  },
+  "results": [
+    {
+      "exitCode": 0,
+      "output": [
+        "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS entry: 55832 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+        "PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity",
+        "PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap",
+        "PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses",
+        "PASS continuous route A: 15040mm, 18 uninterrupted geometry segments, fresh four-wheel encoders/speed/status, 4deg disturbance, no 500mm stops (simulated)",
+        "PASS continuous route C: 15040mm, 18 uninterrupted geometry segments, fresh four-wheel encoders/speed/status, 4deg disturbance, no 500mm stops (simulated)",
+        "PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed",
+        "PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation",
+        "PASS heading/feedback: 433293 assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions"
+      ],
+      "imuUartEnabled": 0
+    },
+    {
+      "exitCode": 0,
+      "output": [
+        "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS entry: 55832 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+        "PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity",
+        "PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap",
+        "PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses",
+        "PASS continuous route A: 15040mm, 18 uninterrupted geometry segments, fresh four-wheel encoders/speed/status, 4deg disturbance, no 500mm stops (simulated)",
+        "PASS continuous route C: 15040mm, 18 uninterrupted geometry segments, fresh four-wheel encoders/speed/status, 4deg disturbance, no 500mm stops (simulated)",
+        "PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed",
+        "PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation",
+        "PASS heading/feedback: 435452 assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions"
+      ],
+      "imuUartEnabled": 1
+    }
+  ]
+}

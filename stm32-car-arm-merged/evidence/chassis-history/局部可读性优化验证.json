@@ -1,0 +1,54 @@
+{
+  "version": "rotation-local-readable-20261013",
+  "changedApplicationFiles": [
+    "src/main_table_nav.c"
+  ],
+  "sourceHashes": {
+    "src/car_config.h": "58e216cca2e7648a58e2d8b3e580722c918144c3b14425552d3e06584b2fb7a6",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/main_table_nav.c": "13bfa2b7ecd14f26b14e2965d4eed03c40ae3ed0e884de9791116732a1e284da",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "d87c2723dc7e0121637e28d7c5faf8f6992adcd08b541201fe7b1cf6ac4e1c12",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "2bfcdd5dc3ea1601487f63d2d1c3ce41c1f3524ad6ec34545a40b9ae9db3c128"
+  },
+  "existingTestsUnchanged": true,
+  "publicEntrySignaturesUnchanged": true,
+  "publicHeadersAndConfigurationUnchanged": true,
+  "serialStringLiteralsUnchanged": true,
+  "modeValuesAndStateFieldsUnchanged": true,
+  "traceComparison": {
+    "byteIdentical": true,
+    "bytes": 8903735,
+    "uartBytes": 43375,
+    "positionSubmissions": 460,
+    "stateSnapshots": 7655,
+    "sha256": "f2707aae1276870aabec317e19a716d05b6a680e773f95fa37aee9936a29dbd8",
+    "scope": "all existing host-test scenarios: UART bytes, motor/query/stop/sync calls, delays and each firmware-step state; not physical board timing"
+  },
+  "nativePassed": true,
+  "nativeOutput": [
+    "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+    "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+    "PASS entry: 46223 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks"
+  ],
+  "keilErrors": 0,
+  "keilWarnings": 30,
+  "keilExitCode": 1,
+  "warningsUnchanged": true,
+  "compilerSettingsAndCompilationUnitsUnchanged": true,
+  "axfHexComparedBytes": 431604,
+  "beforeFlashBytes": 431564,
+  "defaultFlashByteIdentical": false,
+  "binaryHashes": {
+    "table_navigation.axf": "d307e44597a461643f7f02251ecb8b4b0432eb52737fc812945d2b5f29cf8b3e",
+    "table_navigation.hex": "e5c89c7943e65961b707b388d880d4fd8e3685a61e8ae2fbdb40c815422476cb",
+    "table_navigation.map": "499aea54b3ed38a79d8a9b612fdd9eaf6f3ecfa7b80bf478a9e3eeabfbda4a7d"
+  },
+  "flashedThisRun": false,
+  "hardwareCommandsSent": false,
+  "physicalTimingVerified": false
+}

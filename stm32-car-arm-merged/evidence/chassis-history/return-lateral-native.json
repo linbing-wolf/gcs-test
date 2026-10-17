@@ -1,0 +1,89 @@
+{
+  "passed": true,
+  "scope": "host mocks and simulated heading, not physical vehicle",
+  "imuUartVariants": [
+    0,
+    1
+  ],
+  "sourceHashes": {
+    "src/main_table_nav.c": "0af92567f5dd6c04e46d214cacf74beaa6661b3abcd6725a724da59baf8c2343",
+    "src/car_config.h": "88301e31e17b891281762179ff120249da9a42a6f239dab5e0d48f02d4dd2ff4",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/heading_control.c": "ab311be8bbe6016dff1fd61c844737001adc02025e6fdfa7f3032eedffceb94c",
+    "src/heading_control.h": "9e61a485fd2d0d79a90bd8fe591dbce9c78485ad7ff6ccd849323e6c72fee0f6",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
+    "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
+    "lookup/table_data.h": "3dfa385b61cb7b84967e2b1dfad424f6a54c9100615eab64b515c0d962815547",
+    "lookup/generation.json": "ce5ad88b156b87ea9e407779d02fcf52d395f8cee5fe9d3d235c4a6bc512da68",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "tests/verify_entry.c": "6d93268b5df6d00cd2d3a1522d9e934d8f7b7e072fc62ff0cf4573b8567a6ea7",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/verify_heading.c": "c83a87c71b9d6b6eab853fa12176e4bc8b8712fb64781d0a7f019ee49d91d02c",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "db9851a0240b6d5cc3892b3dad8f31165180d7cc5e66d0a63ea49acc90393924",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923",
+    "vendor/stm32/SYSTEM/Serial.c": "4ce4e8b43dee20b4c545287f6dc61c07f85888629fab97fad61f911c1d186d4a"
+  },
+  "results": [
+    {
+      "exitCode": 0,
+      "imuUartEnabled": 0,
+      "output": [
+        "PASS route A: 18 forward segments, 16 turns, 14480 mm, return heading +Y (simulated)",
+        "PASS route C: 18 forward segments, 16 turns, 14480 mm, return heading +Y (simulated)",
+        "PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, test mode and stop priority; no motion triggered",
+        "PASS XM1601: exact CRLF/continuous packets, fragmented ACK, no premature READY, QR line assembly, burst results, UART/queue/line overflow recovery, invalid ACK timeout, explicit baud/reinit, timer wrap and stop priority; no motion or Flash writes",
+        "PASS entry: 59249 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+        "PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity",
+        "PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap",
+        "PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses",
+        "Lateral plant observation (simulation only): max lateral coordinate error 1.9mm; unobserved forward/back displacement 100.4mm under persistent yaw disturbance and retained translation feedforward",
+        "Start 60mm plant observation (simulation only): lateral error 0.2mm, forward/back displacement 0.2mm",
+        "PASS lateral closed loop: 30 left/right-distance-speed cases; live yaw disturbance recovery; 60RPM cap, encoder X scale, terminal overshoot correction, four-wheel stop, stale IMU/telemetry/ACK, frozen encoder, CAN/stop priority, timer wrap; physical accuracy unverified",
+        "PASS continuous route A: 14480mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 41.1mm (simulated)",
+        "PASS continuous route C: 14480mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 44.3mm (simulated)",
+        "PASS right-gripper gating: F west / D east / H south; reverse-approach disturbance recovery; no job advance on moving wheel-4, invalid IMU or stop during station alignment",
+        "PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed",
+        "PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation",
+        "PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward travel, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs",
+        "PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A right / C left 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8",
+        "PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history",
+        "PASS heading/feedback: 1189771 assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "imuUartEnabled": 1,
+      "output": [
+        "PASS route A: 18 forward segments, 16 turns, 14480 mm, return heading +Y (simulated)",
+        "PASS route C: 18 forward segments, 16 turns, 14480 mm, return heading +Y (simulated)",
+        "PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, test mode and stop priority; no motion triggered",
+        "PASS XM1601: exact CRLF/continuous packets, fragmented ACK, no premature READY, QR line assembly, burst results, UART/queue/line overflow recovery, invalid ACK timeout, explicit baud/reinit, timer wrap and stop priority; no motion or Flash writes",
+        "PASS entry: 59249 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+        "PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity",
+        "PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap",
+        "PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses",
+        "Lateral plant observation (simulation only): max lateral coordinate error 1.9mm; unobserved forward/back displacement 100.4mm under persistent yaw disturbance and retained translation feedforward",
+        "Start 60mm plant observation (simulation only): lateral error 0.2mm, forward/back displacement 0.2mm",
+        "PASS lateral closed loop: 30 left/right-distance-speed cases; live yaw disturbance recovery; 60RPM cap, encoder X scale, terminal overshoot correction, four-wheel stop, stale IMU/telemetry/ACK, frozen encoder, CAN/stop priority, timer wrap; physical accuracy unverified",
+        "PASS continuous route A: 14480mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 41.1mm (simulated)",
+        "PASS continuous route C: 14480mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 44.3mm (simulated)",
+        "PASS right-gripper gating: F west / D east / H south; reverse-approach disturbance recovery; no job advance on moving wheel-4, invalid IMU or stop during station alignment",
+        "PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed",
+        "PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation",
+        "PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward travel, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs",
+        "PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A right / C left 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8",
+        "PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history",
+        "PASS heading/feedback: 1192077 assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions"
+      ]
+    }
+  ]
+}

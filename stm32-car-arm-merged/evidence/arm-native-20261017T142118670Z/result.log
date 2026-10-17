@@ -1,0 +1,6 @@
+PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis
+PASS mutual exclusion: legacy/nav/full route/shift/turn blocked in arm session; chassis rejects arm acquisition while busy; ! stops both and requires explicit recovery
+PASS four-wheel interlock: missing status/speed, disabled/stalled wheel 4, moving wheel 4, bus off, queue overflow, active-session watchdog and timestamp wrap
+PASS arm failure paths: either axis missing, ACK missing, frozen/reversed encoder, stall, stop/CAN fault during submission; platform PWM holds at stop; full-stroke yaw diagnostic
+PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation
+PASS arm integration: 71567 assertions; host simulation only, no hardware accessed

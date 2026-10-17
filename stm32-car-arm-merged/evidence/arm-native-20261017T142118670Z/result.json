@@ -1,0 +1,24 @@
+{
+  "sourceHashes": {
+    "src/main_table_nav.c": "4c92d8ed8c23086546b9bcf0422c18d8c7cc4bf6e7084d68f6e3fe8e237a83e4",
+    "src/arm_control.c": "08fd1aabc8118cd7db6044b565c08f143d62708dd9f6d85992dd012949ee3a4d",
+    "src/arm_control.h": "4af57e8a2a25e6c972c43fbcab927b98f81a36c3067d62f0c64bc3871b243ec8",
+    "src/arm_config.h": "eccc79e5d3a87e35d5a53cbc2e561cb92e907dcc791b4a5b90d1959eb46e6643",
+    "tests/verify_entry.c": "2def395a120344fb46f0708b2b2b9a0b1cfeff47f72d9accb76007ddd0683fbc",
+    "tests/verify_arm_integration.c": "fcf90354f296e282a91d5ab3bc27340311ae293f22e57efb12a6e0605be800c6",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/arm_host_io.h": "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71"
+  },
+  "passed": true,
+  "exitCode": 0,
+  "scope": "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+  "sourceSha256": "4c92d8ed8c23086546b9bcf0422c18d8c7cc4bf6e7084d68f6e3fe8e237a83e4",
+  "output": [
+    "PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis",
+    "PASS mutual exclusion: legacy/nav/full route/shift/turn blocked in arm session; chassis rejects arm acquisition while busy; ! stops both and requires explicit recovery",
+    "PASS four-wheel interlock: missing status/speed, disabled/stalled wheel 4, moving wheel 4, bus off, queue overflow, active-session watchdog and timestamp wrap",
+    "PASS arm failure paths: either axis missing, ACK missing, frozen/reversed encoder, stall, stop/CAN fault during submission; platform PWM holds at stop; full-stroke yaw diagnostic",
+    "PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation",
+    "PASS arm integration: 71567 assertions; host simulation only, no hardware accessed"
+  ]
+}

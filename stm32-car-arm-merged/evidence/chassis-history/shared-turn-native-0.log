@@ -1,0 +1,7 @@
+PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)
+PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)
+PASS entry: 51720 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks
+PASS IMU route A: 15040 mm, 136 corrections, model error +8%, drift 0.8deg/chunk, wrap crossing (simulated)
+PASS IMU route C: 15040 mm, 137 corrections, model error +8%, drift 0.8deg/chunk, wrap crossing (simulated)
+PASS shared turn: left/right 90+180, arbitrary origins, wrap, overshoot reversal, sequential calls, RPM, busy/stop/stale/four-wheel checks
+PASS heading/feedback: 228008 assertions; parser/freshness/motor4/deadlines/IMU A+C/convergence/stop/drift

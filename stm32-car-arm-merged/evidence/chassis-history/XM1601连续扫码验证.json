@@ -1,0 +1,134 @@
+{
+  "version": "xm1601-continuous-20261016",
+  "date": "2026-10-16",
+  "sourceHashes": {
+    "src/main_table_nav.c": "f68fae25642ae14877064dfe1f8aec7dfc91ea65d553895983cb48cb1ae8caf1",
+    "src/car_config.h": "9c4217e02547bfb8b1d0dd0b95cdce400c094af94757d7982bef7eb1c8212323",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/heading_control.c": "66f1fb3e2d8004b5d674248f596ec3cda7401cf33e0c5994c4c45bb36acc4592",
+    "src/heading_control.h": "526b291029063ea1a5d1b8be8e9b67c36aba61f857fa931e5aaecbc2116be1b9",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "34639cfb728522f7a4d3de3d4f8bff746379c008bf7b9f41590f0f972526b62e",
+    "lookup/route_table.c": "dcb8855c454a1eafce8ad9ed5077c5f414a9716bb026171aecd366733b5a26c0",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/structure.h": "e0805cc76b164c315495f448d4b812f7a8a9f22008ce22cc6b78130e230b3906",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "tests/verify_entry.c": "c89db5035cb20e5363b185bac96cfb06d7944413b6394e978b6083caa41a6e4a",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/verify_heading.c": "df1aaf5af1f8ab4dd0b9a5569d39a9929f77069a1e26373d8e49b4d3bb297423",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "dff1a1462f6493860eda1887de23b5448d49d05193c1a48c3b657d263ab2a65d",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923",
+    "vendor/stm32/SYSTEM/Serial.c": "4ce4e8b43dee20b4c545287f6dc61c07f85888629fab97fad61f911c1d186d4a"
+  },
+  "nativeResult": "evidence/xm1601-native.json",
+  "nativePassed": true,
+  "hostAssertions": {
+    "0": 652864,
+    "1": 655157
+  },
+  "reversePolicy": {
+    "scope": "runimu A/C",
+    "requiresCompletedUndirectedRoadThisRun": true,
+    "requiresDestinationDirectlyBehind": true,
+    "partialTraversalDoesNotQualify": true,
+    "historyResetOnNewRun": true,
+    "roadHistoryHeadingCases": 576,
+    "backwardApproachHeadingRecoveryAndStationOrientationPassed": true
+  },
+  "fullRouteSimulation": {
+    "distanceMm": 15040,
+    "straightSegments": 18,
+    "turnsPerPlan": 22,
+    "reverseSegmentsPerPlan": 0,
+    "rightGripperChecksPerPlan": 6
+  },
+  "armBuild": {
+    "imuUartEnabled": true,
+    "passed": true,
+    "status": "passed_after_user_authorized_outside_sandbox_build",
+    "errors": 0,
+    "warnings": 30,
+    "warningsUnchanged": true,
+    "keilExitCode": 1,
+    "compiledUnits": 67,
+    "projectUnits": 67,
+    "buildEnvironment": "outside-sandbox local Keil build under existing user authorization",
+    "outsideSandboxBuildExplicitlyAuthorized": true,
+    "newFirmwareGenerated": true,
+    "firmwareMatchesCurrentSource": true,
+    "axfHexComparedBytes": 444360,
+    "binaryHashes": {
+      "table_navigation.axf": "c46af9fefd7eb7ff83071e1ed7ef425788930c620fa68020313bb9683d60bc90",
+      "table_navigation.hex": "ff05baffc60e94aba64fc56d18255add1ecee015528b618ac730c707b9fcfe47",
+      "table_navigation.map": "77aa70da54be59d1a7698a22f59213019217c6ea06f3bd1918609ebc1099a61f"
+    }
+  },
+  "preexistingBuildOutputDifferencesBackedUp": [
+    "keil/OBJ/table_navigation.axf",
+    "keil/OBJ/table_navigation.map"
+  ],
+  "rawStationCollision": {
+    "reportedRemainingMmAtFrontContactApprox": 200,
+    "originalEFDistanceMm": 1000,
+    "approachDistanceChanged": false,
+    "collisionFixed": false,
+    "needsPhysicalStagingDistanceAndClearance": true
+  },
+  "unchanged": [
+    "road distances and node coordinates",
+    "station right-side headings",
+    "IMU parser and control gains",
+    "four-wheel feedback conditions",
+    "legacy position modes",
+    "lookup tables",
+    "IMU and CAN drivers",
+    "project and uvoptx"
+  ],
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalCollisionOrReverseVerified": false,
+  "startButton": {
+    "port": "GPIOC",
+    "pin": 9,
+    "activeLevel": "high",
+    "pull": "down",
+    "debounceMs": 30,
+    "debugUart": "USART3 PB10 TX / PB11 RX 115200 8N1",
+    "message": "[button] START pressed\r\n",
+    "oneMessagePerPress": true,
+    "releaseDebouncedBeforeRearming": true,
+    "bootHeldSuppressed": true,
+    "nonblockingDebounce": true,
+    "startsMotion": false,
+    "physicalTested": false
+  },
+  "scanner": {
+    "model": "XM1601",
+    "uart": "USART1 PB6 TX / PB7 RX",
+    "configuredBaud": 9600,
+    "actualBaudUnconfirmed": true,
+    "mode": "continuous requested at boot",
+    "triggerPC0": "released high, open drain",
+    "PC4PC5": "not configured",
+    "requiresAckForBothSetupCommands": true,
+    "setupHex": [
+      "7E 00 08 01 00 60 21 4B F0",
+      "7E 00 08 01 00 00 D6 DF 22"
+    ],
+    "expectedAckHex": "02 00 00 01 00 33 31",
+    "resultPrefix": "[scan] ",
+    "resultEnding": "CRLF",
+    "moduleBaudOrFlashWritten": false,
+    "physicalScanVerified": false,
+    "baiduShareRead": false,
+    "baiduAccessBlockedByBrowserSafety": true,
+    "commandSource": "user supplied manual photo",
+    "pinSource": "user supplied P1 connector image"
+  }
+}

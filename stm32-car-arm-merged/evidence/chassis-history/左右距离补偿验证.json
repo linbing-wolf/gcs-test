@@ -1,0 +1,40 @@
+{
+  "version": "lateral-calibrated-20261013",
+  "sourceSha256": "1f43781f3994c3486a525bc1a260da3c3ce7eac8441b02fb67f38e6595ba08d4",
+  "measurementSource": "operator report in this conversation; 60 rpm, 1000 mm target, 950 mm lateral travel before correction",
+  "ppmXBefore": 10.5,
+  "ppmXAfter": 11.052632,
+  "ppmY": 10.36,
+  "pulses1000mm": {
+    "forward": 10360,
+    "backward": 10360,
+    "left": 11053,
+    "right": 11053
+  },
+  "defaultTestRpm": 60,
+  "defaultAcceleration": 150,
+  "nativePassed": true,
+  "nativeOutput": "PASS entry: 15400 assertions; 12 direction/speed cases; stop/range/mode/timeout/navigation checks",
+  "keilRebuildExitCode": 1,
+  "errors": 0,
+  "warnings": 30,
+  "warningsUnchanged": true,
+  "compiledUnits": 65,
+  "axfHexComparedBytes": 425808,
+  "irqVectors": {
+    "Reset_Handler": "0x8000269",
+    "USART3_IRQHandler": "0x8006f45",
+    "TIM5_IRQHandler": "0x800702f",
+    "CAN1_RX0_IRQHandler": "0x8002f0d"
+  },
+  "hashes": {
+    "table_navigation.axf": "fe7ea030a76b5d96fdb5d563bba88b444c2e0ee4f527a7eba0d07b105fdbc317",
+    "table_navigation.hex": "ccf9d8fdabce287549c7579c19622ab6758d73bd30192fb3fc1815330ed9acf2",
+    "table_navigation.map": "11b14ce20b2f26f02ceeca905a2798aaf04576a6de98594ee899fa6ca3dc88c8"
+  },
+  "lookupDriversRoadTableUnchanged": true,
+  "projectSettingsSemanticallyUnchanged": true,
+  "hardwareAccessed": false,
+  "flashedThisRun": false,
+  "correctedPhysicalDistanceVerified": false
+}

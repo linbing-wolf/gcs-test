@@ -37,6 +37,7 @@ temp/
 !/.gitattributes
 !/README.md
 !/stm32-car-test/
+!/stm32-car-arm-merged/
 !/test-code/
 !/文档/
 !/附件/
@@ -63,3 +64,12 @@ __pycache__/
 
 # 清单中的历史验证日志随程序交接；临时运行目录仍按上方规则忽略。
 !/stm32-car-test/evidence/**/*.log
+
+# 独立底盘与机械机构合并工程：保留交付固件/证据，忽略本地运行产物。
+/stm32-car-arm-merged/keil/*.uvguix.*
+/stm32-car-arm-merged/keil/OBJ/*
+!/stm32-car-arm-merged/keil/OBJ/table_navigation.axf
+!/stm32-car-arm-merged/keil/OBJ/table_navigation.hex
+!/stm32-car-arm-merged/keil/OBJ/table_navigation.map
+/stm32-car-arm-merged/evidence/**/*.o
+!/stm32-car-arm-merged/evidence/**/*.log
