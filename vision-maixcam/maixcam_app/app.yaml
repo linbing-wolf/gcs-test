@@ -1,0 +1,18 @@
+id: a1
+name: YYB-Finder
+version: 1.0.0
+author: '1'
+icon: ''
+desc: MaixCAM2 vision for STM32 (blob/ring/stack/edge)
+files:
+  - app.yaml
+  - config.py
+  - diag.py
+  - disable_comm.py
+  - main.py
+  - probe_comm.py
+  - protocol.py
+  - run.sh
+  - timing.py
+  - touch_ui.py
+  - vision.py

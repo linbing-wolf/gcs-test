@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>相机标定棋盘格 · 20mm 方格 / 9x6 内角点</title>
+<style>
+  body{margin:0;background:#eef1f7;color:#1a2233;
+       font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .tips{max-width:230mm;margin:0 auto;padding:18px 10px 6px;font-size:13px;line-height:1.7}
+  .tips h1{font-size:18px;margin:0 0 8px}
+  .tips .k{color:#b02a2a;font-weight:700}
+  .sheet{background:#fff;width:210mm;min-height:260mm;margin:10px auto 40px;
+         padding:4mm;box-sizing:border-box;box-shadow:0 2px 14px rgba(0,0,0,.15)}
+  .board{margin:0 auto;display:block}
+  .cap{text-align:center;font-size:12px;color:#555;margin-top:6mm}
+  .ruler{margin:8mm auto 0;width:100mm}
+  .ruler .bar{height:4mm;border:1px solid #000;border-top:none;position:relative;
+              display:flex;justify-content:space-between}
+  .ruler .bar span{font-size:9px;transform:translateY(4mm)}
+  @page{size:A4 portrait;margin:0}
+  @media print{
+    body{background:#fff}
+    .tips{display:none}
+    .sheet{box-shadow:none;margin:0;width:auto;min-height:auto}
+  }
+</style>
+</head>
+<body>
+
+<div class="tips">
+  <h1>相机标定棋盘格（打印用）</h1>
+  <p>规格：方格边长 <b>20mm</b>，<b>10 列 × 7 行</b> 格 → <b>9×6 内角点</b>（正好对上 <code>calib_distort.py</code> 默认参数）。</p>
+  <p><b>内角点 = 棋盘内部的交点，不含最外圈</b>；OpenCV 的 <code>patternSize</code> 要填内角点数，不是格子数。本板 9≠6 为<b>非对称</b>，姿态无 180° 二义性。</p>
+  <p class="k">① 打印时选「实际大小 / 100%」，不要选「适应页面 / 缩放」。</p>
+  <p class="k">② 打完用尺子量下面那条 100mm 校验尺，必须正好 100mm，否则重打。</p>
+  <p class="k">③ 打印后贴/压在硬平板上，纸别弯、别起泡。</p>
+</div>
+
+<div class="sheet">
+  <!-- 10x7 格，每格 20mm，共 200x140mm -->
+  <svg class="board" width="200mm" height="140mm" viewBox="0 0 200 140"
+       xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="chk" width="40" height="40" patternUnits="userSpaceOnUse">
+        <rect width="40" height="40" fill="#ffffff"/>
+        <rect width="20" height="20" fill="#000000"/>
+        <rect x="20" y="20" width="20" height="20" fill="#000000"/>
+      </pattern>
+    </defs>
+    <rect x="0" y="0" width="200" height="140" fill="url(#chk)"/>
+    <rect x="0" y="0" width="200" height="140" fill="none" stroke="#000" stroke-width="0.4"/>
+  </svg>
+
+  <div class="cap">方格 20mm · 10 × 7 格 · 内角点 9 × 6</div>
+
+  <div class="ruler">
+    <div class="bar">
+      <span>0</span><span>10</span><span>20</span><span>30</span><span>40</span>
+      <span>50</span><span>60</span><span>70</span><span>80</span><span>90</span><span>100mm</span>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

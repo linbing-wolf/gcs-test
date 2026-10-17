@@ -1,0 +1,23 @@
+id: yyb_mover
+name: YYB Mover
+name[zh]: YYB 智能搬运视觉端
+version: 3.1.0
+icon: assets/yyb_mover.png
+author: YYB Team
+desc: "MaixCAM2 vision head for the STM32 smart-transport robot: 4-color blob (+ optional YOLO11n-cls AI color judgement), disc center, stacking center; distortion-corrected coordinates; variable-length UART frame protocol (request-response, BUSY, R-interrupt)."
+desc[zh]: "MaixCAM2 视觉上位机：4 色识别（可选 YOLO11n-cls AI 判色）、圆盘中心、码垛中心；坐标去畸变 + 多帧平均；变长帧串口协议（一问一答 + BUSY + R 中断）；供 STM32 智能搬运车使用。"
+
+# 白名单模式：只打包运行所需文件（dev 用的 selftest.py 不打包）
+files:
+  - app.yaml
+  - assets
+  - main.py
+  - config.py
+  - protocol.py
+  - vision.py
+  - tasks.py
+  - timing.py
+  - touch_ui.py
+  - precision.py
+  - ai_model.py
+  - run.sh

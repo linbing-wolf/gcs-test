@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MaixCAM 视觉迁移 · 全景手册（项目脉络 + 标定流程）</title>
+<style>
+
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel2:#1c2537; --line:#2a3550;
+    --fg:#e6ecf7; --muted:#93a1bd; --accent:#4da3ff; --accent2:#38d39f;
+    --warn:#ffb454; --bad:#ff6b6b; --ok:#38d39f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    line-height:1.65;font-size:15px}
+  header{padding:44px 24px 30px;background:
+    radial-gradient(1200px 400px at 20% -10%,#1d3557 0%,transparent 60%),
+    radial-gradient(900px 300px at 90% 0%,#16324a 0%,transparent 55%),var(--bg);
+    border-bottom:1px solid var(--line)}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  h1{margin:0 0 8px;font-size:30px;letter-spacing:.5px}
+  .sub{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;padding:2px 10px;border:1px solid var(--line);
+    border-radius:999px;font-size:12px;color:var(--accent);margin-right:6px}
+  section{padding:34px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:21px;margin:0 0 18px;display:flex;align-items:center;gap:10px}
+  h2 .n{display:inline-flex;width:28px;height:28px;border-radius:8px;background:var(--accent);
+    color:#06121f;font-size:15px;font-weight:700;align-items:center;justify-content:center}
+  h3{font-size:16px;margin:22px 0 8px;color:#cfe0ff}
+  p{margin:8px 0}
+  code{background:#0b1220;border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;font-family:"Cascadia Code",Consolas,monospace;font-size:13px;color:#9fe0ff}
+  pre{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow:auto;font-family:"Cascadia Code",Consolas,monospace;font-size:13px;color:#c7d6f0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#bcd2f5}
+  tr:nth-child(even) td{background:#131a28}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h4{margin:0 0 8px;font-size:15px;color:#dbe7ff}
+  .card .tag{font-size:12px;color:var(--muted)}
+  /* timeline */
+  .tl{position:relative;margin:10px 0 0 8px;padding-left:30px}
+  .tl:before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;
+    background:linear-gradient(var(--accent),var(--accent2))}
+  .step{position:relative;margin-bottom:20px}
+  .step:before{content:"";position:absolute;left:-30px;top:5px;width:14px;height:14px;
+    border-radius:50%;background:var(--bg);border:3px solid var(--accent)}
+  .step.done:before{border-color:var(--ok)}
+  .step.now:before{border-color:var(--warn);box-shadow:0 0 0 5px rgba(255,180,84,.15)}
+  .step .when{font-size:12px;color:var(--muted);letter-spacing:.4px}
+  .step .what{font-weight:600;color:#eaf1ff}
+  .step .desc{color:#bcc9e2;font-size:14px}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:#cfe0ff}
+  .tree{font-family:"Cascadia Code",Consolas,monospace;font-size:13px;color:#bcd2f5;white-space:pre;line-height:1.7}
+  .bad{color:var(--bad);font-weight:600}
+  .ok{color:var(--ok);font-weight:600}
+  .warn{color:var(--warn);font-weight:600}
+  .muted{color:var(--muted)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:8px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  footer{padding:26px 0 60px;color:var(--muted);font-size:13px;text-align:center}
+  .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 6px;font-size:12px;background:#0b1220}
+
+/* ===== merged from CALIBRATION_GUIDE ===== */
+
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel2:#1c2537; --line:#2a3550;
+    --fg:#e6ecf7; --muted:#93a1bd; --accent:#4da3ff; --accent2:#38d39f;
+    --warn:#ffb454; --bad:#ff6b6b; --ok:#38d39f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    line-height:1.65;font-size:15px}
+  header{padding:44px 24px 30px;background:
+    radial-gradient(1200px 400px at 15% -10%,#1d3557 0%,transparent 60%),
+    radial-gradient(900px 300px at 90% 0%,#16324a 0%,transparent 55%),var(--bg);
+    border-bottom:1px solid var(--line)}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 22px}
+  h1{margin:0 0 8px;font-size:29px;letter-spacing:.5px}
+  .sub{color:var(--muted);font-size:14px}
+  .pill{display:inline-block;padding:2px 10px;border:1px solid var(--line);
+    border-radius:999px;font-size:12px;color:var(--accent);margin-right:6px}
+  section{padding:32px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:21px;margin:0 0 16px;display:flex;align-items:center;gap:10px}
+  h2 .n{display:inline-flex;min-width:28px;height:28px;padding:0 6px;border-radius:8px;
+    background:var(--accent);color:#06121f;font-size:15px;font-weight:700;
+    align-items:center;justify-content:center}
+  h3{font-size:16px;margin:20px 0 8px;color:#cfe0ff}
+  p{margin:8px 0}
+  code{background:#0b1220;border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;font-family:"Cascadia Code",Consolas,monospace;font-size:13px;color:#9fe0ff}
+  pre{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow:auto;font-family:"Cascadia Code",Consolas,monospace;font-size:13px;color:#c7d6f0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#bcd2f5}
+  tr:nth-child(even) td{background:#131a28}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h4{margin:0 0 8px;font-size:15px;color:#dbe7ff}
+  .card .tag{font-size:12px;color:var(--muted)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0 4px}
+  .node{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:8px 12px;font-size:13px}
+  .arrow{color:var(--accent);font-weight:700}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:#cfe0ff}
+  .bad{color:var(--bad);font-weight:600}
+  .ok{color:var(--ok);font-weight:600}
+  .warn{color:var(--warn);font-weight:600}
+  .muted{color:var(--muted)}
+  ol,ul{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .chk{list-style:none;padding-left:0}
+  .chk li:before{content:"☐ ";color:var(--accent)}
+  footer{padding:26px 0 60px;color:var(--muted);font-size:13px;text-align:center}
+  .step-badge{display:inline-block;background:var(--accent2);color:#06231a;font-weight:700;
+    border-radius:6px;padding:0 8px;font-size:12px;margin-right:8px}
+
+
+.wrap{max-width:1080px}
+.topnav{position:sticky;top:0;z-index:50;background:rgba(15,20,32,.93);
+  backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+.topnav .inner{max-width:1080px;margin:0 auto;padding:10px 22px;display:flex;gap:14px;
+  flex-wrap:wrap;align-items:center}
+.topnav a{color:var(--muted);text-decoration:none;font-size:14px;padding:4px 12px;
+  border:1px solid var(--line);border-radius:999px}
+.topnav a:hover{color:var(--accent);border-color:var(--accent)}
+.partlabel{max-width:1080px;margin:0 auto;padding:42px 22px 4px;font-size:23px;font-weight:700;color:#eaf1ff}
+.partlabel .k{display:inline-block;background:var(--accent);color:#06121f;border-radius:8px;
+  padding:2px 10px;font-size:15px;margin-right:10px;vertical-align:middle}
+.partlabel .d{color:var(--muted);font-size:13px;font-weight:400;margin-top:6px}
+
+</style>
+</head>
+<body>
+
+<div class="topnav"><div class="inner">
+  <a href="#part1">① 项目脉络</a>
+  <a href="#part2">② 标定全流程</a>
+  <a href="#top">↑ 顶部</a>
+</div></div>
+
+<header id="top">
+  <div class="wrap">
+    <h1>MaixCAM 视觉迁移 · 全景手册</h1>
+    <div class="sub">第一部分：全项目脉络（参考工程 → v2 视觉端 → 精度 / AI 工具链）　|　第二部分：棋盘格标定全流程</div>
+    <div style="margin-top:14px">
+      <span class="pill">MaixCAM2 / AX630C</span>
+      <span class="pill">智能搬运赛项</span>
+      <span class="pill">MaixPy / STM32F407</span>
+    </div>
+  </div>
+</header>
+
+<div class="partlabel" id="part1"><span class="k">PART 1</span>项目脉络
+  <div class="d">从国赛金奖参考工程，到新流程视觉端 v2，到精度优化与 AI 工具链</div>
+</div>
+<div class="wrap">
+<h1>MaixCAM 视觉迁移 · 全项目脉络</h1>
+    <div class="sub">从「国赛金奖参考工程」→「MaixCAM2 新流程视觉端」→「精度优化 + AI 工具链」的完整链路</div>
+    <div style="margin-top:14px">
+      <span class="pill">MaixCAM2 / AX630C</span>
+      <span class="pill">智能搬运赛项</span>
+      <span class="pill">Python / MaixPy</span>
+      <span class="pill">STM32F407</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <h2><span class="n">0</span>一句话概括</h2>
+  <p>
+    把开源工程 <code>gcs-gold-medal</code> 的<b>树莓派 + OpenCV 视觉</b>，迁移到 <b>MaixCAM2</b> 上，
+    并按<b>新题目（智能搬运）</b>的流程重构。目前已产出：<b>旧流程版 <code>maixcam_app</code></b>、
+    <b>新流程版 <code>maixcam_app_v2</code></b>、<b>独立工具项目 <code>maix_toolkit</code></b>，
+    以及一套<b>精度优化</b>方案；<b>AI 增强已落地</b>：自采 <b>870 张 / 6 类</b>数据集 →
+    训练 <code>yolo11n-cls</code>（<b>val top-1 99.4%</b>）→ 经 Pulsar2 转成 MaixCAM2 的
+    <code>.axmodel</code> + <code>cls11n.mud</code>（<b>量化后仿真 99.38%</b>）→
+    以<b>「CV 定位 + AI 判色」</b>接入 <code>maixcam_app_v2</code>（<code>USE_AI</code> 开关）。
+  </p>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--ok)"></span>已完成</span>
+    <span><span class="dot" style="background:var(--warn)"></span>进行中 / 待你确认</span>
+    <span><span class="dot" style="background:var(--accent)"></span>规划中</span>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">1</span>全脉络时间线</h2>
+  <div class="tl">
+
+    <div class="step done">
+      <div class="when">起点 · 参考工程</div>
+      <div class="what">gcs-gold-medal（国赛金奖开源）</div>
+      <div class="desc">
+        <code>cv2_python/zongchengxu20250724chusai.py</code>（1892 行，树莓派+OpenCV）+ <code>yyb_stm32</code>（STM32F407）。
+        主从握手：STM32 发单字节命令字 → 视觉回 <code>0xFF+9+0xFE</code> 帧。颜色码 红1绿2蓝3。
+      </div>
+    </div>
+
+    <div class="step done">
+      <div class="when">阶段一 · 迁移分析</div>
+      <div class="what">可行性论证 + 逐算子对照</div>
+      <div class="desc">
+        产出 <code>maixcam-migration/README.md</code> 与 <code>stm32_patch/</code>：
+        OpenCV 算子 → MaixPy 原生算子（find_blobs / find_circles / find_qrcodes / find_lines）；
+        结论：<b>协议零改动，STM32 只改波特率</b>。
+      </div>
+    </div>
+
+    <div class="step done">
+      <div class="when">阶段二 · 旧流程视觉端</div>
+      <div class="what"><code>maixcam_app</code>（旧命令字 1/2/3/4/7/8/9/0/d/r）</div>
+      <div class="desc">
+        <code>main.py</code> / <code>protocol.py</code> / <code>vision.py</code> / <code>config.py</code> / <code>timing.py</code> /
+        <code>touch_ui.py</code> / <code>diag.py</code> / <code>probe_comm.py</code> / <code>disable_comm.py</code>。
+        代码审查揪出若干缺陷（见 §5）。
+      </div>
+    </div>
+
+    <div class="step done">
+      <div class="when">转折 · 新题目澄清</div>
+      <div class="what">智能搬运赛项（浙江省赛命题）</div>
+      <div class="desc">
+        任务码变成 <b>4 组三位数（15 字符）</b>；颜色 <b>红1黄2蓝3绿4</b>；
+        新增启停区 / 原料区 / 粗加工区 / 暂存区 / 精加工区 / 成品区、圆环 1–5、码垛。
+        <b>扫码改由专用模块，STM32 把任务码下发给上位机。</b>
+      </div>
+    </div>
+
+    <div class="step done">
+      <div class="when">阶段三 · 新流程视觉端</div>
+      <div class="what"><code>maixcam_app_v2</code>（变长帧协议 + 新命令表）</div>
+      <div class="desc">
+        MaixCAM = <b>上位机</b>，被动应答 STM32。新命令：
+        <code>A</code>启停区 / <code>T</code>任务码 / <code>C</code>原料区三选一 / <code>D</code><code>E</code>圆盘 / <code>F</code>码垛 / <code>R</code>复位 / <code>Z</code>结束。
+      </div>
+    </div>
+
+    <div class="step now">
+      <div class="when">阶段四 · 精度优化（已接线 · 待现场标定）</div>
+      <div class="what"><code>precision.py</code> + <code>maix_toolkit</code></div>
+      <div class="desc">
+        去畸变 / 手眼标定 / 亚像素圆拟合 / 多帧平均 / 高分辨率缩放。
+        独立工具项目负责<b>标定</b>与<b>数据集采集</b>（与比赛逻辑解耦）。
+        代码已全部接线（<code>precision.Pipeline</code>：缩放 / 反畸变 / 多帧平均），只剩<b>现场复标 + 参数微调</b>。
+      </div>
+    </div>
+
+    <div class="step done">
+      <div class="when">阶段五 · AI 增强（已落地）</div>
+      <div class="what">数据集 → <code>yolo11n-cls</code> → <code>.axmodel/.mud</code> → 接入流水线</div>
+      <div class="desc">
+        采 <b>870 张 / 6 类</b>（background, blue, green, other, red, yellow），
+        train 648 / val 162 / calib 60；本地 GPU 训练 <b>val top-1 99.4%</b>。<br>
+        经 Pulsar2 6.0（<code>--target_hardware AX620E</code>）转出 NPU2 + NPU1 两份 INT8
+        <code>.axmodel</code> 与 <code>cls11n.mud</code>，
+        <b>量产后仿真 val top-1 99.38%（与 float 一致，argmax 100% 一致）</b>。<br>
+        架构落地为<b>经典 CV 定位 + AI 判色</b>：<code>USE_AI=True</code> 生效，
+        AI 置信度不足或异常时自动退回阈值判色（不会比纯 CV 更差）。
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="when">后续 · 待办</div>
+      <div class="what">上板联调 / 现场标定 / 阈值重标 / 第二阶段形状</div>
+      <div class="desc">见 §9 待办清单。</div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">2</span>项目目录结构</h2>
+  <details open>
+    <summary>maixcam-migration/（总工作区）</summary>
+    <div class="tree">
+maixcam-migration/
+├── README.md                    迁移分析总报告
+├── PROJECT_MAP.html / PROJECT_FULL.html / CALIBRATION_GUIDE.html    进度与流程总览
+├── _selftest_import.py          旧版本地自检
+├── stm32_patch/                 STM32 侧改动
+│   ├── README.md                UART5 集成步骤 + 必须顺带修的硬伤
+│   ├── vision_uart.c/.h         UART5(PC12/PD2) 视觉驱动 + 帧状态机
+│   ├── stm32_patch.zip
+│
+├── maixcam_app/                【旧流程】视觉端（原样保留，可比对）
+│   ├── main.py  protocol.py  vision.py  config.py  timing.py  touch_ui.py
+│   ├── diag.py  probe_comm.py  disable_comm.py
+│   ├── app.yaml  run.sh
+│   └── dist/        打包产物 zip
+│
+├── maixcam_app_v2/             【新流程】视觉端（当前主战场）
+│   ├── main.py           命令分发 + 控制循环（装配 ai_model → ColorClassifier）
+│   ├── protocol.py       变长帧协议 + 命令解析 + 回复构造
+│   ├── vision.py         4 色 + 启停区 + 圆盘 + 码垛识别（含 AI 判色融合）
+│   ├── tasks.py          各视觉任务（带超时/稳定性）
+│   ├── config.py         唯一参数来源（颜色/ROI/串口/精度/AI 开关）
+│   ├── precision.py      精度库（缩放/去畸变/手眼/圆拟合/多帧平均）
+│   ├── ai_model.py       可选 AI 层（分类判色；不可用/低置信度自动退回 CV）
+│   ├── timing.py         时间兼容层
+│   ├── touch_ui.py       触屏调试入口
+│   ├── selftest.py       本地自检（不依赖板子）
+│   ├── selftest_ai.py    AI 融合逻辑回归测试（不依赖板子）
+│   ├── app.yaml  run.sh
+│
+├── maix_apps/                 设备端 APP（工具集）
+│   └── maix_toolbox/     Calib Capture / Color Tune / Dataset Capture / Disable Maix Comm / Diagnostics
+│
+├── maix_toolkit/               【独立项目】与比赛无关的通用工具
+│   ├── pc/
+│   │   ├── calib_distort.py       镜头畸变标定 → cam_K_dist.py
+│   │   ├── calib_homography.py    手眼标定(像素→mm) → homography.py
+│   │   └── checkerboard.html/.png 标定板打印
+│   ├── board/
+│   │   ├── capture_dataset.py     采集 AI 训练数据集
+│   │   ├── capture_calib.py       采集标定图
+│   │   └── disable_comm.py        让出 UART4（Maix 通信协议占用）
+│   └── README.md
+│
+├── _from_device/               【Windows 侧产出】数据集 + 训练结果
+│   ├── dataset/                870 张（6 类）+ _reject + _metrics.csv + _report.md
+│   ├── dataset_split/          train 648 / val 162 / calib 60
+│   ├── yolo11n-cls.pt
+│   ├── runs/cls11n/weights/best.{pt,onnx}
+│   └── TRAINING.md / HANDOFF.md
+│
+└── _converted/                 【Linux 侧产出】MaixCAM2 模型（可直接上板）
+    ├── cls11n.mud / cls11n_npu.axmodel / cls11n_vnpu.axmodel
+    ├── cls11n.npu.json / cls11n.vnpu.json / build.sh
+    ├── eval_acc.py / eval_int8_sim.py
+    └── CONVERT_MAIXCAM2.md     转换全记录（含踩坑）
+    </div>
+  </details>
+</section>
+
+<section>
+  <h2><span class="n">3</span>关键设计决策（新旧对照）</h2>
+  <table>
+    <thead><tr><th>维度</th><th>旧工程 / 旧流程</th><th>新流程（v2）</th></tr></thead>
+    <tbody>
+      <tr><td>角色</td><td>树莓派 = 视觉从设备</td><td><b>MaixCAM2 = 上位机</b>，应答 STM32</td></tr>
+      <tr><td>帧格式</td><td><code>0xFF + 9 字节 + 0xFE</code>（定长）</td><td><b>变长帧</b>：<code>AA 55 LEN payload CRC8 0D</code></td></tr>
+      <tr><td>任务码</td><td><code>abc+def</code>（2 组 / 7 字符）</td><td><code>G1+G2+G3+G4</code>（4 组 / 15 字符）</td></tr>
+      <tr><td>颜色码</td><td>红1 绿2 蓝3</td><td><b>红1 黄2 蓝3 绿4</b></td></tr>
+      <tr><td>二维码</td><td>视觉 <code>pyzbar</code> 扫</td><td><b>专用扫码模块</b>；STM32 把结果下发上位机</td></tr>
+      <tr><td>放置点</td><td>—</td><td>视觉只给<b>圆盘中心</b>，各环由 STM32 按平行关系推算</td></tr>
+      <tr><td>码垛高度</td><td>—</td><td><b>固定物料高度常量</b>，随 <code>STACK</code> 帧下发</td></tr>
+      <tr><td>波特率</td><td>9600</td><td><b>115200</b>（MaixPy 官方唯一可靠档）</td></tr>
+    </tbody>
+  </table>
+
+  <h3>新命令字表（STM32 → MaixCAM2）</h3>
+  <table>
+    <thead><tr><th>命令</th><th>含义</th><th>回复</th></tr></thead>
+    <tbody>
+      <tr><td><code>A</code></td><td>识别启停区</td><td><code>START,x,y,w,h</code></td></tr>
+      <tr><td><code>T,&lt;任务码&gt;</code></td><td>下发任务码（扫码模块给的），确定颜色</td><td><code>TASK,&lt;G1&gt;,&lt;G3&gt;</code></td></tr>
+      <tr><td><code>C,&lt;颜色码&gt;</code></td><td>原料区"三选一"，按颜色定位物料</td><td><code>PICK,color,x,y</code></td></tr>
+      <tr><td><code>D</code></td><td>粗加工区圆盘中心</td><td><code>DISC,x,y</code></td></tr>
+      <tr><td><code>E</code></td><td>暂存区圆盘中心</td><td><code>DISC,x,y</code></td></tr>
+      <tr><td><code>F</code></td><td>码垛目标中心 + 固定物料高</td><td><code>STACK,x,y,h</code></td></tr>
+      <tr><td><code>G</code></td><td>前进状态：检测前方黑色障碍物</td><td><code>OBST,x,y,w,h,dist</code> / <code>CLEAR</code></td></tr>
+      <tr><td><code>R</code> / <code>Z</code></td><td>复位 / 结束</td><td><code>READY</code> / <code>OK</code></td></tr>
+      <tr><td class="muted">失败 / 异常</td><td>超时 / 未识别 / 非法</td><td><code>NONE[,tag]</code> / <code>ERR,msg</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">4</span>业务流程图（官方 9 步）</h2>
+  <table>
+    <thead><tr><th>#</th><th>动作</th><th>视觉要给的</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>识别启停区（云台转右）</td><td>启停区位置 <code>A</code></td></tr>
+      <tr><td>2</td><td>寻路至物料台，三选一抓取</td><td>任务码解析 <code>T</code> + 按色定位 <code>C</code></td></tr>
+      <tr><td>3</td><td>粗加工区：依次放置 321，再抓回 123</td><td>圆盘中心 <code>D</code></td></tr>
+      <tr><td>4</td><td>暂存区：依次放置 123</td><td>圆盘中心 <code>E</code></td></tr>
+      <tr><td>5–7</td><td>回物料区第二轮（同 2/3）</td><td>同 <code>T</code>/<code>C</code>/<code>D</code></td></tr>
+      <tr><td>8</td><td>第二轮暂存区<b>码垛</b>（颜色一致，高度减物料高）</td><td>码垛中心 <code>F</code></td></tr>
+      <tr><td>9</td><td>回随机启停区</td><td>启停区 <code>A</code></td></tr>
+      <tr><td>—</td><td><b>前进状态（寻路途中持续）</b>：检测前方黑色障碍物并避障</td><td>障碍物检测 <code>G</code></td></tr>
+    </tbody>
+  </table>
+  <p class="muted">任务码：<code>G1</code> 第一批颜色顺序 · <code>G2</code> 第一批放置位置 · <code>G3</code> 第二批颜色顺序 · <code>G4</code> 第二批粗加工区位置。</p>
+</section>
+
+<section>
+  <h2><span class="n">5</span>代码审查揪出的问题（旧版 maixcam_app）</h2>
+  <table>
+    <thead><tr><th>级别</th><th>问题</th><th>结论 / 处理</th></tr></thead>
+    <tbody>
+      <tr><td class="bad">逻辑缺陷</td><td><code>detect_boundary_angle</code> 对同一帧采 3 次 → 方差恒为 0，稳定性闸门失效</td><td>已确认（对照原版 3 帧采样）；需改成采真实帧</td></tr>
+      <tr><td class="bad">部署风险</td><td><code>TOUCH_UI</code> 默认 True → 完全旁路串口命令</td><td>默认改 False（v2 已改）</td></tr>
+      <tr><td class="bad">逻辑缺陷</td><td><code>task_select_area</code> 无超时；<code>want_color</code> 未使用</td><td>需补超时 + 颜色门控</td></tr>
+      <tr><td class="warn">待实测</td><td><code>boundary_angle</code> 用 <code>90-theta</code>，符号可能反</td><td>上板实测</td></tr>
+      <tr><td class="ok">已洗清</td><td><code>pack_task_code</code> 字节布局与原模板不同</td><td>对照 STM32 源码后确认：循环帧只读 <code>[0..2]</code>，<b>无害</b></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">6</span>精度优化路线（与比赛无关的通用能力）</h2>
+  <div class="grid">
+    <div class="card"><h4>① 镜头畸变标定</h4><div class="tag">收益 ★★★★★</div>
+      <p>官方大底镜头畸变约 <b>25%</b>（MaixCAM2 镜头页标 -25.6%，以实测为准）。棋盘格 + <code>cv2.calibrateCamera</code>，重投影误差 &lt; 0.5px。</p></div>
+    <div class="card"><h4>② 手眼标定</h4><div class="tag">收益 ★★★★</div>
+      <p>像素→毫米单应 <code>H</code>，反算误差 &lt; 1~3mm。原点/轴向须与 STM32 一致。</p></div>
+    <div class="card"><h4>③ 高分辨率检测</h4><div class="tag">收益 ★★★★</div>
+      <p>检测用高分辨率，发送前缩回 640×480 口径，<b>STM32 零改动</b>。</p></div>
+    <div class="card"><h4>④ 亚像素圆拟合 + 多帧平均</h4><div class="tag">收益 ★★★★</div>
+      <p>圆最小二乘拟合（0.1~0.3px）+ 多帧平均（σ/√N）。</p></div>
+    <div class="card"><h4>⑤ AI 分类（抗色差）</h4><div class="tag">收益 ★★★</div>
+      <p>4 色分类替代硬阈值；框内再用 CV 精修中心。</p></div>
+  </div>
+  <p class="muted">落点：<code>maixcam_app_v2/precision.py</code>（库）+ <code>maix_toolkit/</code>（标定工具）。</p>
+</section>
+
+<section>
+  <h2><span class="n">7</span>标定实操（精度优化的地基）</h2>
+  <p>
+    两个标定：<b>畸变标定</b>（把弯曲的画面掰直）与 <b>手眼标定</b>（像素 → 毫米）。
+    它们跑在 <code>maix_toolkit/pc/</code>，产出的参数直接喂给应用。
+    <b>这一步不做，后面 AI / CV 再强也白搭。</b>
+  </p>
+
+  <h3>7.1 镜头畸变标定</h3>
+  <div class="grid">
+    <div class="card"><h4>要什么</h4><div class="tag">棋盘格</div>
+      <p>9×6 内角点、方格 25mm，<b>贴在硬平板</b>上（别贴软纸，会弯）。</p></div>
+    <div class="card"><h4>怎么做</h4><div class="tag">calib_distort.py</div>
+      <p>固定分辨率拍 15~20 张，覆盖四角 + 中心 + 不同倾角。</p></div>
+    <div class="card"><h4>看什么</h4><div class="tag">验收</div>
+      <p>重投影误差 <b>&lt; 0.5 px</b> 才算合格。</p></div>
+  </div>
+
+  <p>原理（OpenCV 口径：径向 k + 切向 p）：</p>
+  <pre>正向： x_d = x(1 + k1 r^2 + k2 r^4 + k3 r^6) + 2 p1 x y + p2 (r^2 + 2 x^2)
+       y_d = y(1 + k1 r^2 + k2 r^4 + k3 r^6) + p1 (r^2 + 2 y^2) + 2 p2 x y
+反解： 应用层用不动点迭代（precision.DistortionModel）逐点还原</pre>
+
+  <pre># 1) 拍好图放 pc/calib/
+python maix_toolkit/pc/calib_distort.py --dir maix_toolkit/pc/calib --cols 9 --rows 6 --square 25
+
+# 2) 产出 pc/cam_K_dist.py，粘进 maixcam_app_v2/config.py：
+UNDISTORT_ON = True
+CAM_K    = [fx, 0, cx,  0, fy, cy,  0, 0, 1]
+CAM_DIST = [k1, k2, p1, p2, k3]</pre>
+
+  <p class="warn">⚠️ 官方大底镜头（SC850SL / OS04A10）畸变约 <b>25%</b>（镜头页写 -25.6%，以实测为准），必做；
+  OS04D10 官方标注无畸变，可跳过。标定与运行必须<b>同分辨率</b>；板子要<b>非对称</b>（行列角点数不等，避免 180° 二义性）、且要拍到<b>画面边缘</b>（边缘点才建模畸变）。</p>
+
+  <p><b>更省事的替代</b>：MaixPy 自带 <code>img.lens_corr(strength=...)</code> 可免标定快速矫正（调到画面不弯即可）；
+  板上也能跑 OpenCV 全流程（<code>image.image2cv</code> → <code>cv2.undistort</code> → <code>image.cv2image</code>，见 MaixHub「畸变校正」经验帖）。</p>
+
+  <h3>7.2 手眼标定（像素 → 毫米）</h3>
+  <div class="grid">
+    <div class="card"><h4>要什么</h4><div class="tag">已知点</div>
+      <p>台面摆 ≥4（建议 9）个标记点，用尺子量出各点 mm 坐标。</p></div>
+    <div class="card"><h4>怎么做</h4><div class="tag">calib_homography.py</div>
+      <p>读出这些点的像素坐标，填进脚本，解单应矩阵 H。</p></div>
+    <div class="card"><h4>看什么</h4><div class="tag">验收</div>
+      <p>反算误差 <b>&lt; 1~3 mm</b>。</p></div>
+  </div>
+
+  <pre># 1) 填好脚本里的 PX / MM 两个列表
+python maix_toolkit/pc/calib_homography.py
+
+# 2) 产出 pc/homography.py，粘进 config.py：
+HOMOGRAPHY_ON = True
+HOMOGRAPHY    = [h11, h12, h13, h21, h22, h23, h31, h32, h33]</pre>
+
+  <p class="warn">⚠️ 坐标原点 / 轴向<b>必须与 STM32 一致</b>（否则方向反）；
+  标定面与工作台面共面；<b>每场比赛重标</b>（机械装配会变）。</p>
+
+  <h3>7.3 标定参数在应用里怎么生效</h3>
+  <table>
+    <thead><tr><th>precision.py 组件</th><th>config 开关</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>CoordScaler</code></td><td><code>DET_W / DET_H</code></td><td>高分辨率检测 → 缩回 640×480 口径（STM32 零改动）</td></tr>
+      <tr><td><code>DistortionModel</code></td><td><code>UNDISTORT_ON</code> / <code>CAM_K</code> / <code>CAM_DIST</code></td><td>坐标层反畸变</td></tr>
+      <tr><td><code>Homography</code></td><td><code>HOMOGRAPHY_ON</code> / <code>HOMOGRAPHY</code></td><td>像素 → 毫米</td></tr>
+      <tr><td><code>CenterFilter</code></td><td><code>CENTER_FILTER_N</code></td><td>多帧平均降抖动（σ/√N）</td></tr>
+      <tr><td><code>fit_circle</code></td><td>（直接调用）</td><td>圆的最小二乘亚像素拟合</td></tr>
+    </tbody>
+  </table>
+
+  <h3>7.4 标定检查清单</h3>
+  <pre>[ ] 打印棋盘格，贴硬平板，量准方格边长
+[ ] 相机固定分辨率（= 运行时分辨率）
+[ ] 拍 15~20 张，覆盖四角 + 中心 + 不同倾角
+[ ] calib_distort.py → 重投影误差 < 0.5px → 粘 config
+[ ] 台面摆点，量 mm 坐标，读像素坐标
+[ ] calib_homography.py → 反算误差 < 3mm → 粘 config
+[ ] config 开关置 True，跑 selftest + 上板验证坐标抖动下降</pre>
+</section>
+
+<section>
+  <h2><span class="n">8</span>AI 调研结论（MaixCAM2）</h2>
+  <table>
+    <thead><tr><th>项</th><th>参数</th></tr></thead>
+    <tbody>
+      <tr><td>SoC</td><td>Axera <b>AX630C</b>：2×A53@1.2GHz + E907 RISC-V</td></tr>
+      <tr><td>NPU</td><td><b>12.8 TOPS@INT4 / 3.2 TOPS@INT8</b>，支持卷积 + Transformer</td></tr>
+      <tr><td>实测算力</td><td><b>YOLO11n@640 约 113 FPS</b>，YOLO11s 约 62 FPS</td></tr>
+      <tr><td>支持模型</td><td>YOLOv5 / v8 / YOLO11 / YOLO26；检测 / 姿态 / 分割 / OBB / 分类</td></tr>
+      <tr><td>图像增强</td><td>AI-ISP「智眸4.0」低照增强（需配 vNPU）</td></tr>
+      <tr><td>转换</td><td>INT8 → <code>.axmodel</code> + <code>.mud</code>（Pulsar2 / AX620E，或在线转换）</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <span class="ok">结论：</span>几何精度靠 <b>经典 CV + 标定</b>（AI 的边框中心反而糙）；
+    语义/色差鲁棒性靠 <b>AI</b>。最佳为<b>混合架构：AI 粗定位 + CV 精修中心</b>。
+  </p>
+  <h3>落地结果（2026-10-17）</h3>
+  <table>
+    <thead><tr><th>环节</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>数据集</td><td>870 张 / 6 类（background, blue, green, other, red, yellow）→ train 648 / val 162 / calib 60；<b>文件夹字母序即类别序</b>，训练/推理/MUD 三处必须一致</td></tr>
+      <tr><td>训练</td><td><code>yolo11n-cls</code> @224，RTX 5060 本地训练，<b>val top-1 99.4%</b>；导出 <code>best.onnx</code>（simplify）</td></tr>
+      <tr><td>ONNX 口径</td><td>输入 <code>images</code> [1,3,224,224]；<b>裁剪到 <code>/model.10/linear/Gemm_output_0</code></b>（softmax 前的 logits，MaixPy 会自己补 softmax）</td></tr>
+      <tr><td>转换</td><td>Pulsar2 <b>6.0</b> docker，<code>--target_hardware AX620E</code>；NPU2（满算力）+ NPU1（给 AI-ISP 留算力）各一份</td></tr>
+      <tr><td>产物</td><td><code>cls11n_npu.axmodel</code> 1.6MB · <code>cls11n_vnpu.axmodel</code> 1.6MB · <code>cls11n.mud</code>（单个 NPU 节点，MACs ≈194.6M）</td></tr>
+      <tr><td>量化后精度</td><td><b>仿真 val top-1 99.38%</b>（<code>pulsar2 run</code> 跑 162 张，与 float argmax 100% 一致，logits cosine 0.977）</td></tr>
+      <tr><td>接入方式</td><td>CV 定位（LAB 阈值找色块）+ AI 判色（色块外扩后送分类器）；AI 低置信度/异常 → 自动退回阈值判色</td></tr>
+      <tr><td>回归测试</td><td><code>selftest.py</code> + 新增 <code>selftest_ai.py</code>（AI 覆盖阈值 / 退化回退 / top1 取值）均 ALL PASS</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">
+    完整记录：<code>maixcam-migration/_converted/CONVERT_MAIXCAM2.md</code>；
+    产物：<code>_converted/cls11n.mud</code> + 两份 <code>.axmodel</code>。
+  </p>
+  <h3>要采的数据集</h3>
+  <table>
+    <thead><tr><th>任务</th><th>类别</th><th>数量</th><th>标注</th></tr></thead>
+    <tbody>
+      <tr><td>颜色分类（第一阶段）</td><td>red / yellow / blue / green</td><td>各 200~500</td><td>不需标注</td></tr>
+      <tr><td>负样本</td><td>background / other</td><td>各 100~300</td><td>不需标注</td></tr>
+      <tr><td>形状（第二阶段）</td><td>cylinder / cube / triangle / ball / cone / combo</td><td>各 300~500</td><td>需画框</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <span class="ok">已完成：</span>颜色分类 + 负样本共 <b>870 张</b>已采完并训练上线（见上表）；
+    <span class="muted">形状类为第二阶段，尚未采集。</span>
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">9</span>待办 &amp; 里程碑</h2>
+  <table>
+    <thead><tr><th>状态</th><th>事项</th></tr></thead>
+    <tbody>
+      <tr><td class="ok">✅</td><td>v2 变长帧协议 + 命令表 + 各视觉任务 + 本地自检</td></tr>
+      <tr><td class="ok">✅</td><td>precision.py / ai_model.py / maix_toolkit（标定 + 采集）</td></tr>
+      <tr><td class="ok">✅</td><td>AI 能力调研 + 数据集方案</td></tr>
+      <tr><td class="ok">✅</td><td><b>采集数据集 870 张 / 6 类</b>，划分 train 648 / val 162 / <b>calib 60</b>（量化校准集）</td></tr>
+      <tr><td class="ok">✅</td><td><b>训练 yolo11n-cls</b>（val top-1 99.4%）→ 导出 <code>best.onnx</code> → 裁剪到 Gemm 输出</td></tr>
+      <tr><td class="ok">✅</td><td><b>Pulsar2 转换</b>：AX620E，NPU2 + NPU1 两份 <code>.axmodel</code> + <code>cls11n.mud</code></td></tr>
+      <tr><td class="ok">✅</td><td><b>量化后精度验证</b>：仿真 val top-1 99.38%（argmax 与 float 100% 一致）</td></tr>
+      <tr><td class="ok">✅</td><td><b>AI 判色接入流水线</b>：修 <code>ai_model.py</code> 两处 bug（<code>classify</code> 参数/返回值），CV 定位 + AI 判色，<code>selftest_ai.py</code> 全过</td></tr>
+      <tr><td class="warn">⬜</td><td><b>上板实测</b>：<code>nn.Classifier</code> 加载 <code>cls11n.mud</code>；现场准确率；按 <code>prob</code> 分布调 <code>AI_MIN_PROB</code>（此步无法在 PC 侧替代）</td></tr>
+      <tr><td class="ok">✅</td><td><b>precision 已接进 vision/tasks</b>（v2.1.0）：<code>PRECISION_ON</code> 总开关、ROI 缩放、坐标反畸变（含四角保护）、9 帧平均</td></tr>
+      <tr><td class="ok">✅</td><td><b>最终程序 v2.1.0</b>：AI 判色默认开 + 精度收口 + 重新打包（<code>dist/maix-yyb_mover-v2.1.0.zip</code>）</td></tr>
+      <tr><td class="warn">⬜</td><td>现场执行标定（畸变 + 手眼），参数回填 config.py；<b>现场灯光下重标 LAB 阈值</b>（AI 只判色，定位仍靠阈值）</td></tr>
+      <tr><td class="warn">⬜</td><td>工具沉淀：<code>dataset_check.py</code>（去模糊/查平衡）、<code>split_dataset.py</code>（分 train/val + 抽校准集）<span class="muted">—— 本次是用一次性脚本做完的，尚未沉淀成可复用工具</span></td></tr>
+      <tr><td>⬜</td><td>STM32 侧配套：变长帧解析、新命令、UART5@115200</td></tr>
+      <tr><td>⬜</td><td>第二阶段：形状检测 / 码垛平稳性</td></tr>
+    </tbody>
+  </table>
+</section>
+</div>
+
+<div class="partlabel" id="part2"><span class="k">PART 2</span>棋盘格标定全流程
+  <div class="d">打印标定板 → 畸变标定 → 手眼标定 → 回填参数 → 上板验证</div>
+</div>
+<div class="wrap">
+<h1>棋盘格标定 · 全流程指南</h1>
+    <div class="sub">MaixCAM2 · 畸变标定 + 手眼标定 · 从打板到上板验证</div>
+    <div style="margin-top:14px">
+      <span class="pill">calib_distort.py</span>
+      <span class="pill">calib_homography.py</span>
+      <span class="pill">precision.py</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <h2><span class="n">0</span>先明确：标定其实两件事</h2>
+  <table>
+    <thead><tr><th></th><th>畸变标定</th><th>手眼标定</th></tr></thead>
+    <tbody>
+      <tr><td>解决什么</td><td>画面边缘弯曲</td><td>像素 → 毫米</td></tr>
+      <tr><td>产出</td><td><code>K</code> + <code>dist</code></td><td>单应 <code>H</code></td></tr>
+      <tr><td>对你项目的影响</td><td class="muted">次要（目标多在画面中心）</td><td class="ok">主要（决定抓取精度）</td></tr>
+      <tr><td>要不要做</td><td>边缘会弯 / 大底镜头 → 做；OS04D10 → 跳过</td><td><b>必做</b></td></tr>
+    </tbody>
+  </table>
+
+  <div class="flow">
+    <span class="node">① 打板</span><span class="arrow">→</span>
+    <span class="node">② 拍图</span><span class="arrow">→</span>
+    <span class="node">③ 畸变标定</span><span class="arrow">→</span>
+    <span class="node">④ 手眼标定</span><span class="arrow">→</span>
+    <span class="node">⑤ 回填 config</span><span class="arrow">→</span>
+    <span class="node">⑥ 上板验证</span>
+  </div>
+
+  <p class="muted">核心纪律：<b>标定与运行的相机分辨率必须一致</b>；标定板必须<b>平整</b>；<b>同机同镜</b>。</p>
+</section>
+
+<section>
+  <h2><span class="n">1</span>阶段一 · 准备标定板</h2>
+  <div class="grid">
+    <div class="card"><h4>打板</h4><div class="tag">checkerboard.html</div>
+      <p>打开 <code>maix_toolkit/pc/checkerboard.html</code> 打印，选「实际大小 / 100%」。</p></div>
+    <div class="card"><h4>校验比例</h4><div class="tag">关键</div>
+      <p>打完后量页面上那条 <b>100mm 校验尺</b>，必须正好 100mm，否则重打。</p></div>
+    <div class="card"><h4>贴平板</h4><div class="tag">平整</div>
+      <p>贴/压在 <b>硬平板</b> 上，纸不能弯、不能起泡，否则标定必废。</p></div>
+  </div>
+
+  <p><b>规格对照</b>（本板默认）：方格 20mm · 10×7 格 → <b>9×6 内角点</b> → 脚本填 <code>--cols 9 --rows 6</code>。</p>
+  <p class="warn">⚠️ 头号坑：OpenCV 的 <code>patternSize</code> 填的是<b>内角点数，不是格子数</b>。"9×6 方格"的板子是 8×5 内角点。本板已明确标注，不会踩。</p>
+</section>
+
+<section>
+  <h2><span class="n">2</span>阶段二 · 畸变标定（视镜头，可选）</h2>
+
+  <h3>先判断要不要做</h3>
+  <table>
+    <thead><tr><th>情况</th><th>做法</th></tr></thead>
+    <tbody>
+      <tr><td>镜头是 <b>OS04D10</b>（官方无畸变）</td><td class="ok">直接跳过本阶段</td></tr>
+      <tr><td>SC850SL / OS04A10（畸变约 25%）</td><td>先 <code>lens_corr</code> 看一眼，边缘明显弯再做</td></tr>
+      <tr><td>目标都在画面中心</td><td>可跳过，只做手眼</td></tr>
+    </tbody>
+  </table>
+
+  <h3>快速体检（10 分钟）</h3>
+  <pre>from maix import camera, display, app
+cam = camera.Camera(640, 480); disp = display.Display()
+while not app.need_exit():
+    img = cam.read()
+    img = img.lens_corr(strength=1.5)   # 调 strength 到画面不弯
+    disp.show(img)</pre>
+  <p class="muted">只调径向、不精确、每帧约 10ms——用来判断"要不要认真标"，不作最终方案。</p>
+
+  <h3>正式标定 · 拍图</h3>
+  <ol>
+    <li>相机设为<b>运行时同分辨率</b>（如 640×480）；标定期间<b>不要再改分辨率</b>。</li>
+    <li>拍 <b>15~20 张</b>，棋盘格要：<b>整块可见、清晰、覆盖四角与中心、带不同倾角</b>。</li>
+    <li>一定要有<b>棋盘格出现在画面边缘</b>的照片——边缘点才用来建模畸变。</li>
+    <li>别过曝/欠曝，别拍糊。图片放 <code>maix_toolkit/pc/calib/</code>。</li>
+  </ol>
+
+  <h3>跑标定</h3>
+  <pre>python maix_toolkit/pc/calib_distort.py --dir maix_toolkit/pc/calib --cols 9 --rows 6 --square 20</pre>
+  <p>产出 <code>maix_toolkit/pc/cam_K_dist.py</code>：</p>
+  <pre>UNDISTORT_ON = True
+CAM_K    = [fx, 0, cx,  0, fy, cy,  0, 0, 1]
+CAM_DIST = [k1, k2, p1, p2, k3]</pre>
+
+  <p><b>验收</b>：屏幕打印的 <b>重投影误差 RMS &lt; 0.5 px</b> 才合格；偏大就重拍（更清晰、更覆盖边缘、更平整）。</p>
+  <p class="warn">⚠️ 畸变数字以<b>你实测</b>为准；官方不同页面写 5% / 25% / -25.6%，别照抄。</p>
+</section>
+
+<section>
+  <h2><span class="n">3</span>阶段三 · 手眼标定（像素 → 毫米，必做）</h2>
+  <p>原理：工作台面近似共面，用<b>单应矩阵 H</b> 即可：</p>
+  <pre>        [Xmm]        [u]
+        [Ymm] ~ H ·  [v]
+        [ 1 ]        [1]</pre>
+
+  <h3>做法（用已知点）</h3>
+  <ol>
+    <li>台面上摆 <b>≥4（建议 9）</b> 个标记点，坐标尽量铺开、别共线。</li>
+    <li>用尺子量出每个点的 <b>毫米坐标</b>（原点/轴向要和 STM32 约定一致）。</li>
+    <li>拍照，读出这些点的 <b>像素坐标</b>（可用棋盘格角点，或放标记后找色块）。</li>
+    <li>把两组坐标填进 <code>calib_homography.py</code> 的 <code>PX</code> / <code>MM</code>，运行：</li>
+  </ol>
+  <pre>python maix_toolkit/pc/calib_homography.py</pre>
+  <p>产出 <code>maix_toolkit/pc/homography.py</code>：</p>
+  <pre>HOMOGRAPHY_ON = True
+HOMOGRAPHY    = [h11, h12, h13, h21, h22, h23, h31, h32, h33]</pre>
+
+  <p><b>验收</b>：脚打印的 <b>最大反算误差 &lt; 3 mm</b>（理想 &lt; 1mm）。</p>
+  <p class="warn">⚠️ 原点/轴向<b>必须与 STM32 一致</b>（不然方向反）；点要铺开、共面；<b>每场比赛重标</b>（机械装配会变）。</p>
+</section>
+
+<section>
+  <h2><span class="n">4</span>阶段四 · 回填参数到 config.py</h2>
+  <p>把两个脚本产出的内容，粘进 <code>maixcam_app_v2/config.py</code>：</p>
+  <pre># 精度：镜头畸变
+UNDISTORT_ON = True
+CAM_K    = [ ... ]     # ← cam_K_dist.py
+CAM_DIST = [ ... ]     # ← cam_K_dist.py
+
+# 精度：手眼标定（像素→毫米）
+HOMOGRAPHY_ON = True
+HOMOGRAPHY    = [ ... ] # ← homography.py
+
+# 精度：坐标系 / 多帧
+DET_W, DET_H = 640, 480     # 检测分辨率（提精度可调大）
+CENTER_FILTER_N = 9         # 多帧平均</pre>
+</section>
+
+<section>
+  <h2><span class="n">5</span>阶段五 · 参数在应用里怎么生效</h2>
+  <table>
+    <thead><tr><th>precision.py 组件</th><th>config 开关</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>CoordScaler</code></td><td><code>DET_W / DET_H</code></td><td>高分辨率检测 → 缩回 640×480 口径（STM32 零改动）</td></tr>
+      <tr><td><code>DistortionModel</code></td><td><code>UNDISTORT_ON</code> / <code>CAM_K</code> / <code>CAM_DIST</code></td><td>坐标层反畸变（逐点，纯 Python 迭代）</td></tr>
+      <tr><td><code>Homography</code></td><td><code>HOMOGRAPHY_ON</code> / <code>HOMOGRAPHY</code></td><td>像素 → 毫米</td></tr>
+      <tr><td><code>CenterFilter</code></td><td><code>CENTER_FILTER_N</code></td><td>多帧平均降抖动（σ/√N）</td></tr>
+      <tr><td><code>fit_circle</code></td><td>（直接调用）</td><td>圆的最小二乘亚像素拟合</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">典型链路：<code>像素(cx,cy)</code> → 去畸变 → 手眼 H → 毫米 → 多帧平均 → 发送。</p>
+</section>
+
+<section>
+  <h2><span class="n">6</span>阶段六 · 验证</h2>
+  <ol>
+    <li>跑本地自检：<code>python maixcam_app_v2/selftest.py</code> → 应打印 <b>[ALL PASS]</b>。</li>
+    <li>把棋盘格/已知物块放在<b>已知物理位置</b>，看应用输出的毫米坐标。</li>
+    <li>做<b>抖动测试</b>：同一目标静置，连续 100 帧输出坐标<b>标准差 &lt; 1 像素</b>（或 &lt; 1mm）。</li>
+    <li>换个位置再来一遍，确认全场误差一致（不是某处准某处偏）。</li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="n">7</span>常见坑清单</h2>
+  <table>
+    <thead><tr><th>坑</th><th>后果</th><th>对策</th></tr></thead>
+    <tbody>
+      <tr><td><span class="bad">内角点当格子数</span></td><td>找不到角点，标定失败</td><td>填<b>内角点</b>数（10×7 格 = 9×6 角点）</td></tr>
+      <tr><td>打印被缩放</td><td>方格不是标称尺寸，尺寸全错</td><td>选"实际大小"，量 100mm 校验尺</td></tr>
+      <tr><td>板子弯/起泡</td><td>RMS 偏大，畸变算歪</td><td>贴硬平板</td></tr>
+      <tr><td>标定≠运行分辨率</td><td>畸变参数对不上</td><td>两者锁死同一分辨率</td></tr>
+      <tr><td>没拍画面边缘</td><td>边缘畸变没建模</td><td>务必有几张棋盘贴边的图</td></tr>
+      <tr><td>手眼原点/轴向搞反</td><td>移动方向相反，抓飞</td><td>与 STM32 约定一致，先验一个点</td></tr>
+      <tr><td>用了别的相机拍</td><td>色彩/畸变不一致</td><td>同机同镜</td></tr>
+      <tr><td>标完没重标</td><td>装配变了精度掉</td><td>每场比赛重标手眼</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">8</span>总检查清单</h2>
+  <ul class="chk">
+    <li>打印棋盘格，选 100%，量 100mm 校验尺合格</li>
+    <li>棋盘格贴硬平板，平整无弯</li>
+    <li>相机锁定 = 运行时分辨率</li>
+    <li>拍 15~20 张：全可见 + 覆盖四角/中心 + 有贴边 + 不同倾角</li>
+    <li>calib_distort.py → RMS &lt; 0.5px → 产出 cam_K_dist.py</li>
+    <li>台面摆 ≥4（建议 9）个已知点，量准 mm 坐标</li>
+    <li>读像素坐标，填 PX/MM → calib_homography.py → 误差 &lt; 3mm</li>
+    <li>参数回填 config.py（UNDISTORT_ON / HOMOGRAPHY_ON 置 True）</li>
+    <li>selftest.py 全绿；上板验证：毫米坐标准、抖动 &lt; 1px</li>
+  </ul>
+  <p class="muted">OS04D10 用户：跳过棋盘格畸变，只做手眼即可。OS04A10 / SC850SL：按全流程走。</p>
+</section>
+</div>
+
+<footer>
+  MaixCAM 迁移工作区 · 全景手册（项目脉络 + 标定流程）<br>
+  <b>最近更新 2026-10-17</b>：数据集 870 张 → yolo11n-cls 训练（val 99.4%）→ Pulsar2 转 .axmodel/.mud（量化 99.38%）→ AI 判色接入<br>
+  maixcam-migration / maixcam_app · maixcam_app_v2 · maix_toolkit
+</footer>
+
+</body>
+</html>

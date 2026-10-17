@@ -1,0 +1,39 @@
+{
+  "model_type": "ONNX",
+  "npu_mode": "NPU1",
+  "quant": {
+    "input_configs": [
+      {
+        "tensor_name": "images",
+        "calibration_dataset": "datasets/train.tar",
+        "calibration_size": 60,
+        "calibration_mean": [0, 0, 0],
+        "calibration_std": [255, 255, 255]
+      }
+    ],
+    "calibration_method": "MinMax",
+    "precision_analysis": true
+  },
+  "input_processors": [
+    {
+      "tensor_name": "images",
+      "tensor_format": "RGB",
+      "tensor_layout": "NCHW",
+      "src_format": "RGB",
+      "src_dtype": "U8",
+      "src_layout": "NHWC",
+      "csc_mode": "NoCSC"
+    }
+  ],
+  "output_processors": [
+    {
+      "tensor_name": "/model.10/linear/Gemm_output_0",
+      "dst_perm": [0, 1]
+    }
+  ],
+  "compiler": {
+    "check": 3,
+    "check_mode": "CheckOutput",
+    "check_cosine_simularity": 0.9
+  }
+}

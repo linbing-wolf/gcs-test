@@ -1,0 +1,319 @@
+# -*- coding: utf-8 -*-
+"""selftest_tasks.py —— 任务层冒烟测试（PC 上跑，不进发布包）
+
+用假 maix 模块真跑 tasks 的 5 个任务，验证：
+  1) 每个任务都能返回合法帧（签名/参数正确、不抛异常）
+  2) DET 1280×960 时回传坐标正好折半
+  3) PRECISION_ON=False（恒等映射）时坐标不变
+  4) 任务中收到 R → 立即回 READY；收到其它命令 → 回 BUSY 且任务继续
+  5) 启停区区号：右侧道路（灰色 + AI 双确认）
+
+用法：python selftest_tasks.py
+"""
+
+import os
+import sys
+import types
+
+APP = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, APP)
+
+# ----------------------------------------------------------------------
+# 假 maix 包
+# ----------------------------------------------------------------------
+maix = types.ModuleType('maix')
+image = types.ModuleType('maix.image')
+image.COLOR_RED = 0xFF0000
+image.COLOR_GREEN = 0x00FF00
+image.COLOR_BLUE = 0x0000FF
+image.COLOR_YELLOW = 0xFFFF00
+image.Fit = type('Fit', (), {'FIT_CONTAIN': 1, 'FIT_FILL': 0, 'FIT_COVER': 2})
+image.Format = type('Format', (), {'FMT_RGB888': 0})
+
+
+class FakeBlob:
+    def __init__(self, code, x, y, w, h):
+        self._c, self._x, self._y, self._w, self._h = code, x, y, w, h
+
+    def code(self): return self._c
+    def x(self): return self._x
+    def y(self): return self._y
+    def w(self): return self._w
+    def h(self): return self._h
+    def pixels(self): return self._w * self._h
+    def cxf(self): return self._x + self._w / 2.0
+    def cyf(self): return self._y + self._h / 2.0
+    def roundness(self): return 0.9
+
+
+class FakeCircle:
+    def __init__(self, x, y, r):
+        self._x, self._y, self._r = x, y, r
+
+    def x(self): return self._x
+    def y(self): return self._y
+    def r(self): return self._r
+
+
+class FakeImage:
+    """物料块固定在 (600,400) 100x80；圆位置可通过 circle_x 改变（测对齐闭环）。
+
+    road=True 时右侧 ROI（x>=300）返回铺满 ROI 的块，用来模拟「有灰色道路」。
+    """
+
+    def __init__(self, blob_code=1, road=False, circle_x=640):
+        self.blob_code = blob_code
+        self.road = road
+        self.circle_x = circle_x
+
+    def find_blobs(self, *a, **kw):
+        roi = kw.get('roi') or (a[1] if len(a) > 1 else None)
+        if self.road and roi and roi[0] >= 300:
+            return [FakeBlob(0, roi[0], roi[1], roi[2], roi[3])]
+        return [FakeBlob(self.blob_code, 600, 400, 100, 80)]
+
+    def find_circles(self, *a, **kw):
+        return [FakeCircle(self.circle_x, 480, 100)]
+
+    def width(self): return 1280
+    def height(self): return 960
+    def crop(self, x, y, w, h): return self
+
+    def draw_line(self, *a, **kw): pass
+    def draw_rect(self, *a, **kw): pass
+    def draw_cross(self, *a, **kw): pass
+    def draw_circle(self, *a, **kw): pass
+    def draw_string(self, *a, **kw): pass
+
+
+class FakeCam:
+    def __init__(self, code=1, blob_code=None, road=False, circle_x=640):
+        self.code = blob_code or code
+        self.road = road
+        self.circle_x = circle_x
+
+    def read(self): return FakeImage(self.code, self.road, self.circle_x)
+    def skip_frames(self, n): pass
+
+
+class FakeUART:
+    def __init__(self, dev, baud): self.dev, self.baud = dev, baud
+    def write(self, b): return len(b)
+    def read(self): return b''
+    def close(self): pass
+
+
+app = types.ModuleType('maix.app')
+app.need_exit = lambda: False
+uart = types.ModuleType('maix.uart')
+uart.UART = FakeUART
+uart.list_devices = lambda: ['/dev/ttyS4']
+pinmap = types.ModuleType('maix.pinmap')
+pinmap.set_pin_function = lambda *a, **k: 0
+pinmap.get_pin_functions = lambda *a, **k: []
+
+maix.image = image
+maix.app = app
+maix.uart = uart
+maix.pinmap = pinmap
+sys.modules.update({'maix': maix, 'maix.image': image, 'maix.app': app,
+                    'maix.uart': uart, 'maix.pinmap': pinmap})
+
+import config                      # noqa: E402
+import precision                   # noqa: E402
+import tasks                       # noqa: E402
+import vision                      # noqa: E402
+
+FAILED = []
+
+
+def check(name, cond, extra=''):
+    print('  [%s] %s %s' % ('OK' if cond else '!!', name, extra))
+    if not cond:
+        FAILED.append(name)
+
+
+def frame_str(b):
+    if isinstance(b, bytes):
+        b = b.decode('utf-8', 'replace')
+    return str(b).strip('\r\n')
+
+
+def run_all(P, label):
+    print('\n== %s ==' % label)
+    cam = FakeCam(1)
+    clf = vision.ColorClassifier(ai=None)
+    out = frame_str(tasks.task_start(cam, None, p=P))
+    check('A 帧格式', out.startswith('START,'), out)
+    check('A 区号=2（无道路）', out.split(',')[1] == '2', out)
+    out = frame_str(tasks.task_pick(cam, clf, None, '1', p=P))
+    check('C 帧格式', out.startswith('PICK,1,'), out)
+    out = frame_str(tasks.task_disc(cam, None, config.ROI_DISC_ROUGH, 'D', p=P))
+    check('D 帧格式', out.startswith('DISC,'), out)
+    out = frame_str(tasks.task_stack(cam, clf, None, p=P))
+    check('F 帧格式', out.startswith('STACK,'), out)
+    out = frame_str(tasks.task_forward(cam, None, p=P))
+    check('G 帧格式', out.startswith(('OBST,', 'CLEAR')), out)
+
+
+class _Link:
+    def __init__(self, cmds):
+        self.cmds = list(cmds)
+        self.sent = []
+
+    def poll_command(self):
+        return self.cmds.pop(0) if self.cmds else None
+
+    def send_payload(self, p):
+        self.sent.append(p)
+
+
+class _CountCam(FakeCam):
+    """统计读了几帧，用来验证 G 的响应速度"""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        return super().read()
+
+
+class _FlipCam(FakeCam):
+    """每帧换一种颜色，用来验证 F 不再被颜色投票卡住"""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.n = 0
+
+    def read(self):
+        self.n += 1
+        return FakeImage(1 if self.n % 2 else 2, self.road, self.circle_x)
+
+
+class _AlignLink(_Link):
+    """假下位机：收到 MOVE,x,dx 后把圆往反方向挪 dx（模拟机构真的动了）"""
+
+    def __init__(self, cam):
+        super().__init__([])
+        self.cam = cam
+
+    def send_payload(self, p):
+        self.sent.append(p)
+        if p.startswith('MOVE,'):
+            try:
+                dx = int(p.split(',')[1])
+            except Exception:
+                return
+            self.cam.circle_x = max(0, min(self.cam.circle_x - dx, 1280))
+
+
+class _AI:
+    labels = ["background", "blue", "green", "other", "red", "yellow"]
+
+    def __init__(self, idx, prob):
+        self.idx, self.prob = idx, prob
+
+    def ready(self): return True
+    def classify_top1(self, img, roi=None): return self.idx, self.prob
+    def classify_label(self, img, roi=None):
+        return self.labels[self.idx], self.prob, self.idx
+
+
+class _Clf:
+    def __init__(self, ai): self.ai = ai
+
+
+P_HD = precision.Pipeline(1280, 960, 640, 480, dist=None, filter_n=1)
+P_ID = precision.Pipeline(640, 480, 640, 480)
+
+
+def main():
+    run_all(P_HD, 'DET 1280x960 → 640x480')
+    a = frame_str(tasks.task_start(FakeCam(1), None, p=P_HD)).split(',')
+    check('A 坐标折半', a[2] == '325' and a[3] == '220', a)
+    c = frame_str(tasks.task_pick(FakeCam(1), vision.ColorClassifier(ai=None),
+                                  None, '1', p=P_HD)).split(',')
+    check('C 坐标折半', c[2] == '325' and c[3] == '220', c)
+
+    run_all(P_ID, '恒等映射（PRECISION_ON=False）')
+    c2 = frame_str(tasks.task_pick(FakeCam(1), vision.ColorClassifier(ai=None),
+                                   None, '1', p=P_ID)).split(',')
+    check('恒等时坐标不折半', c2[2] == '650' and c2[3] == '440', c2)
+
+    print('\n== 任务看门（R 中断 / BUSY）==')
+    lk = _Link(['R'])
+    ctl = tasks.TaskCtl(lk)
+    out = frame_str(tasks.task_start(FakeCam(1), None, p=P_ID, ctl=ctl))
+    check('R 中断任务 → READY', out == 'READY' and ctl.reset_flag, out)
+
+    lk2 = _Link(['D'])
+    ctl2 = tasks.TaskCtl(lk2)
+    out = frame_str(tasks.task_start(FakeCam(1), None, p=P_ID, ctl=ctl2))
+    check('普通命令 → 回 BUSY 且任务继续',
+          'BUSY' in lk2.sent and out.startswith('START'),
+          'sent=%s out=%s' % (lk2.sent, out))
+
+    print('\n== 启停区区号 ==')
+    a1 = frame_str(tasks.task_start(FakeCam(1, road=True), None, p=P_ID)).split(',')
+    check('无 AI 时：灰色有 → 区号 1', a1[1] == '1', a1)
+    a2 = frame_str(tasks.task_start(FakeCam(1, road=False), None, p=P_ID)).split(',')
+    check('无道路 → 区号 2', a2[1] == '2', a2)
+    a3 = frame_str(tasks.task_start(FakeCam(1, road=True), None, p=P_ID,
+                                    clf=_Clf(_AI(3, 0.92)))).split(',')
+    check('灰色 + AI=other → 区号 1', a3[1] == '1', a3)
+    a4 = frame_str(tasks.task_start(FakeCam(1, road=True), None, p=P_ID,
+                                    clf=_Clf(_AI(0, 0.92)))).split(',')
+    check('灰色 + AI=background → 区号 2（AI 否决）', a4[1] == '2', a4)
+
+    print('\n== G 障碍物：行进中快响应 ==')
+    cam = _CountCam(1)
+    out = frame_str(tasks.task_forward(cam, None, p=P_ID))
+    check('G 返回 OBST', out.startswith('OBST,'), out)
+    check('5 帧内出结果', cam.reads <= 6, 'reads=%d' % cam.reads)
+
+    print('\n== F 码垛：颜色投票已关 ==')
+    out = frame_str(tasks.task_stack(_FlipCam(1), vision.ColorClassifier(ai=None),
+                                     None, p=P_ID))
+    check('颜色每帧跳变也能完成', out.startswith('STACK,'), out)
+
+    print('\n== 圆盘对齐（MOVE 闭环）==')
+    old_settle = config.ALIGN_SETTLE_MS
+    old_iter = config.ALIGN_MAX_ITER
+    try:
+        config.ALIGN_SETTLE_MS = 0
+
+        cam = FakeCam(1, circle_x=640)      # 目标偏右 320px
+        lk = _AlignLink(cam)
+        out = frame_str(tasks.task_disc(cam, None, config.ROI_DISC_ROUGH, 'D',
+                                        p=P_ID, ctl=tasks.TaskCtl(lk))).split(',')
+        check('对齐成功 ok=1', out[0] == 'DISC' and out[-1] == '1', out)
+        check('最终 |dx|<=5', abs(int(out[3])) <= 5, out)
+        check('确实发过 MOVE', any(x.startswith('MOVE,') for x in lk.sent),
+              lk.sent[:3])
+        check('收敛到中心', abs(cam.circle_x - 640) > 0, 'circle_x=%d' % cam.circle_x)
+
+        # 机构不动 → 次数用尽后带偏差回复 ok=0
+        config.ALIGN_MAX_ITER = 3
+        cam2 = FakeCam(1, circle_x=640)
+        lk2 = _Link([])
+        out2 = frame_str(tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
+                                         p=P_ID, ctl=tasks.TaskCtl(lk2))).split(',')
+        check('超次数 → ok=0', out2[0] == 'DISC' and out2[-1] == '0', out2)
+        check('超次数仍发了 3 条 MOVE',
+              sum(1 for x in lk2.sent if x.startswith('MOVE,')) == 3, lk2.sent)
+    finally:
+        config.ALIGN_SETTLE_MS = old_settle
+        config.ALIGN_MAX_ITER = old_iter
+
+    print()
+    if FAILED:
+        print('[FAIL] %d 项: %s' % (len(FAILED), FAILED))
+        return 1
+    print('[ALL PASS] 任务冒烟测试通过')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

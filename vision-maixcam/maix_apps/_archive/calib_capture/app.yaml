@@ -1,0 +1,14 @@
+id: calib_capture
+name: Calib Capture
+name[zh]: 标定拍图助手
+version: 1.0.0
+icon: assets/icon.png
+author: YYB Team
+desc: Capture images for checkerboard camera calibration (distortion 15-20 shots / hand-eye 1 shot). Preview + 3x3 grid + tap to save.
+desc[zh]: 棋盘格标定拍图工具：实时预览 + 九宫格参考线 + 点屏保存，用于畸变标定与手眼标定。
+
+files:
+  - app.yaml
+  - assets
+  - main.py
+  - README.md

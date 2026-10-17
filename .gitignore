@@ -41,6 +41,7 @@ temp/
 !/test-code/
 !/文档/
 !/附件/
+!/vision-maixcam/
 
 # 本地凭据不入库（只按文件名忽略）。
 .env
