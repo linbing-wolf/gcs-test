@@ -1160,21 +1160,21 @@ Image Symbol Table
     .constdata                               0x08010178   Section        8  heading_control.o(.constdata)
     forward_sign                             0x08010178   Data           4  heading_control.o(.constdata)
     left_sign                                0x0801017c   Data           4  heading_control.o(.constdata)
-    .constdata                               0x08010180   Section    377792  route_table.o(.constdata)
+    .constdata                               0x08010180   Section    343680  route_table.o(.constdata)
     table_primary                            0x08010180   Data       331776  route_table.o(.constdata)
-    table_secondary                          0x08061180   Data       35520  route_table.o(.constdata)
-    table_path_base                          0x08069c40   Data         162  route_table.o(.constdata)
-    table_decision_base                      0x08069ce2   Data         162  route_table.o(.constdata)
-    table_decisions                          0x08069d84   Data        2336  route_table.o(.constdata)
-    table_paths                              0x0806a6a4   Data        7836  route_table.o(.constdata)
-    .constdata                               0x0806c540   Section      136  pow.o(.constdata)
-    bp                                       0x0806c540   Data          16  pow.o(.constdata)
-    dp_h                                     0x0806c550   Data          16  pow.o(.constdata)
-    dp_l                                     0x0806c560   Data          16  pow.o(.constdata)
-    L                                        0x0806c570   Data          48  pow.o(.constdata)
-    P                                        0x0806c5a0   Data          40  pow.o(.constdata)
-    .constdata                               0x0806c5c8   Section        8  qnan.o(.constdata)
-    .conststring                             0x0806c5d0   Section     2322  main_table_nav.o(.conststring)
+    table_secondary                          0x08061180   Data        2944  route_table.o(.constdata)
+    table_path_base                          0x08061d00   Data         162  route_table.o(.constdata)
+    table_decision_base                      0x08061da2   Data         162  route_table.o(.constdata)
+    table_decisions                          0x08061e44   Data         800  route_table.o(.constdata)
+    table_paths                              0x08062164   Data        7836  route_table.o(.constdata)
+    .constdata                               0x08064000   Section      136  pow.o(.constdata)
+    bp                                       0x08064000   Data          16  pow.o(.constdata)
+    dp_h                                     0x08064010   Data          16  pow.o(.constdata)
+    dp_l                                     0x08064020   Data          16  pow.o(.constdata)
+    L                                        0x08064030   Data          48  pow.o(.constdata)
+    P                                        0x08064060   Data          40  pow.o(.constdata)
+    .constdata                               0x08064088   Section        8  qnan.o(.constdata)
+    .conststring                             0x08064090   Section     2322  main_table_nav.o(.conststring)
     .data                                    0x20000000   Section       16  stm32f4xx_rcc.o(.data)
     APBAHBPrescTable                         0x20000000   Data          16  stm32f4xx_rcc.o(.data)
     .data                                    0x20000010   Section        4  delay.o(.data)
@@ -1969,9 +1969,9 @@ Image Symbol Table
     c_uiBaud                                 0x0800f5d0   Data          40  imu.o(.constdata)
     OLED_F8x16                               0x0800f7f8   Data        1520  oled.o(.constdata)
     road_motion_table                        0x0800fe74   Data         720  road_map.o(.constdata)
-    __mathlib_zero                           0x0806c5c8   Data           8  qnan.o(.constdata)
-    Region$$Table$$Base                      0x0806cee4   Number         0  anon$$obj.o(Region$$Table)
-    Region$$Table$$Limit                     0x0806cf04   Number         0  anon$$obj.o(Region$$Table)
+    __mathlib_zero                           0x08064088   Data           8  qnan.o(.constdata)
+    Region$$Table$$Base                      0x080649a4   Number         0  anon$$obj.o(Region$$Table)
+    Region$$Table$$Limit                     0x080649c4   Number         0  anon$$obj.o(Region$$Table)
     Serial_RxFlag                            0x20000014   Data           1  serial.o(.data)
     can_RxFlag                               0x20000017   Data           1  can.o(.data)
     test4                                    0x20000018   Data           1  can.o(.data)
@@ -2021,9 +2021,9 @@ Memory Map of the image
 
   Image Entry point : 0x08000189
 
-  Load Region LR_IROM1 (Base: 0x08000000, Size: 0x0006d0d0, Max: 0x00100000, ABSOLUTE, COMPRESSED[0x0006cfa8])
+  Load Region LR_IROM1 (Base: 0x08000000, Size: 0x00064b90, Max: 0x00100000, ABSOLUTE, COMPRESSED[0x00064a70])
 
-    Execution Region ER_IROM1 (Exec base: 0x08000000, Load base: 0x08000000, Size: 0x0006cf04, Max: 0x00100000, ABSOLUTE)
+    Execution Region ER_IROM1 (Exec base: 0x08000000, Load base: 0x08000000, Size: 0x000649c4, Max: 0x00100000, ABSOLUTE)
 
     Exec Addr    Load Addr    Size         Type   Attr      Idx    E Section Name        Object
 
@@ -2189,15 +2189,15 @@ Memory Map of the image
     0x0800fe74   0x0800fe74   0x000002f4   Data   RO         1535    .constdata          road_map.o
     0x08010168   0x08010168   0x00000010   Data   RO         1553    .constdata          motion.o
     0x08010178   0x08010178   0x00000008   Data   RO         1586    .constdata          heading_control.o
-    0x08010180   0x08010180   0x0005c3c0   Data   RO         1599    .constdata          route_table.o
-    0x0806c540   0x0806c540   0x00000088   Data   RO         1688    .constdata          m_wm.l(pow.o)
-    0x0806c5c8   0x0806c5c8   0x00000008   Data   RO         1753    .constdata          m_wm.l(qnan.o)
-    0x0806c5d0   0x0806c5d0   0x00000912   Data   RO         1422    .conststring        main_table_nav.o
-    0x0806cee2   0x0806cee2   0x00000002   PAD
-    0x0806cee4   0x0806cee4   0x00000020   Data   RO         1927    Region$$Table       anon$$obj.o
+    0x08010180   0x08010180   0x00053e80   Data   RO         1599    .constdata          route_table.o
+    0x08064000   0x08064000   0x00000088   Data   RO         1688    .constdata          m_wm.l(pow.o)
+    0x08064088   0x08064088   0x00000008   Data   RO         1753    .constdata          m_wm.l(qnan.o)
+    0x08064090   0x08064090   0x00000912   Data   RO         1422    .conststring        main_table_nav.o
+    0x080649a2   0x080649a2   0x00000002   PAD
+    0x080649a4   0x080649a4   0x00000020   Data   RO         1927    Region$$Table       anon$$obj.o
 
 
-    Execution Region RW_IRAM1 (Exec base: 0x20000000, Load base: 0x0806cf04, Size: 0x000010e0, Max: 0x00020000, ABSOLUTE, COMPRESSED[0x000000a4])
+    Execution Region RW_IRAM1 (Exec base: 0x20000000, Load base: 0x080649c4, Size: 0x000010e0, Max: 0x00020000, ABSOLUTE, COMPRESSED[0x000000ac])
 
     Exec Addr    Load Addr    Size         Type   Attr      Idx    E Section Name        Object
 
@@ -2235,44 +2235,44 @@ Image component sizes
 
       Code (inc. data)   RO Data    RW Data    ZI Data      Debug   Object Name
 
-       372         10          0          0          0       1791   board.o
-       408         18          0          2         44       3200   can.o
-       472         18          0          4          0       2497   delay.o
-      1074         18          0          0          0       5674   emm_v5.o
-       140          4          0          0          0        897   exti.o
-       644         74          8          0          0       3431   heading_control.o
-       332          6          0          0          0       2943   heading_sensor.o
-      1056         66         40          7         50       4371   imu.o
-     20784       5936       2462        200       1448      37892   main_table_nav.o
-       224         20          0          0          0     295153   misc.o
-      1592         32         16          0          0       5546   motion.o
-       924          0          0          0          0       5903   navigation.o
-      1102          8       1520          0          0       5460   oled.o
-      1736        186          0         44         72       6140   pid.o
-      3656        214          0         84          0       7087   pwm.o
-       424          8        756          0          0       4803   road_map.o
-       280         24     377792          0          0       2701   route_table.o
-       536         30          0          3         44       3338   serial.o
-       180         16          0          0          0       1303   servo.o
-        64         26        392          0       1536        972   startup_stm32f40_41xxx.o
-      2544         38          0          0          0       8392   stm32f4xx_can.o
-       272         10          0          0          0       2539   stm32f4xx_exti.o
-       660         44          0          0          0       4405   stm32f4xx_gpio.o
-        26          0          0          0          0       1358   stm32f4xx_it.o
-      1628         52          0         16          0      13384   stm32f4xx_rcc.o
-       148         12          0          0          0       1961   stm32f4xx_syscfg.o
-      3234         60          0          0          0      23260   stm32f4xx_tim.o
-      1108         34          0          0          0       8128   stm32f4xx_usart.o
-       528         46          0         20          0       2171   system_stm32f4xx.o
-       108          4          0          0          0        702   time_oled.o
-       156         10          0          0          0        781   timer.o
-       204         12          0          0          0       3071   usart.o
-       844        116          0         12         20       3099   usart5.o
-      2916        124        512         40        544      11337   wit_c_sdk.o
-      2864        142          0         24          0       6580   yyb_move.o
+       372         10          0          0          0       1647   board.o
+       408         18          0          2         44       2840   can.o
+       472         18          0          4          0       2353   delay.o
+      1074         18          0          0          0       5530   emm_v5.o
+       140          4          0          0          0        825   exti.o
+       644         74          8          0          0       3287   heading_control.o
+       332          6          0          0          0       2799   heading_sensor.o
+      1056         66         40          7         50       4155   imu.o
+     20784       5936       2462        200       1448      37392   main_table_nav.o
+       224         20          0          0          0     294433   misc.o
+      1592         32         16          0          0       5330   motion.o
+       924          0          0          0          0       5687   navigation.o
+      1102          8       1520          0          0       5244   oled.o
+      1736        186          0         44         72       5924   pid.o
+      3656        214          0         84          0       6871   pwm.o
+       424          8        756          0          0       4663   road_map.o
+       280         24     343680          0          0       2473   route_table.o
+       536         30          0          3         44       3122   serial.o
+       180         16          0          0          0       1231   servo.o
+        64         26        392          0       1536        900   startup_stm32f40_41xxx.o
+      2544         38          0          0          0       8248   stm32f4xx_can.o
+       272         10          0          0          0       2395   stm32f4xx_exti.o
+       660         44          0          0          0       4261   stm32f4xx_gpio.o
+        26          0          0          0          0       1286   stm32f4xx_it.o
+      1628         52          0         16          0      13168   stm32f4xx_rcc.o
+       148         12          0          0          0       1889   stm32f4xx_syscfg.o
+      3234         60          0          0          0      23116   stm32f4xx_tim.o
+      1108         34          0          0          0       7984   stm32f4xx_usart.o
+       528         46          0         20          0       1955   system_stm32f4xx.o
+       108          4          0          0          0        630   time_oled.o
+       156         10          0          0          0        709   timer.o
+       204         12          0          0          0       2927   usart.o
+       844        116          0         12         20       2883   usart5.o
+      2916        124        512         40        544      11049   wit_c_sdk.o
+      2864        142          0         24          0       6436   yyb_move.o
 
     ----------------------------------------------------------------------
-     53248       7418     383532        460       3764     492270   Object Totals
+     53248       7418     349420        460       3764     485642   Object Totals
          0          0         32          0          0          0   (incl. Generated)
          8          0          2          4          6          0   (incl. Padding)
 
@@ -2367,15 +2367,15 @@ Image component sizes
 
       Code (inc. data)   RO Data    RW Data    ZI Data      Debug   
 
-     62536       8038     383676        460       3860     487550   Grand Totals
-     62536       8038     383676        164       3860     487550   ELF Image Totals (compressed)
-     62536       8038     383676        164          0          0   ROM Totals
+     62536       8038     349564        460       3860     480922   Grand Totals
+     62536       8038     349564        172       3860     480922   ELF Image Totals (compressed)
+     62536       8038     349564        172          0          0   ROM Totals
 
 ==============================================================================
 
-    Total RO  Size (Code + RO Data)               446212 ( 435.75kB)
+    Total RO  Size (Code + RO Data)               412100 ( 402.44kB)
     Total RW  Size (RW Data + ZI Data)              4320 (   4.22kB)
-    Total ROM Size (Code + RO Data + RW Data)     446376 ( 435.91kB)
+    Total ROM Size (Code + RO Data + RW Data)     412272 ( 402.61kB)
 
 ==============================================================================
 

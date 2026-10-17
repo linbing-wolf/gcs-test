@@ -15,12 +15,16 @@
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */
 #define CAR_RUN_RETURN_LATERAL_ENABLED 1     /* 已走返回路：恢复发车朝向后后退，末段60mm横移归位。 */
 #define CAR_LATERAL_MAX_RPM          60      /* 横移速度上限；先沿用已标定的60RPM范围。 */
-/* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y；A/C及B/E/H不移动。
+/* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y，暂存H向+X；A/C及B/E不移动。
  * 单位mm。修改后先运行tools/rebuild-route-table.ps1重生成并验证查表，再编译。 */
 #define CAR_MAP_TOP_INSET_MM         90
 #define CAR_MAP_BOTTOM_INSET_MM      50
+#define CAR_MAP_RAW_EXTRA_INSET_MM   50      /* 仅原料F再向场内内移；G点不随动，单位mm。 */
+#define CAR_MAP_STORAGE_INSET_MM     80      /* 仅暂存H向地图中部(+X)内移，单位mm。 */
 #if CAR_MAP_TOP_INSET_MM < 0 || CAR_MAP_TOP_INSET_MM >= 1000 || \
-    CAR_MAP_BOTTOM_INSET_MM < 0 || CAR_MAP_BOTTOM_INSET_MM >= 860
+    CAR_MAP_BOTTOM_INSET_MM < 0 || CAR_MAP_BOTTOM_INSET_MM >= 860 || \
+    CAR_MAP_RAW_EXTRA_INSET_MM < 0 || CAR_MAP_TOP_INSET_MM + CAR_MAP_RAW_EXTRA_INSET_MM >= 1000 || \
+    CAR_MAP_STORAGE_INSET_MM < 0 || CAR_MAP_STORAGE_INSET_MM >= 860
 #error Invalid_map_inset
 #endif
 #define CAR_ROAD_DEFAULT_RPM        100       /* 人工导航 rpm 0 时，道路表的默认速度。 */

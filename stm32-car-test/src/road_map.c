@@ -21,13 +21,13 @@ static const RoadPoint nodes[9] =
         1200, 1200
     },
     {
-        1200, 200 + CAR_MAP_TOP_INSET_MM
+        1200, 200 + CAR_MAP_TOP_INSET_MM + CAR_MAP_RAW_EXTRA_INSET_MM
     },
     {
         340, 200 + CAR_MAP_TOP_INSET_MM
     },
     {
-        340, 1200
+        340 + CAR_MAP_STORAGE_INSET_MM, 1200
     },
     {
         340, 2060 - CAR_MAP_BOTTOM_INSET_MM
@@ -71,7 +71,7 @@ int road_motion_parameters(MotionParameters stored, RoadHeading heading, MotionP
     BodySegment body;
     if (!out || (unsigned) stored.axis > BODY_LEFT)
         return 0;
-    /* 结构表以+Y车头为基准：正向前进=+Y，正向左移=-X。 */
+    /* 旧结构表的横向正值编码图面-X；先还原场地位移，再换算真实车身左右。 */
     field.dx = stored.axis == BODY_LEFT ? (int16_t)-stored.mm : 0;
     field.dy = stored.axis == BODY_FORWARD ? stored.mm : 0;
     if (!road_body_segment(field, heading, &body))
@@ -88,23 +88,24 @@ int road_body_segment(RoadSegment segment, RoadHeading heading, BodySegment *out
     if (!out || (unsigned) heading > HEAD_X_POS || (!segment.dx && !segment.dy) || (segment.dx
         && segment.dy))
         return 0;
+    /* 图面Y向下：朝下时，车身左侧朝图面+X。 */
     switch (heading)
     {
     case HEAD_Y_POS:
         forward = segment.dy;
-        left = -segment.dx;
+        left = segment.dx;
         break;
     case HEAD_X_NEG:
         forward = -segment.dx;
-        left = -segment.dy;
+        left = segment.dy;
         break;
     case HEAD_Y_NEG:
         forward = -segment.dy;
-        left = segment.dx;
+        left = -segment.dx;
         break;
     case HEAD_X_POS:
         forward = segment.dx;
-        left = segment.dy;
+        left = -segment.dy;
         break;
     default:
         return 0;

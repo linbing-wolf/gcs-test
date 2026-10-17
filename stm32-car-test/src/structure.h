@@ -8,7 +8,9 @@
 /* 由原图基准距离和内移量推导，去程/回程共用，防止单向改距。 */
 #define ROAD_TOP_LEG_MM          (1000 - CAR_MAP_TOP_INSET_MM)
 #define ROAD_BOTTOM_LEG_MM       (860 - CAR_MAP_BOTTOM_INSET_MM)
-#define ROAD_A_TOP_LINK_MM       (30 + CAR_MAP_TOP_INSET_MM)
+#define ROAD_RAW_LEG_MM          (ROAD_TOP_LEG_MM - CAR_MAP_RAW_EXTRA_INSET_MM)
+#define ROAD_STORAGE_LEG_MM      (860 - CAR_MAP_STORAGE_INSET_MM)
+#define ROAD_A_TOP_LINK_MM       (30 + CAR_MAP_TOP_INSET_MM + CAR_MAP_RAW_EXTRA_INSET_MM)
 #define ROAD_C_BOTTOM_LINK_MM    (170 + CAR_MAP_BOTTOM_INSET_MM)
 typedef enum
 {
@@ -50,7 +52,8 @@ typedef struct
     uint8_t acceleration;
 } MotionParameters;
 /* 一条有向道路对应一个结构体；segments按实际执行顺序填写。
- * 参数以车头朝场地+Y为基准，其他朝向只换算axis/mm，保留速度和加速度。
+ * 保留旧道路编码：BODY_FORWARD正值=图面+Y，BODY_LEFT正值=图面-X。
+ * 该表的横向符号不是实际车身左右；必须经road_motion_parameters换算。
  */
 typedef struct
 {
@@ -151,55 +154,68 @@ const RoadPlan road_motion_table[ROAD_DIRECTION_COUNT] =
         }
     },
 
-    /* I → H：道路 4，下沿到中线。 */
+    /* I → H：在G/I端连接H的新X中心线，避免经过旧H停靠点。 */
     {
-        4, NODE_I, NODE_H, 1, ROAD_BOTTOM_LEG_MM,
+        4, NODE_I, NODE_H, 1 + (CAR_MAP_STORAGE_INSET_MM > 0), ROAD_BOTTOM_LEG_MM + CAR_MAP_STORAGE_INSET_MM,
         {
-            /* 第 1 段：下沿内移后缩短行程。 */
+#if CAR_MAP_STORAGE_INSET_MM > 0
+            {BODY_LEFT, -CAR_MAP_STORAGE_INSET_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION},
+#endif
             {BODY_FORWARD, -ROAD_BOTTOM_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 
-    /* H → I：道路 4，中线到内移后的下沿。 */
+    /* H → I：在G/I端连接H的新X中心线，避免经过旧H停靠点。 */
     {
-        4, NODE_H, NODE_I, 1, ROAD_BOTTOM_LEG_MM,
+        4, NODE_H, NODE_I, 1 + (CAR_MAP_STORAGE_INSET_MM > 0), ROAD_BOTTOM_LEG_MM + CAR_MAP_STORAGE_INSET_MM,
         {
-            /* 第 1 段：去程/回程使用同一基准距离。 */
-            {BODY_FORWARD, ROAD_BOTTOM_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_FORWARD, ROAD_BOTTOM_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION},
+#if CAR_MAP_STORAGE_INSET_MM > 0
+            {BODY_LEFT, CAR_MAP_STORAGE_INSET_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+#endif
         }
     },
 
-    /* H → G：道路 5，中线到内移后的上沿。 */
+    /* H → G：在G/I端连接H的新X中心线，避免经过旧H停靠点。 */
     {
-        5, NODE_H, NODE_G, 1, ROAD_TOP_LEG_MM,
+        5, NODE_H, NODE_G, 1 + (CAR_MAP_STORAGE_INSET_MM > 0), ROAD_TOP_LEG_MM + CAR_MAP_STORAGE_INSET_MM,
         {
-            {BODY_FORWARD, -ROAD_TOP_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_FORWARD, -ROAD_TOP_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION},
+#if CAR_MAP_STORAGE_INSET_MM > 0
+            {BODY_LEFT, CAR_MAP_STORAGE_INSET_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+#endif
         }
     },
 
-    /* G → H：道路 5，上沿到中线。 */
+    /* G → H：在G/I端连接H的新X中心线，避免经过旧H停靠点。 */
     {
-        5, NODE_G, NODE_H, 1, ROAD_TOP_LEG_MM,
+        5, NODE_G, NODE_H, 1 + (CAR_MAP_STORAGE_INSET_MM > 0), ROAD_TOP_LEG_MM + CAR_MAP_STORAGE_INSET_MM,
         {
+#if CAR_MAP_STORAGE_INSET_MM > 0
+            {BODY_LEFT, -CAR_MAP_STORAGE_INSET_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION},
+#endif
             {BODY_FORWARD, ROAD_TOP_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 
-    /* G → F：道路 6，1 个运动段，理论总长 860 mm。 */
+    /* G↔F沿F的新停靠线横走；拐点在G侧，避免经过旧F碰撞位置。 */
     {
-        6, NODE_G, NODE_F, 1, 860,
+        6, NODE_G, NODE_F, 1 + (CAR_MAP_RAW_EXTRA_INSET_MM > 0), 860 + CAR_MAP_RAW_EXTRA_INSET_MM,
         {
-            /* 第 1 段：右移 860 mm。 */
+#if CAR_MAP_RAW_EXTRA_INSET_MM > 0
+            {BODY_FORWARD, CAR_MAP_RAW_EXTRA_INSET_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION},
+#endif
             {BODY_LEFT, -860, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 
-    /* F → G：道路 6，1 个运动段，理论总长 860 mm。 */
     {
-        6, NODE_F, NODE_G, 1, 860,
+        6, NODE_F, NODE_G, 1 + (CAR_MAP_RAW_EXTRA_INSET_MM > 0), 860 + CAR_MAP_RAW_EXTRA_INSET_MM,
         {
-            /* 第 1 段：左移 860 mm。 */
-            {BODY_LEFT, 860, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_LEFT, 860, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION},
+#if CAR_MAP_RAW_EXTRA_INSET_MM > 0
+            {BODY_FORWARD, -CAR_MAP_RAW_EXTRA_INSET_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+#endif
         }
     },
 
@@ -225,17 +241,17 @@ const RoadPlan road_motion_table[ROAD_DIRECTION_COUNT] =
 
     /* F → E：道路 8，内移后的原料停靠点到中线。 */
     {
-        8, NODE_F, NODE_E, 1, ROAD_TOP_LEG_MM,
+        8, NODE_F, NODE_E, 1, ROAD_RAW_LEG_MM,
         {
-            {BODY_FORWARD, ROAD_TOP_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_FORWARD, ROAD_RAW_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 
     /* E → F：道路 8，中线到内移后的原料停靠点。 */
     {
-        8, NODE_E, NODE_F, 1, ROAD_TOP_LEG_MM,
+        8, NODE_E, NODE_F, 1, ROAD_RAW_LEG_MM,
         {
-            {BODY_FORWARD, -ROAD_TOP_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_FORWARD, -ROAD_RAW_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 
@@ -257,19 +273,19 @@ const RoadPlan road_motion_table[ROAD_DIRECTION_COUNT] =
 
     /* H → E：道路 10，1 个运动段，理论总长 860 mm。 */
     {
-        10, NODE_H, NODE_E, 1, 860,
+        10, NODE_H, NODE_E, 1, ROAD_STORAGE_LEG_MM,
         {
             /* 第 1 段：右移 860 mm。 */
-            {BODY_LEFT, -860, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_LEFT, -ROAD_STORAGE_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 
     /* E → H：道路 10，1 个运动段，理论总长 860 mm。 */
     {
-        10, NODE_E, NODE_H, 1, 860,
+        10, NODE_E, NODE_H, 1, ROAD_STORAGE_LEG_MM,
         {
             /* 第 1 段：左移 860 mm。 */
-            {BODY_LEFT, 860, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
+            {BODY_LEFT, ROAD_STORAGE_LEG_MM, CAR_ROAD_DEFAULT_RPM, CAR_MOTION_ACCELERATION}
         }
     },
 

@@ -7,7 +7,7 @@ static uint32_t assertions;
 #define CHECK(x) do {assertions++;if(!(x)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x);exit(1);}} while(0)
 #define NAV_ENTRY_HOST_TEST
 #include "../src/main_table_nav.c"
-#define EXPECTED_FULL_ROUTE_MM (15040u - 4u*CAR_MAP_TOP_INSET_MM - 4u*CAR_MAP_BOTTOM_INSET_MM)
+#define EXPECTED_FULL_ROUTE_MM (15040u - 4u*CAR_MAP_TOP_INSET_MM - 4u*CAR_MAP_BOTTOM_INSET_MM - 4u*CAR_MAP_RAW_EXTRA_INSET_MM - 4u*CAR_MAP_STORAGE_INSET_MM)
 
 typedef struct {
     uint8_t addr,dir,acc;
@@ -289,9 +289,10 @@ static void navigation_regression(void)
     send_line(" pose A\t ");CHECK(pose_set && nav.position_confirmed && strstr(output,"[accepted]"));
     send_line("heading 0");send_line("rpm 30");send_line("go B");
     CHECK(nav.state==NAV_MOVING && position_count==4 && drive.parameters.axis==BODY_LEFT);
-    CHECK(drive.parameters.mm==60 && drive.parameters.rpm==30);
+    CHECK(drive.parameters.mm==-60 && drive.parameters.rpm==30);
     CHECK(drive.pulses==663);
-    CHECK(drive.forward_trim_mm==1 && sent[0].pulses==674 && sent[1].pulses==653);
+    /* A朝图面+Y：到B先右移60mm，使用右移8mm/m预补偿，取整为0mm。 */
+    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==663 && sent[1].pulses==663);
     await_estimate();CHECK(nav.state==NAV_MOVING && drive.state==MOTION_WAIT_CONFIRM);
     send_line("confirm");CHECK(position_count==8 && drive.parameters.axis==BODY_FORWARD && drive.parameters.mm==1030);
     pulses=drive.pulses;CHECK(pulses==10671);
@@ -628,9 +629,29 @@ static void scanner_tests(void)
     CHECK(scanner.state==SCANNER_FAULT && scanner.uart_errors==1 && !scanner_sent_count);
     puts("PASS XM1601: exact CRLF/continuous packets, fragmented ACK, no premature READY, QR line assembly, burst results, UART/queue/line overflow recovery, invalid ACK timeout, explicit baud/reinit, timer wrap and stop priority; no motion or Flash writes");
 }
+static void body_coordinate_tests(void)
+{
+    static const RoadSegment forward[4]={{0,100},{-100,0},{0,-100},{100,0}};
+    static const RoadSegment left[4]={{100,0},{0,100},{-100,0},{0,-100}};
+    unsigned heading,axis,sign;
+    for(heading=0;heading<4;heading++)for(axis=0;axis<2;axis++)for(sign=0;sign<2;sign++) {
+        RoadSegment field=axis ? left[heading] : forward[heading];
+        BodySegment body;
+        MotionParameters stored,converted;
+        if(sign){field.dx=-field.dx;field.dy=-field.dy;}
+        CHECK(road_body_segment(field,(RoadHeading)heading,&body));
+        CHECK(body.axis==(axis ? BODY_LEFT : BODY_FORWARD) && body.mm==(sign ? -100 : 100));
+        stored.axis=field.dx ? BODY_LEFT : BODY_FORWARD;
+        stored.mm=field.dx ? -field.dx : field.dy;stored.rpm=30;stored.acceleration=150;
+        CHECK(road_motion_parameters(stored,(RoadHeading)heading,&converted));
+        CHECK(converted.axis==body.axis && converted.mm==body.mm && converted.rpm==30 && converted.acceleration==150);
+    }
+    puts("PASS body coordinates: independent drawing vectors, four headings, forward/backward/left/right, legacy-road encoding preserved");
+}
+
 int main(void)
 {
-    direction_tests();range_and_mode_tests();stop_and_timeout_tests();navigation_regression();trim_tests();rotation_tests();full_route_tests();
+    body_coordinate_tests();direction_tests();range_and_mode_tests();stop_and_timeout_tests();navigation_regression();trim_tests();rotation_tests();full_route_tests();
     start_button_tests();
     scanner_tests();
     printf("PASS entry: %lu assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks\n",(unsigned long)assertions);

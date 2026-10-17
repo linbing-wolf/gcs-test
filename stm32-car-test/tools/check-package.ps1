@@ -23,8 +23,8 @@ foreach($packageSource in $packageGeneration.sourceHashes.PSObject.Properties){
     if((Get-FileHash -LiteralPath $packageInput -Algorithm SHA256).Hash.ToLowerInvariant() -ne $packageSource.Value){throw "Stale route table: rerun tools/rebuild-route-table.ps1 after changing $($packageSource.Name)"}
 }
 $packageConfig=Get-Content -Raw -LiteralPath (Join-Path $packageRootPath 'src/car_config.h')
-foreach($packageParameter in @(@('CAR_MAP_TOP_INSET_MM','topInsetMm'),@('CAR_MAP_BOTTOM_INSET_MM','bottomInsetMm'))){
-    $packageMatch=[regex]::Match($packageConfig,'(?m)^#define\s+'+$packageParameter[0]+'\s+(\d+)\s*$')
+foreach($packageParameter in @(@('CAR_MAP_TOP_INSET_MM','topInsetMm'),@('CAR_MAP_BOTTOM_INSET_MM','bottomInsetMm'),@('CAR_MAP_RAW_EXTRA_INSET_MM','rawExtraInsetMm'),@('CAR_MAP_STORAGE_INSET_MM','storageInsetMm'))){
+    $packageMatch=[regex]::Match($packageConfig,'(?m)^#define\s+'+$packageParameter[0]+'\s+(\d+)\s*(?:/\*.*?\*/\s*)?$')
     if(!$packageMatch.Success -or [int]$packageMatch.Groups[1].Value -ne $packageGeneration.parameters.($packageParameter[1])){throw 'Map inset differs from generated table; rerun tools/rebuild-route-table.ps1'}
 }
 $packageProjectDir=Join-Path $packageRootPath 'keil'

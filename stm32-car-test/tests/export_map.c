@@ -13,6 +13,8 @@ int main(void)
     for(i=0;i<9;i++) {
         RoadPoint expected=original[i];
         if(i==NODE_F || i==NODE_G)expected.y+=CAR_MAP_TOP_INSET_MM;
+        if(i==NODE_F)expected.y+=CAR_MAP_RAW_EXTRA_INSET_MM;
+        if(i==NODE_H)expected.x+=CAR_MAP_STORAGE_INSET_MM;
         if(i==NODE_D || i==NODE_I)expected.y-=CAR_MAP_BOTTOM_INSET_MM;
         REQUIRE(road_point((uint8_t)i,&points[i]));
         REQUIRE(points[i].x==expected.x && points[i].y==expected.y);
@@ -32,10 +34,18 @@ int main(void)
         }
         REQUIRE(x==points[p->to].x && y==points[p->to].y && length==p->length);
         REQUIRE(length==abs(points[p->to].x-points[p->from].x)+abs(points[p->to].y-points[p->from].y));
+        if(p->from==NODE_G && p->to==NODE_F && CAR_MAP_RAW_EXTRA_INSET_MM) {
+            REQUIRE(p->count==2 && p->segments[0].axis==BODY_FORWARD);
+            REQUIRE(p->segments[0].mm==CAR_MAP_RAW_EXTRA_INSET_MM);
+        }
+        if(p->to==NODE_H && (p->from==NODE_G || p->from==NODE_I) && CAR_MAP_STORAGE_INSET_MM) {
+            REQUIRE(p->count==2 && p->segments[0].axis==BODY_LEFT);
+            REQUIRE(p->segments[0].mm==-CAR_MAP_STORAGE_INSET_MM);
+        }
         REQUIRE(reverse.length==p->length);road_counts[p->road]++;
     }
     for(i=0;i<ROAD_COUNT;i++)REQUIRE(road_counts[i]==2);
-    printf("{\"geometryValidationPassed\":true,\"parameters\":{\"topInsetMm\":%d,\"bottomInsetMm\":%d},\"nodes\":[",CAR_MAP_TOP_INSET_MM,CAR_MAP_BOTTOM_INSET_MM);
+    printf("{\"geometryValidationPassed\":true,\"parameters\":{\"topInsetMm\":%d,\"bottomInsetMm\":%d,\"rawExtraInsetMm\":%d,\"storageInsetMm\":%d},\"nodes\":[",CAR_MAP_TOP_INSET_MM,CAR_MAP_BOTTOM_INSET_MM,CAR_MAP_RAW_EXTRA_INSET_MM,CAR_MAP_STORAGE_INSET_MM);
     for(i=0;i<9;i++)printf("%s[%d,%d]",i?",":"",points[i].x,points[i].y);
     printf("],\"roads\":[");
     for(i=0;i<ROAD_COUNT;i++) {

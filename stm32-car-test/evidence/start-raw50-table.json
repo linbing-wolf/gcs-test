@@ -1,0 +1,151 @@
+{
+  "passed": true,
+  "sourceHashes": {
+    "src/car_config.h": "de6d03297bf6bad1c0fb00a76cf761bcc560102124720b1b543ed66d25c6053f",
+    "src/structure.h": "f5d86ba135bc268502b8be6b5b1a365ba26b0668a84de8946c5a96c5ea71148c",
+    "src/road_map.c": "289740f63cae6c609ce25e833aab744b810042a30e4c5c1f6c152e8bf71b01ea",
+    "lookup/route_table.c": "93c1c4de3e3fc22fdab0c70ab3784c9c206806c91d04754109d83de7a672b46a",
+    "tests/export_map.c": "27908ef9378fb17710ed72a49db8e59a7ec3684a0fb45eb1eddf8453409b9a5c",
+    "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+    "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+    "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+    "tools/generate-route-table.cjs": "8a45d41906be7b9d8c562d5bcf6c3b282c3f6796a09b07143a5172dab1e83887",
+    "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44",
+    "lookup/table_data.h": "3d8d34c4adecb5288a71220d9ba56cad66190d2ee5465741bfaf172dd375db44",
+    "lookup/generation.json": "31fa47b74e6fa3a66a9a4877d902d6a4d8cf319ef3e2936fbb20824b5babb226"
+  },
+  "map": {
+    "geometryValidationPassed": true,
+    "parameters": {
+      "topInsetMm": 90,
+      "bottomInsetMm": 50,
+      "rawExtraInsetMm": 50
+    },
+    "nodes": [
+      [
+        2250,
+        170
+      ],
+      [
+        2190,
+        1200
+      ],
+      [
+        2250,
+        2230
+      ],
+      [
+        1200,
+        2010
+      ],
+      [
+        1200,
+        1200
+      ],
+      [
+        1200,
+        340
+      ],
+      [
+        340,
+        290
+      ],
+      [
+        340,
+        1200
+      ],
+      [
+        340,
+        2010
+      ]
+    ],
+    "roads": [
+      [
+        0,
+        1,
+        1090
+      ],
+      [
+        1,
+        2,
+        1090
+      ],
+      [
+        2,
+        3,
+        1270
+      ],
+      [
+        3,
+        8,
+        860
+      ],
+      [
+        8,
+        7,
+        810
+      ],
+      [
+        7,
+        6,
+        910
+      ],
+      [
+        6,
+        5,
+        910
+      ],
+      [
+        5,
+        0,
+        1220
+      ],
+      [
+        5,
+        4,
+        860
+      ],
+      [
+        4,
+        3,
+        810
+      ],
+      [
+        7,
+        4,
+        860
+      ],
+      [
+        4,
+        1,
+        990
+      ]
+    ],
+    "sourceHashes": {
+      "src/car_config.h": "de6d03297bf6bad1c0fb00a76cf761bcc560102124720b1b543ed66d25c6053f",
+      "src/structure.h": "f5d86ba135bc268502b8be6b5b1a365ba26b0668a84de8946c5a96c5ea71148c",
+      "src/road_map.c": "289740f63cae6c609ce25e833aab744b810042a30e4c5c1f6c152e8bf71b01ea",
+      "lookup/route_table.c": "93c1c4de3e3fc22fdab0c70ab3784c9c206806c91d04754109d83de7a672b46a",
+      "tests/export_map.c": "27908ef9378fb17710ed72a49db8e59a7ec3684a0fb45eb1eddf8453409b9a5c",
+      "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+      "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+      "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+      "tools/generate-route-table.cjs": "8a45d41906be7b9d8c562d5bcf6c3b282c3f6796a09b07143a5172dab1e83887",
+      "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44",
+      "lookup/table_data.h": "3d8d34c4adecb5288a71220d9ba56cad66190d2ee5465741bfaf172dd375db44",
+      "lookup/generation.json": "31fa47b74e6fa3a66a9a4877d902d6a4d8cf319ef3e2936fbb20824b5babb226"
+    }
+  },
+  "validation": {
+    "states": 531441,
+    "queries": 43046721,
+    "exactBaselineRoute": true,
+    "independentFloyd": true,
+    "blockedEdgesExcluded": true,
+    "invalidInputs": true,
+    "tableDataBytes": 355824,
+    "seconds": 3.452,
+    "hardwareRun": false
+  },
+  "hardwareRun": false
+}

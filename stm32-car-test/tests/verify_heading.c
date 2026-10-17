@@ -256,7 +256,7 @@ static void plant_step(void)
         double mm=forward*3200.0*elapsed/(60000.0*CALIBRATED_PPM_Y);
         double lateral_mm=left*3200.0*elapsed/(60000.0*CALIBRATED_PPM_X);
         field_x-=sin(angle)*mm;field_y+=cos(angle)*mm;
-        field_x-=cos(angle)*lateral_mm;field_y-=sin(angle)*lateral_mm;
+        field_x+=cos(angle)*lateral_mm;field_y+=sin(angle)*lateral_mm;
     }
     physical_yaw+=turn*yaw_gain*0.1*elapsed;
     if(fabs(forward)>1 || fabs(left)>1)physical_yaw+=0.04*elapsed; /* Independent yaw disturbance on either translation axis. */
@@ -288,13 +288,13 @@ static void plant_step(void)
     }
     if(run_active && run.velocity_phase==VELOCITY_FORWARD && run.steps!=last_step) {
         int mm=run.action_mm*run.travel_sign;
-        RoadHeading travel=(RoadHeading)(((unsigned)run.target_heading+(run.travel_axis==BODY_LEFT ? 1u : 0u))%4u);
+        RoadHeading travel=(RoadHeading)(((unsigned)run.target_heading+(run.travel_axis==BODY_LEFT ? 3u : 0u))%4u);
         forward_actions++;last_step=run.steps;
         if(run.travel_axis==BODY_LEFT) {
             lateral_actions++;
             if(run.edge==FULL_ROUTE_NODES-2u && !run.translation_only) {
                 CHECK(run.segment==1 && run.target_heading==run.initial_heading);
-                CHECK(run.travel_sign==(run.plan ? 1 : -1) && run.action_mm==60);
+                CHECK(run.travel_sign==(run.plan ? -1 : 1) && run.action_mm==60);
             }
         }
         if(run.travel_sign<0 && run.travel_axis==BODY_FORWARD)reverse_actions++;
@@ -393,7 +393,7 @@ static void continuous_route_tests(void)
         imu_period_ms=plan ? 50 : 100;
         send_line(plan ? "runimu C" : "runimu A");
         while(run_active && run.state==RUN_PREFLIGHT)plant_step();
-        CHECK(run.travel_axis==BODY_LEFT && run.travel_sign==(plan ? -1 : 1));
+        CHECK(run.travel_axis==BODY_LEFT && run.travel_sign==(plan ? 1 : -1));
         CHECK(run.target_heading==run.initial_heading && !rotation_starts);
         finish_plant(300000);
         CHECK(run.job==8 && run.edge==16 && run.distance_mm==EXPECTED_FULL_ROUTE_MM);
@@ -445,7 +445,7 @@ static void continuous_lateral_tests(void)
         CHECK(abs(run.progress_mm-requested)<=CAR_DISTANCE_TOLERANCE_MM);
         CHECK(abs(run.heading_control.error_cdeg)<=CAR_HEADING_TOLERANCE_CDEG);
         {
-            double error=fabs(field_x-(direction ? requested : -requested));
+            double error=fabs(field_x-(direction ? -requested : requested));
             CHECK(error<15);
             if(error>max_lateral_error)max_lateral_error=error;
             /* IMU无法观测前后平移；记录该偏移，不把它伪装成已闭环的验收指标。 */
@@ -483,7 +483,7 @@ static void continuous_lateral_tests(void)
         deadline=clock_ms+15000;
         while(run_active && clock_ms<deadline)plant_step();
         CHECK(run.state==RUN_DONE && abs(run.progress_mm-60)<=1);
-        CHECK(fabs(field_x-(direction ? 60 : -60))<3);
+        CHECK(fabs(field_x-(direction ? -60 : 60))<3);
     }
     for(test=0;test<8;test++) {
         uint32_t deadline;
@@ -708,7 +708,7 @@ static void return_lateral_policy_tests(void)
         CHECK(run_segment());
         if(history==1) {
             CHECK(run.travel_axis==BODY_LEFT && run.target_heading==initial);
-            CHECK(run.travel_sign==(plan ? 1 : -1));
+            CHECK(run.travel_sign==(plan ? -1 : 1));
         } else CHECK(run.travel_axis==BODY_FORWARD && run.target_heading==HEAD_X_POS && run.travel_sign==1);
         CHECK(run.completed_roads==(history==1 ? road_bit : history==2 ? (uint16_t)(1u<<11) : 0));
     }
@@ -728,7 +728,7 @@ static void return_lateral_policy_tests(void)
         while(run_active && clock_ms<deadline)plant_step();
         CHECK(!run_active && run.job==7 && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
     }
-    puts("PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A right / C left 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8");
+    puts("PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A left / C right 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8");
 }
 
 /* 构造经过真实角度模块稳定判据的上一段完成状态，供衔接边界验证。 */

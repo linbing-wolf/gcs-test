@@ -2,7 +2,9 @@
 #include "car_config.h"
 #include "table_data.h"
 #if CAR_MAP_TOP_INSET_MM != TABLE_MAP_TOP_INSET_MM || \
-    CAR_MAP_BOTTOM_INSET_MM != TABLE_MAP_BOTTOM_INSET_MM
+    CAR_MAP_BOTTOM_INSET_MM != TABLE_MAP_BOTTOM_INSET_MM || \
+    CAR_MAP_RAW_EXTRA_INSET_MM != TABLE_MAP_RAW_EXTRA_INSET_MM || \
+    CAR_MAP_STORAGE_INSET_MM != TABLE_MAP_STORAGE_INSET_MM
 #error Map_inset_changed_rebuild_route_table_first
 #endif
 

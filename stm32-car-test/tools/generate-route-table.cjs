@@ -108,6 +108,8 @@ const header='/* 自动生成：tools/rebuild-route-table.ps1；禁止手工修�
   '#ifndef NINE_TABLE_DATA_H\n#define NINE_TABLE_DATA_H\n'+
   `#define TABLE_MAP_TOP_INSET_MM ${mapInput.parameters.topInsetMm}\n`+
   `#define TABLE_MAP_BOTTOM_INSET_MM ${mapInput.parameters.bottomInsetMm}\n`+
+  `#define TABLE_MAP_RAW_EXTRA_INSET_MM ${mapInput.parameters.rawExtraInsetMm}\n`+
+  `#define TABLE_MAP_STORAGE_INSET_MM ${mapInput.parameters.storageInsetMm}\n`+
   'typedef struct { uint32_t offset; uint16_t mask; } TableDecision;\n'+
   array('uint8_t','table_primary',[...primary])+
   array('uint8_t','table_secondary',secondary)+

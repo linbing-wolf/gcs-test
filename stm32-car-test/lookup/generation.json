@@ -1,22 +1,24 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-17T03:13:52.987Z",
+  "generatedAt": "2026-10-17T09:10:46.261Z",
   "rule": "distance, then unknown distance, then exactly the current C baseline route",
   "sourceHashes": {
-    "src/car_config.h": "17f80166c2fe4d51a8c2f4731661f8b5f990e711950dd984b47fd23d927b28e3",
-    "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
-    "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
-    "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
-    "tests/export_map.c": "9134e256b50484c7c966c1544d8b689509f710e41eb15099115642c28e8b5f45",
+    "src/car_config.h": "ea0c00ac8df6159e1835238b8fff26eb6b7bae3de53490df70e47c3121c3a680",
+    "src/structure.h": "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+    "src/road_map.c": "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
+    "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
+    "tests/export_map.c": "42f4de04fdd40e16dd18b3c3c53159a5f41acc9014518b7657826ffa9c2ebecd",
     "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
     "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
     "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
-    "tools/generate-route-table.cjs": "34be5c6f892d03a0a38c82057ccaa2faa8dafd0f29a33a31c584f1474432ea83",
+    "tools/generate-route-table.cjs": "5b88b19a7f8e47229af8c36a3c0af0a324ab9779c5313231248b7d0f44e99e3e",
     "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44"
   },
   "parameters": {
     "topInsetMm": 90,
-    "bottomInsetMm": 50
+    "bottomInsetMm": 50,
+    "rawExtraInsetMm": 50,
+    "storageInsetMm": 80
   },
   "nodes": [
     [
@@ -41,14 +43,14 @@
     ],
     [
       1200,
-      290
+      340
     ],
     [
       340,
       290
     ],
     [
-      340,
+      420,
       1200
     ],
     [
@@ -80,27 +82,27 @@
     [
       8,
       7,
-      810
+      890
     ],
     [
       7,
       6,
-      910
+      990
     ],
     [
       6,
       5,
-      860
+      910
     ],
     [
       5,
       0,
-      1170
+      1220
     ],
     [
       5,
       4,
-      910
+      860
     ],
     [
       4,
@@ -110,7 +112,7 @@
     [
       7,
       4,
-      860
+      780
     ],
     [
       4,
@@ -122,11 +124,11 @@
   "nodePairs": 81,
   "queries": 43046721,
   "primaryBytes": 331776,
-  "secondaryBytes": 35520,
+  "secondaryBytes": 2944,
   "paths": 653,
-  "decisionClasses": 292,
-  "maxClassesPerPair": 14,
-  "tiedBlockedQueries": 8680,
-  "tableDataSha256": "3dfa385b61cb7b84967e2b1dfad424f6a54c9100615eab64b515c0d962815547",
+  "decisionClasses": 100,
+  "maxClassesPerPair": 5,
+  "tiedBlockedQueries": 5808,
+  "tableDataSha256": "52f9e9aa531bf693809ca61739188329f362bf5ca0be17c485ae05a6861fadc6",
   "validation": "passed: all 531441 states / 43046721 exact C-reference queries and independent Floyd"
 }

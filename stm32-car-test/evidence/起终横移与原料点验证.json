@@ -1,0 +1,182 @@
+{
+  "version": "start-direction-raw50-20261017",
+  "date": "2026-10-17",
+  "sourceHashes": {
+    "src/main_table_nav.c": "f8407c75296a3789c262d3d65fd6fcf343880ed81dd7484e036641b5ade28e60",
+    "src/car_config.h": "de6d03297bf6bad1c0fb00a76cf761bcc560102124720b1b543ed66d25c6053f",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/heading_control.c": "ab311be8bbe6016dff1fd61c844737001adc02025e6fdfa7f3032eedffceb94c",
+    "src/heading_control.h": "9e61a485fd2d0d79a90bd8fe591dbce9c78485ad7ff6ccd849323e6c72fee0f6",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "289740f63cae6c609ce25e833aab744b810042a30e4c5c1f6c152e8bf71b01ea",
+    "lookup/route_table.c": "93c1c4de3e3fc22fdab0c70ab3784c9c206806c91d04754109d83de7a672b46a",
+    "lookup/table_data.h": "3d8d34c4adecb5288a71220d9ba56cad66190d2ee5465741bfaf172dd375db44",
+    "lookup/generation.json": "31fa47b74e6fa3a66a9a4877d902d6a4d8cf319ef3e2936fbb20824b5babb226",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/structure.h": "f5d86ba135bc268502b8be6b5b1a365ba26b0668a84de8946c5a96c5ea71148c",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "tests/verify_entry.c": "1582c175d6eb23156997f4561c782d9896bd6a701cd94f859439620891b4d58e",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/verify_heading.c": "d704e9cb131c78607de1d77ca8e6c858e1321c1ae5b715ce51907c04288bb197",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "db9851a0240b6d5cc3892b3dad8f31165180d7cc5e66d0a63ea49acc90393924",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923",
+    "vendor/stm32/SYSTEM/Serial.c": "4ce4e8b43dee20b4c545287f6dc61c07f85888629fab97fad61f911c1d186d4a"
+  },
+  "mapSourceHashes": {
+    "src/car_config.h": "de6d03297bf6bad1c0fb00a76cf761bcc560102124720b1b543ed66d25c6053f",
+    "src/structure.h": "f5d86ba135bc268502b8be6b5b1a365ba26b0668a84de8946c5a96c5ea71148c",
+    "src/road_map.c": "289740f63cae6c609ce25e833aab744b810042a30e4c5c1f6c152e8bf71b01ea",
+    "lookup/route_table.c": "93c1c4de3e3fc22fdab0c70ab3784c9c206806c91d04754109d83de7a672b46a",
+    "tests/export_map.c": "27908ef9378fb17710ed72a49db8e59a7ec3684a0fb45eb1eddf8453409b9a5c",
+    "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+    "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+    "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+    "tools/generate-route-table.cjs": "8a45d41906be7b9d8c562d5bcf6c3b282c3f6796a09b07143a5172dab1e83887",
+    "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44",
+    "lookup/table_data.h": "3d8d34c4adecb5288a71220d9ba56cad66190d2ee5465741bfaf172dd375db44",
+    "lookup/generation.json": "31fa47b74e6fa3a66a9a4877d902d6a4d8cf319ef3e2936fbb20824b5babb226"
+  },
+  "hostRegression": {
+    "passed": true,
+    "uartVariants": [
+      0,
+      1
+    ],
+    "assertions": {
+      "0": 1179844,
+      "1": 1182150
+    },
+    "bodyCoordinates": "independent forward/left field vectors for four headings and both signs; both conversion APIs",
+    "nativeResult": "evidence/start-raw50-native.json",
+    "canIrqPassed": true
+  },
+  "directions": {
+    "A": {
+      "start": "RIGHT 60mm",
+      "return": "LEFT 60mm"
+    },
+    "C": {
+      "start": "LEFT 60mm",
+      "return": "RIGHT 60mm"
+    },
+    "reason": "drawing Y-down coordinate to physical body left had mirrored sign; old plant shared the same wrong lateral vector",
+    "unchanged": "manual l/r wheel mapping, encoder scale, IMU gains, stationary gates; legacy road transverse positive still encodes drawing -X"
+  },
+  "map": {
+    "parameters": {
+      "topInsetMm": 90,
+      "bottomInsetMm": 50,
+      "rawExtraInsetMm": 50
+    },
+    "nodes": [
+      [
+        2250,
+        170
+      ],
+      [
+        2190,
+        1200
+      ],
+      [
+        2250,
+        2230
+      ],
+      [
+        1200,
+        2010
+      ],
+      [
+        1200,
+        1200
+      ],
+      [
+        1200,
+        340
+      ],
+      [
+        340,
+        290
+      ],
+      [
+        340,
+        1200
+      ],
+      [
+        340,
+        2010
+      ]
+    ],
+    "rawFExtraMm": 50,
+    "rawFNewCoordinate": [
+      1200,
+      340
+    ],
+    "GUnchangedCoordinate": [
+      340,
+      290
+    ],
+    "EFDistMm": 860,
+    "FGConnection": "50mm vertical at G side, then 860mm horizontal on F new line; reverse symmetric",
+    "fullRouteDistanceMm": 14280,
+    "fullRouteTranslations": 18,
+    "fullRouteTurns": 18,
+    "reverseSegments": 1,
+    "independentFixedJobShortestDistancePassed": true,
+    "tableResult": "evidence/start-raw50-table.json",
+    "validation": {
+      "states": 531441,
+      "queries": 43046721,
+      "exactBaselineRoute": true,
+      "independentFloyd": true,
+      "blockedEdgesExcluded": true,
+      "invalidInputs": true,
+      "tableDataBytes": 355824,
+      "seconds": 3.452,
+      "hardwareRun": false
+    },
+    "guards": {
+      "zeroExtraInsetGeometryPassed": true,
+      "extraInsetChangedWithoutTableRejected": true,
+      "staleTableCompilerExit": 1,
+      "transferInsetMismatchRejectedDespiteRefreshedConfigHash": true
+    }
+  },
+  "armBuild": {
+    "passed": true,
+    "compiledUnits": 67,
+    "errors": 0,
+    "warnings": 30,
+    "warningsUnchanged": true,
+    "axfHexComparedBytes": 424412,
+    "binaryHashes": {
+      "axf": "3d54348c5d8453b6b057c3a0ec068a20009a3a5e1d8f9b463a39a48e4873c432",
+      "hex": "91f4a71ba92fec24c0efa7075ede2c7e98c6e3197af93e8f2c561080d610f650",
+      "map": "6995305c7f0b7619c314ec09bd38a52a3e8313eb957b1dc3f484ae24f0a93c93"
+    },
+    "log": "evidence/start-raw50-keil.log",
+    "sourceAndProjectMatchIsolatedBuild": true
+  },
+  "preexistingDifferencesBackedUp": {
+    "keil/OBJ/table_navigation.axf": "1b8e61059a015eb5191698eb9e76b80545fb82becc636f02a7d9d4efb98717ff",
+    "keil/OBJ/table_navigation.map": "2a865d50460b3474d0fee64cb871c9e7c0c52c0229fbb0d94f014517ee0a3555"
+  },
+  "unrelatedManifestFilesUnchanged": true,
+  "userProjectSettingsPreserved": true,
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalClearanceVerified": false,
+  "committedOrPushedThisRevision": false,
+  "packageCheck": {
+    "passed": true,
+    "files": 337,
+    "compilationUnits": 67,
+    "allowsInlineCCommentOnNumericDefine": true,
+    "independentDeliveryDirectory": true
+  }
+}
