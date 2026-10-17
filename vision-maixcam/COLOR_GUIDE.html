@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>颜色码速查 · 智能搬运</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel2:#1c2537; --line:#2a3550;
+    --fg:#e6ecf7; --muted:#93a1bd; --accent:#4da3ff; --ok:#38d39f;
+    --warn:#ffb454; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    line-height:1.65;font-size:16px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 22px}
+  header{padding:44px 24px 30px;
+    background:radial-gradient(1200px 400px at 20% -10%,#1d3557 0%,transparent 60%),
+               radial-gradient(900px 300px at 90% 0%,#16324a 0%,transparent 55%),var(--bg);
+    border-bottom:1px solid var(--line)}
+  h1{margin:0 0 6px;font-size:30px}
+  h2{font-size:21px;margin:0 0 16px;display:flex;align-items:center;gap:10px}
+  h2 .n{display:inline-flex;width:28px;height:28px;border-radius:8px;background:var(--accent);
+    color:#06121f;font-size:15px;font-weight:700;align-items:center;justify-content:center}
+  .sub{color:var(--muted);font-size:14px}
+  section{padding:32px 0;border-bottom:1px solid var(--line)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .swatch{height:130px;display:flex;align-items:center;justify-content:center;
+    font-size:64px;font-weight:800;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.45)}
+  .card .body{padding:12px 14px}
+  .card .name{font-size:20px;font-weight:700}
+  .card .code{color:var(--accent);font-weight:700}
+  .lab{font-size:13px;color:var(--muted);font-family:Consolas,monospace;margin-top:6px}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:15px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left}
+  th{background:var(--panel2)}
+  tr:nth-child(even) td{background:#131a28}
+  code{background:#0b1220;border:1px solid var(--line);border-radius:5px;
+    padding:1px 6px;font-family:Consolas,monospace;color:#9fe0ff}
+  .decoder{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .decoder input{width:100%;font-size:22px;padding:12px 14px;border-radius:10px;
+    border:1px solid var(--line);background:#0b1220;color:var(--fg);
+    font-family:Consolas,monospace;letter-spacing:2px}
+  .row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+  .grp{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .grp .tag{font-size:12px;color:var(--muted);letter-spacing:.5px}
+  .grp .digits{display:flex;gap:8px;margin-top:8px}
+  .chip{width:54px;height:54px;border-radius:10px;display:flex;align-items:center;
+    justify-content:center;font-size:24px;font-weight:800;color:#fff;
+    text-shadow:0 1px 6px rgba(0,0,0,.5)}
+  .chip.num{background:#0b1220;border:1px solid var(--line);color:var(--fg);text-shadow:none}
+  .msg{margin-top:14px;font-size:15px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .muted{color:var(--muted)}
+  .quiz{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .qswatch{height:110px;border-radius:12px;margin:12px 0;display:flex;align-items:center;
+    justify-content:center;font-size:22px;color:#fff;text-shadow:0 2px 8px rgba(0,0,0,.5)}
+  .btns{display:flex;gap:10px;flex-wrap:wrap}
+  button{font-size:17px;padding:10px 18px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--fg);cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  footer{padding:26px 0 60px;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>颜色码速查</h1>
+    <div class="sub">智能搬运赛项 · <b>红1 黄2 蓝3 绿4</b> · 视觉端与 STM32 共用同一套编号</div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section>
+  <h2><span class="n">1</span>四个颜色码（背下来）</h2>
+  <div class="cards" id="cards"></div>
+  <p class="muted" style="margin-top:14px">
+    记忆口诀：<b>红黄蓝绿 = 1 2 3 4</b>（按彩虹顺序反过来记也行：红1、黄2、蓝3、绿4）。
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">2</span>这些数字出现在哪</h2>
+  <table>
+    <thead><tr><th>地方</th><th>例子</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>任务码</td><td><code>134+123+314+231</code></td><td>G1=<b>红蓝绿</b>，G3=<b>蓝红绿</b>（G2/G4 是放置位置）</td></tr>
+      <tr><td>找物料的命令</td><td><code>C,1</code></td><td>"去原料区找<b>红色</b>物料"</td></tr>
+      <tr><td>视觉的回复</td><td><code>PICK,1,320,240</code></td><td>红色物料在画面 (320,240)</td></tr>
+      <tr><td>颜色码非法</td><td><code>C,9</code> → <code>NONE,C</code></td><td>只接受 1/2/3/4</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">3</span>任务码解析器（可以直接粘）</h2>
+  <div class="decoder">
+    <input id="code" value="134+123+314+231" spellcheck="false"
+           placeholder="例如 134+123+314+231">
+    <div class="row" id="groups"></div>
+    <div class="msg" id="msg"></div>
+  </div>
+  <p class="muted" style="margin-top:12px">
+    规则：4 组、每组 3 位数字、用 <code>+</code> 连接；
+    <b>G1/G3 每一位必须是 1~4</b>（颜色），**G2/G4 是放置位置**（1~5 号圆环）。
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">4</span>AI 模型的 6 个类别（输出的是序号 0~5）</h2>
+  <table>
+    <thead><tr><th>序号</th><th>标签</th><th>颜色</th><th>对应颜色码</th></tr></thead>
+    <tbody id="aiTable"></tbody>
+  </table>
+  <p class="muted">
+    顺序 = 训练文件夹的字母序：<code>background, blue, green, other, red, yellow</code>。
+    模型只输出序号，程序再查表换成颜色码；<b>background / other 不是物料</b>。
+  </p>
+</section>
+
+<section>
+  <h2><span class="n">5</span>容易搞混的地方</h2>
+  <table>
+    <thead><tr><th>容易混</th><th>怎么区分</th></tr></thead>
+    <tbody>
+      <tr><td>黄色 vs 绿色</td><td>两者 B 都偏正（偏黄），区别在 A：<b>黄色 A 接近 0</b>，<b>绿色 A 明显为负</b></td></tr>
+      <tr><td>红色 vs 黄色</td><td>红色 A 强正（偏红），黄色 A 约等于 0、B 很大</td></tr>
+      <tr><td>蓝色</td><td>B 强负（最负），几乎不会和别的混</td></tr>
+      <tr><td>AI 的序号 vs 颜色码</td><td>序号 0~5 是模型输出；颜色码 1~4 才是协议里用的</td></tr>
+      <tr><td>STACK 里的 40</td><td>那是<b>毫米高度</b>（现在已不下发），不是颜色也不是坐标</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">6</span>自测（点颜色码）</h2>
+  <div class="quiz">
+    <div>这个颜色是几号？</div>
+    <div class="qswatch" id="qswatch">—</div>
+    <div class="btns" id="qbtns"></div>
+    <div class="msg" id="qmsg"></div>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  智能搬运 · 视觉端 v3.1.0 · 颜色码：红1 黄2 蓝3 绿4
+</footer>
+
+<script>
+const COLORS = {
+  1:{name:'红', hex:'#D32F2F', lab:'L 15–60 · A 35–75 · B 18–60'},
+  2:{name:'黄', hex:'#F2C200', lab:'L 45–90 · A −16–5 · B 45–78'},
+  3:{name:'蓝', hex:'#1565C0', lab:'L 15–60 · A 6–38 · B −75–−35'},
+  4:{name:'绿', hex:'#2E7D32', lab:'L 30–78 · A −70–−32 · B 26–64'}
+};
+const AI = [
+  {i:0, label:'background', hex:'#B9C0CC', note:'背景 / 桌面'},
+  {i:1, label:'blue',       hex:'#1565C0', note:'蓝色物料 → 码 3'},
+  {i:2, label:'green',      hex:'#2E7D32', note:'绿色物料 → 码 4'},
+  {i:3, label:'other',      hex:'#8D6E63', note:'其它东西（不是物料）'},
+  {i:4, label:'red',        hex:'#D32F2F', note:'红色物料 → 码 1'},
+  {i:5, label:'yellow',     hex:'#F2C200', note:'黄色物料 → 码 2'}
+];
+
+/* ---------- 1. 卡片 ---------- */
+document.getElementById('cards').innerHTML = Object.entries(COLORS).map(([code,c])=>`
+  <div class="card">
+    <div class="swatch" style="background:${c.hex}">${code}</div>
+    <div class="body">
+      <div class="name">${c.name}色 <span class="code">→ ${code} 号</span></div>
+      <div class="lab">${c.lab}</div>
+    </div>
+  </div>`).join('');
+
+/* ---------- 4. AI 表 ---------- */
+document.getElementById('aiTable').innerHTML = AI.map(a=>`
+  <tr>
+    <td><b>${a.i}</b></td>
+    <td><code>${a.label}</code></td>
+    <td><span style="display:inline-block;width:26px;height:16px;border-radius:4px;
+        background:${a.hex};vertical-align:middle;margin-right:8px"></span>${a.note}</td>
+    <td>${a.label==='red'?'<b>1</b>':a.label==='yellow'?'<b>2</b>':a.label==='blue'?'<b>3</b>':a.label==='green'?'<b>4</b>':'—'}</td>
+  </tr>`).join('');
+
+/* ---------- 3. 任务码解析 ---------- */
+const input = document.getElementById('code');
+const groups = document.getElementById('groups');
+const msg = document.getElementById('msg');
+
+function chip(d){
+  const c = COLORS[+d];
+  if(!c) return `<div class="chip num">${d}</div>`;
+  return `<div class="chip" style="background:${c.hex}">${d}</div>`;
+}
+function render(){
+  const raw = input.value.trim();
+  groups.innerHTML = '';
+  const parts = raw.split('+');
+  let valid = parts.length === 4 && parts.every(p=>/^\d{3}$/.test(p));
+  if(valid){
+    const colorOk = [parts[0],parts[2]].every(p=>[...p].every(d=>'1234'.includes(d)));
+    const names = ['G1 颜色顺序','G2 放置位置','G3 颜色顺序','G4 放置位置'];
+    groups.innerHTML = parts.map((p,idx)=>{
+      const isColor = idx===0||idx===2;
+      return `<div class="grp">
+        <div class="tag">${names[idx]}${isColor?'（1~4）':'（1~5 号环）'}</div>
+        <div class="digits">${[...p].map(d=>isColor?chip(d):`<div class="chip num">${d}</div>`).join('')}</div>
+      </div>`;
+    }).join('');
+    if(!colorOk){
+      msg.className='msg bad';
+      msg.textContent='✗ 非法：G1/G3 的每一位必须是 1~4（颜色码）。视觉端会回 NONE,T';
+    }else{
+      const g1=[...parts[0]].map(d=>COLORS[+d].name).join('');
+      const g3=[...parts[2]].map(d=>COLORS[+d].name).join('');
+      msg.className='msg ok';
+      msg.innerHTML=`✓ 合法 → 视觉端回 <code>TASK,${parts[0]},${parts[2]}</code><br>
+        第一批按 <b>${g1}</b> 的顺序抓取，分别放到 <b>${parts[1]}</b> 号环；<br>
+        第二批按 <b>${g3}</b> 的顺序，分别放到 <b>${parts[3]}</b> 号环。`;
+    }
+  }else{
+    msg.className='msg bad';
+    msg.textContent='✗ 格式不对：需要 4 组、每组 3 位数字，用 + 连接（共 15 字符，例如 134+123+314+231）';
+  }
+}
+input.addEventListener('input', render);
+render();
+
+/* ---------- 6. 自测 ---------- */
+const qswatch=document.getElementById('qswatch');
+const qbtns=document.getElementById('qbtns');
+const qmsg=document.getElementById('qmsg');
+let answer=0, right=0, total=0;
+
+for(let code=1; code<=4; code++){
+  const b=document.createElement('button');
+  b.textContent=`${code} 号（${COLORS[code].name}）`;
+  b.onclick=()=>{
+    total++;
+    if(code===answer){ right++; qmsg.className='msg ok'; qmsg.textContent='✓ 对了'; }
+    else{ qmsg.className='msg bad'; qmsg.textContent=`✗ 错，这是 ${COLORS[answer].name}色 = ${answer} 号`; }
+    qmsg.textContent += `　（${right}/${total}）`;
+    nextQuestion();
+  };
+  qbtns.appendChild(b);
+}
+function nextQuestion(){
+  answer = 1 + Math.floor(Math.random()*4);
+  // 避免连续重复
+  qswatch.style.background = COLORS[answer].hex;
+  qswatch.textContent = '这是什么颜色？';
+}
+nextQuestion();
+</script>
+</body>
+</html>
