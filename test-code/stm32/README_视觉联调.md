@@ -15,6 +15,47 @@
 | `vision_host_test.c` | 电脑端自检（**不需要硬件**，gcc 直接跑，153 条断言） |
 | `README_视觉联调.md` | 本文件 |
 
+## 0.5 快速上手（照这个顺序做，5 步）
+
+**第 1 步 · 电脑上先验协议**（不用板子，1 分钟）
+
+```bash
+cd test-code/stm32
+gcc -DVISION_HOST_TEST -std=c99 -Wall -Wextra -Werror \
+    vision_host_test.c vision_proto.c -o vision_host_test && ./vision_host_test
+# 看到 [ALL PASS] 就说明 CRC/拆帧/解析/会话逻辑都对，可以上板了
+```
+
+**第 2 步 · Keil 里加两个文件 + 移除一个文件**（只做一次）
+
+1. 把 `vision_proto.c`、`main_vision.c` 加进工程（`vision_proto.h` 同目录即可）。
+2. 展开 `lanya` 分组 → 右键 `usart5.c` → **Remove File from Group**（见第 2 节）。
+
+**第 3 步 · 换程序/下载**
+
+```powershell
+.\tools\switch-main.ps1 vision -Build -Download       # 或在 Keil 里把 main_vision.c 当 main.c
+```
+
+**第 4 步 · 接线上电，先跑两个"不接视觉端"的测试**
+
+- 串口助手接 **USART3（PB10=TX / PB11=RX），115200 8N1**，打开复位信息
+- 按 `v` → 必须 `[SELFTEST PASS]`（协议自检）
+- 用杜邦线把 **PC12 和 PD2 短接** → 按 `l` → `[LOOPBACK PASS]`（UART 通路自检）
+- 去掉短接线。这一步不过就别接视觉端，先修硬件/中断
+
+**第 5 步 · 接上视觉端，按 §5 的验收清单一条条过**
+
+```text
+r  → READY          （握手）
+k  → 坏CRC=0        （只要不为 0 就是线/波特率问题，先别往下做）
+a  → START,…
+t  → TASK,134,314
+c  → PICK,…（颜色码用 1..4 键设）
+d  → [move]… 然后 DISC,x,y,dx,1
+p  → [PLAN PASS]    （自动跑完 11 步全流程）
+```
+
 ## 1. 接线
 
 ```text
@@ -34,23 +75,33 @@ PB10 = USART3_TX（MCU 发）  PB11 = USART3_RX（MCU 收）  115200
 > 视觉端自己那边是 `/dev/ttyS4`（UART4，A21/A22）——两边都 3.3V，直连即可。
 > 想换口只改 `vision_proto.c` 顶部那组宏。
 
-## 2. 中断函数冲突（**必读，否则收不到数据**）
+## 2. 中断函数冲突（**只做一次**）
 
-Keil 工程里已经有 `vendor/stm32/lanya/usart5.c`，它定义了 `UART5_IRQHandler`
-（蓝牙 HC-05 的死代码）。同一个工程里不能有两个同名中断，二选一：
+Keil 工程里已有 `vendor/stm32/lanya/usart5.c`，它定义了 `UART5_IRQHandler`
+（蓝牙 HC-05 死代码，主流程从不调用它）。同一个工程不能有两个同名中断，二选一：
 
-- **方案 ②（默认，改动最小）**：保留 `usart5.c`，在它的中断函数里加一行：
-  ```c
-  void UART5_IRQHandler(void)
-  {
-      if (USART_GetITStatus(UART5, USART_IT_RXNE) != RESET)
-          Vision_IsrByte((uint8_t)USART_ReceiveData(UART5));   /* ← 加这一行 */
-  }
-  ```
-- **方案 ①**：把 `usart5.c` 从工程里移除，并在工程预定义宏里加
-  `VISION_PROVIDE_UART5_IRQ`，`vision_proto.c` 会自己提供中断。
+- **方案 ①（推荐）**：把 `usart5.c` 从工程移除。
+  Keil 左侧工程树 → 展开 `lanya` 分组 → 右键 `usart5.c` → **Remove File from Group**
+  （文件还在磁盘上，只是不参与编译）。**做完就完了，不用加任何宏**——
+  `vision_proto.c` 默认就提供 `UART5_IRQHandler`。
+  这也是 `vision-maixcam/stm32_patch/README.md` 里既定的接法，整车工程同样要做这一步。
+- **方案 ②**：一定要留着 `usart5.c`，就
+  1. 在工程预定义宏（Options → C/C++ → Define）里加 `VISION_NO_UART5_IRQ`；
+  2. 在它的中断里加一行：
+     ```c
+     void UART5_IRQHandler(void)
+     {
+         if (USART_GetITStatus(UART5, USART_IT_RXNE) != RESET)
+             Vision_IsrByte((uint8_t)USART_ReceiveData(UART5));   /* ← 加这一行 */
+     }
+     ```
 
-两种方案都编译过一次（语法检查 + 分支检查都过）。
+> 两种方式都做过语法/分支检查。**漏做**的话链接期会报
+> `UART5_IRQHandler multiply defined`（方案②忘了加宏也会报），一眼能看出来，
+> 不会出现"能编译但收不到数据"这种最难查的情况。
+>
+> 另外：移除 `usart5.c` 后如果提示 `undefined symbol uart5_init`，说明还有 `main.c`
+> 在调用它，把那行删掉即可（本项目不需要）。
 
 ## 3. 怎么编译
 

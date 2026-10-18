@@ -17,11 +17,17 @@
  *       PD2  = UART5_RX  ← MaixCAM2 的 TX
  *     想换成别的口（例如 UART4 的 PA0/PA1）时，只改下面这组宏。
  *
- *  ★ 中断函数的处理方式（两种二选一，见 README_视觉联调.md）：
- *     ① 把 vendor/stm32/lanya/usart5.c 从 Keil 工程里移除（它是蓝牙死代码），
- *        再在工程选项里定义 VISION_PROVIDE_UART5_IRQ，本文件就会提供中断；
- *     ② 保留 usart5.c，只在它的 UART5_IRQHandler 里加一句 Vision_IsrByte(...)。
- *     默认按 ② 处理（不定义中断函数），避免和 usart5.c 重复定义链接报错。
+ *  ★ 中断函数的处理方式（见 README_视觉联调.md 第 2 节）：
+ *     集成板/整车工程里 vendor/stm32/lanya/usart5.c 也定义了 UART5_IRQHandler
+ *     （蓝牙 HC-05 死代码，主流程从不调用）。所以编译前二选一：
+ *     ① 推荐：把 lanya/usart5.c 从 Keil 工程移除（Remove File from Group，
+ *        磁盘文件保留）。**本文件默认就会提供 UART5_IRQHandler**，不用加任何宏。
+ *        —— 这也是 stm32_patch/README.md 里既定的接法。
+ *     ② 若一定要保留 usart5.c：在工程预定义宏里加 VISION_NO_UART5_IRQ
+ *        （本文件就不定义中断），并在 usart5.c 的中断里加一句
+ *        Vision_IsrByte((uint8_t)USART_ReceiveData(UART5));
+ *    默认按 ① 编译；若忘了做上述任一步，链接期会报
+ *    "UART5_IRQHandler multiply defined"，一眼可辨，不会静默收不到数据。
  * ========================================================================== */
 #ifndef VISION_HOST_TEST
 #define VISION_UART                    UART5
@@ -563,7 +569,9 @@ void Vision_Isr(void)
         (void)USART_ReceiveData(VISION_UART);
 }
 
-#ifdef VISION_PROVIDE_UART5_IRQ
+/* 中断服务函数：默认提供（对应"从工程移除 lanya/usart5.c"的接法）。
+ * 若保留 usart5.c，请定义 VISION_NO_UART5_IRQ，并在它的中断里调 Vision_IsrByte()。*/
+#ifndef VISION_NO_UART5_IRQ
 void UART5_IRQHandler(void)
 {
     Vision_Isr();

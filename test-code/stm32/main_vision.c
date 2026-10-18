@@ -25,13 +25,17 @@
  *  ★ 视觉端那边的 UART 是它自己的 /dev/ttyS4(UART4)，A21=TX / A22=RX。
  *    两边都是 3.3V，直连即可；**不要**接 5V。
  *
- *  ★ 中断函数冲突（必读）：
+ *  ★ 中断函数冲突（必读，**只做一次**）：
  *    Keil 工程里已有 vendor/stm32/lanya/usart5.c，它定义了 UART5_IRQHandler
- *    （蓝牙死代码）。二选一：
- *      ① 把 usart5.c 从工程移除，并在工程预定义宏里加 VISION_PROVIDE_UART5_IRQ，
- *         vision_proto.c 会自己提供中断；
- *      ② 保留它，只在它的 UART5_IRQHandler 里加一句：Vision_IsrByte(RxData); 
- *    本程序默认按 ② 编译（不加宏），所以你若选 ①，记得加宏，否则收不到数据。
+ *    （蓝牙 HC-05 死代码，主流程从不调用）。编译前二选一：
+ *      ① 推荐：Keil 工程树里展开 lanya 分组 → 右键 usart5.c → Remove File from
+ *         Group（磁盘文件还在，只是不参与编译）。**这样就行了，不用加任何宏**：
+ *         vision_proto.c 默认就提供 UART5_IRQHandler。
+ *         —— 这也是 vision-maixcam/stm32_patch/README.md 既定的接法。
+ *      ② 一定要保留 usart5.c：在工程预定义宏里加 VISION_NO_UART5_IRQ，
+ *         并在它的 UART5_IRQHandler 里加一行
+ *         Vision_IsrByte((uint8_t)USART_ReceiveData(UART5));
+ *    漏做的话链接期会报 "UART5_IRQHandler multiply defined"，不会静默收不到数据。
  *
  *  ---------------------------------------------------------------------------
  *  【按键表】（在 USART3 里按，普通命令以换行结束；单字符键不用回车）
