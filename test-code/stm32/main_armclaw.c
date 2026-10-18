@@ -103,11 +103,14 @@
  *              -> 高位把齿条伸到 65mm -> 降到 110mm -> 合爪并保持夹住。
  *              分几步走是因为从最高处直接斜着往 (35,115) 走会从物块上方掠过，
  *              在高处先伸出去、再垂直下来，每一步都在空处。松爪按 o。
- *    @         一键整轮：回默认位 -> 夹取（和 ! 完全同一套动作）-> 放上载物台。
- *              放下段（push 30 / lift 110 / yuntai 254，实测）：
- *              升到最高 135mm -> 齿条收回 0 -> 转到 254 度 -> 高位伸出 30mm
- *              -> 降到 110mm -> 开爪放下。顺序就是"先升高、再转、最后放下"。
- *    $         只做"放"这一段（手里已经夹着物块时用，不会重新去夹）。
+ *    @         一键装车三块：回默认位 -> 载物台回 1 号位 -> 抓一块放一块，共三次
+ *              -> 机械臂回默认位 -> 载物台再转回 1 号位。
+ *              第 1 块放下后（push 30 / lift 110 / yuntai 254 实测）：
+ *              先升到 135 离开杯壁 -> 齿条收回 0 -> 载物台后台转 120 度（不等待）
+ *              -> 云台一边回摆到 126 一边等转台 -> 高位伸出 65 -> 降到 110 -> 合爪。
+ *              也就是"回抓取位"和"载物台转 120 度"同时进行，第 2、3 块不再回默认位。
+ *              放完三块停在放料姿势，载物台在 3 号位（只转两次）。
+ *    $         只做"放"这一段（手里已经夹着物块时用，不会重新去夹），放完照旧 +120 度。
  *    W         一键回默认位：升降升到最高 135mm -> 齿条收到底 0mm -> 云台回 0 度
  *              -> 爪子收回夹取角 0 度。先升后缩，爪子会先垂直抬离物块再横着退，
  *              不会拖着物块走（但爪子最后会松开，夹着东西别按）。
@@ -1296,6 +1299,46 @@ static void Move_All(float push_mm, float lift_mm, float yuntai_deg)
 /* 载物台（源码 wukuaipingtai，PA2 / TIM2_CH3）：
  *   1 号位 = 20 度，2 号位 = 20+119 = 139 度，3 号位 = 20+119+117 = 256 度
  *   —— 数字照抄 PWM.c 的 set_wukuaipingtai_weizhi()。 */
+/* 只"启动"转位，不等它转完 —— TIM2_CH3 中断自己插值，机械臂可以同时动。
+ * 用于"云台回摆去抓下一块的同时，载物台转 120 度"。 */
+static void Wukuai_Start(uint8_t pos)
+{
+    if (pos < 1u || pos > 3u) return;
+    if (g_claw_ch == 3u)
+    {
+        USART_SendString("[warn] claw is driving PA2 too; press 1 to move claw back to PA1\r\n");
+    }
+    set_wukuaipingtai_weizhi((int)pos);     /* 源码函数：非阻塞 */
+}
+
+/* 等载物台转到目标位（带超时上限，别卡死主循环） */
+static void Wukuai_Wait(void)
+{
+    uint32_t waited = 0u;
+
+    while (wukuaipingtai.moving_flag != 0)
+    {
+        delay_ms1(STEP_MS);
+        waited += STEP_MS;
+        if (waited >= SERVO_WAIT_MAX_MS)
+        {
+            wukuaipingtai.moving_flag = 0;
+            wukuaipingtai.start_angle = wukuaipingtai.current_angle;
+            USART_SendString("[wukuai] wait timeout, force stop\r\n");
+            break;
+        }
+    }
+}
+
+static void Wukuai_ReportPos(uint8_t pos)
+{
+    USART_SendString("[wukuai] pos ");
+    UART_SendInt((int32_t)pos);
+    USART_SendString(" deg = ");
+    UART_SendFix1(wukuaipingtai.current_angle);
+    USART_SendString("\r\n");
+}
+
 static void Wukuai_Goto(uint8_t pos)
 {
     if (pos < 1u || pos > 3u)
@@ -1303,34 +1346,66 @@ static void Wukuai_Goto(uint8_t pos)
         USART_SendString("[wukuai] pos must be 1 / 2 / 3\r\n");
         return;
     }
-    if (g_claw_ch == 3u)
+    Wukuai_Start(pos);
+    Wukuai_Wait();
+    Wukuai_ReportPos(pos);
+}
+
+/* 载物台当前用的是第几个空位（1..3，对应 20 / 139 / 256 度，每档约 120 度）。
+ * 用户要求：放完一个物块，载物台转 120 度，把下一个空位摆到爪子放料点的正下方；
+ * 三个位用完（转两次）就停在 3 号位，不再空转。 */
+static uint8_t g_platform_slot = 1u;
+static uint8_t g_platform_moving = 0u;   /* 后台转位还没转完 = 1 */
+
+static void Platform_Goto(uint8_t pos)
+{
+    if (pos < 1u || pos > 3u) return;
+    g_platform_slot = pos;
+    g_platform_moving = 0u;
+    Wukuai_Goto(pos);
+}
+
+/* 放完一个 -> 转 120 度到下一个空位 */
+static void Platform_Advance(void)
+{
+    if (g_platform_slot >= 3u)
     {
-        USART_SendString("[warn] claw is driving PA2 too; press 1 to move claw back to PA1\r\n");
+        USART_SendString("[platform] slot 3 is the last one, stay here\r\n");
+        return;
     }
-
-    set_wukuaipingtai_weizhi((int)pos);     /* 源码函数：TIM2 中断插值，非阻塞 */
-    {
-        uint32_t waited = 0u;
-
-        while (wukuaipingtai.moving_flag != 0)     /* 同样带超时上限，别卡死主循环 */
-        {
-            delay_ms1(STEP_MS);
-            waited += STEP_MS;
-            if (waited >= SERVO_WAIT_MAX_MS)
-            {
-                wukuaipingtai.moving_flag = 0;
-                wukuaipingtai.start_angle = wukuaipingtai.current_angle;
-                USART_SendString("[wukuai] wait timeout, force stop\r\n");
-                break;
-            }
-        }
-    }
-
-    USART_SendString("[wukuai] pos ");
-    UART_SendInt((int32_t)pos);
-    USART_SendString(" deg = ");
-    UART_SendFix1(wukuaipingtai.current_angle);
+    USART_SendString("[platform] rotate 120deg: slot ");
+    UART_SendInt((int32_t)g_platform_slot);
+    USART_SendString(" -> ");
+    UART_SendInt((int32_t)(g_platform_slot + 1u));
     USART_SendString("\r\n");
+    Platform_Goto((uint8_t)(g_platform_slot + 1u));
+}
+
+/* 后台转位：只启动，不等。机械臂这时去抓下一块，两件事并行。
+ * 放下一块之前必须 Platform_WaitIdle()，否则物块会落到两个杯位中间。 */
+static void Platform_Advance_Async(void)
+{
+    if (g_platform_slot >= 3u)
+    {
+        USART_SendString("[platform] slot 3 is the last one, no rotation\r\n");
+        return;
+    }
+    USART_SendString("[platform] rotate 120deg in background: slot ");
+    UART_SendInt((int32_t)g_platform_slot);
+    USART_SendString(" -> ");
+    UART_SendInt((int32_t)(g_platform_slot + 1u));
+    USART_SendString("\r\n");
+    g_platform_slot++;
+    Wukuai_Start(g_platform_slot);
+    g_platform_moving = 1u;
+}
+
+static void Platform_WaitIdle(void)
+{
+    if (g_platform_moving == 0u) return;
+    Wukuai_Wait();
+    g_platform_moving = 0u;
+    Wukuai_ReportPos(g_platform_slot);
 }
 
 /* 三段抓取流程：照抄 USER/main.c 的 yuantai_na()。平推/升降的行程照抄原值，
@@ -1440,38 +1515,60 @@ static void Quick_Grab(void)
  *   ⑤ 升降降到 110mm —— 物块落到载物台上；
  *   ⑥ 开爪 45 度，放完就走。
  *   参数：push 30 / lift 110 / yuntai 254（我们这台车实测）。 */
-static void Quick_PlaceOnPlatform(void)
+static void Quick_PlaceOnPlatform(uint8_t auto_rotate)
 {
-    USART_SendString("[qplace] 1/6 lift up to ");
+    /* 上一块放完时如果让载物台在后台转过，这里先等它转到位再往下放 */
+    Platform_WaitIdle();
+
+    USART_SendString("[qplace] 1/8 lift up to ");
     UART_SendFix1(LIFT_HOME_MM);
     USART_SendString(" mm first (block leaves the table)\r\n");
     Move_All(g_push_mm, LIFT_HOME_MM, Yuntai_CurrentDeg());
 
-    USART_SendString("[qplace] 2/6 retract push -> 0.0 mm at TOP\r\n");
+    USART_SendString("[qplace] 2/8 retract push -> 0.0 mm at TOP\r\n");
     Move_All(0.0f, LIFT_HOME_MM, Yuntai_CurrentDeg());
 
-    USART_SendString("[qplace] 3/6 yuntai -> ");
+    USART_SendString("[qplace] 3/8 yuntai -> ");
     UART_SendFix1(QUICK_PLACE_YUNTAI_DEG);
     USART_SendString(" deg while retracted\r\n");
     Move_All(0.0f, LIFT_HOME_MM, QUICK_PLACE_YUNTAI_DEG);
 
-    USART_SendString("[qplace] 4/6 extend at TOP: push=");
+    USART_SendString("[qplace] 4/8 extend at TOP: push=");
     UART_SendFix1(QUICK_PLACE_PUSH_MM);
     USART_SendString(" mm\r\n");
     Move_All(QUICK_PLACE_PUSH_MM, LIFT_HOME_MM, QUICK_PLACE_YUNTAI_DEG);
 
-    USART_SendString("[qplace] 5/6 lower onto the platform: lift=");
+    USART_SendString("[qplace] 5/8 lower onto the platform: lift=");
     UART_SendFix1(QUICK_PLACE_LIFT_MM);
     USART_SendString(" mm\r\n");
     Move_All(QUICK_PLACE_PUSH_MM, QUICK_PLACE_LIFT_MM, QUICK_PLACE_YUNTAI_DEG);
 
-    USART_SendString("[qplace] 6/6 open claw (release)\r\n");
+    USART_SendString("[qplace] 6/8 open claw (release)\r\n");
     Claw_OpenWide();
+
+    /* 放完先把爪子抬离物块、齿条收回来，再转载物台 —— 带着张开的爪子转会被杯壁扫到 */
+    USART_SendString("[qplace] 7/8 lift clear to ");
+    UART_SendFix1(LIFT_HOME_MM);
+    USART_SendString(" mm, retract push\r\n");
+    Move_All(QUICK_PLACE_PUSH_MM, LIFT_HOME_MM, QUICK_PLACE_YUNTAI_DEG);
+    Move_All(0.0f, LIFT_HOME_MM, QUICK_PLACE_YUNTAI_DEG);
+
+    if (auto_rotate)
+    {
+        USART_SendString("[qplace] 8/8 next empty slot on the platform\r\n");
+        Platform_Advance();
+    }
+    else
+    {
+        USART_SendString("[qplace] 8/8 keep this slot (it turns while the arm goes back)\r\n");
+    }
 
     Show_ArmState();
     Claw_Report("place", Claw_CurrentDeg());
     Yuntai_Report("place", Yuntai_CurrentDeg());
-    USART_SendString("[qplace] done on platform (push 30 / lift 110 / yuntai 254)\r\n");
+    USART_SendString("[qplace] done on platform (push 30 / lift 110 / yuntai 254), slot ");
+    UART_SendInt((int32_t)g_platform_slot);
+    USART_SendString("\r\n");
 }
 
 /* 一键回默认位（上电时程序假设的那个姿势）：
@@ -1505,28 +1602,99 @@ static void Arm_Home(void)
     USART_SendString("[home] done (default pose: lift 135 / push 0 / yuntai 0 / claw 45)\r\n");
 }
 
-/* 一键"夹起来再放到载物台"（@）：一整轮，从默认位开始。
- *   ① Arm_Home()        —— 先回默认位，保证每次起点一样
- *                          （爪会张开：手里还夹着东西时别按 @，用 $ 单独放）
- *   ② Quick_Grab()      —— 原来的夹取动作，一字没改：开爪 -> 转 126° -> 高位伸出 65mm
- *                          -> 降到 110mm -> 合爪夹住
- *   ③ Quick_PlaceOnPlatform() —— 夹着物块升到最高 135mm -> 收齿条 -> 转 254°
- *                          -> 高位伸出 30mm -> 降到 110mm -> 开爪放到载物台
- *   注意：放完停在载物台姿势（push 30 / lift 110 / yuntai 254、爪张开），
- *   再按一次 @ 会先回默认位，不会在半路斜着扫回来。 */
-static void Quick_GrabAndPlace(void)
+/* 放完一块之后，直接回到"抓下一块"的姿势，不再回默认位：
+ *   ① 升降 110 -> 135 —— 先离开杯壁（这时爪子还张着、齿条还伸着 30）
+ *   ② 高处收齿条 30 -> 0
+ *   ③ rotate_platform = 1：启动载物台转 120 度，但【不等待】
+ *   ④ 云台 254 -> 126 —— 齿条收着转，摆动半径最小；这段时间载物台在后台转
+ *   ⑤ 高处伸齿条 0 -> 65
+ *   ⑥ 降到 110
+ *   ⑦ 合爪夹住
+ * 结束时停在 (push 65 / lift 110 / yuntai 126 / 爪合)，就是抓取位。 */
+static void Quick_ReturnToGrab(uint8_t rotate_platform)
 {
-    USART_SendString("[cycle] ==== home -> grab -> place on platform ====\r\n");
+    USART_SendString("[back] 1/7 lift up to ");
+    UART_SendFix1(LIFT_HOME_MM);
+    USART_SendString(" mm, clear of the cups\r\n");
+    Move_All(QUICK_PLACE_PUSH_MM, LIFT_HOME_MM, QUICK_PLACE_YUNTAI_DEG);
+
+    USART_SendString("[back] 2/7 retract push -> 0.0 mm at TOP\r\n");
+    Move_All(0.0f, LIFT_HOME_MM, QUICK_PLACE_YUNTAI_DEG);
+
+    if (rotate_platform)
+    {
+        USART_SendString("[back] 3/7 platform +120 in background (overlaps the swing back)\r\n");
+        Platform_Advance_Async();
+    }
+    else
+    {
+        USART_SendString("[back] 3/7 platform stays\r\n");
+    }
+
+    USART_SendString("[back] 4/7 yuntai -> ");
+    UART_SendFix1(QUICK_GRAB_YUNTAI_DEG);
+    USART_SendString(" deg while retracted\r\n");
+    Move_All(0.0f, LIFT_HOME_MM, QUICK_GRAB_YUNTAI_DEG);
+
+    USART_SendString("[back] 5/7 extend at TOP: push=");
+    UART_SendFix1(QUICK_GRAB_PUSH_MM);
+    USART_SendString(" mm\r\n");
+    Move_All(QUICK_GRAB_PUSH_MM, LIFT_HOME_MM, QUICK_GRAB_YUNTAI_DEG);
+
+    USART_SendString("[back] 6/7 lower into place: lift=");
+    UART_SendFix1(QUICK_GRAB_LIFT_MM);
+    USART_SendString(" mm\r\n");
+    Move_All(QUICK_GRAB_PUSH_MM, QUICK_GRAB_LIFT_MM, QUICK_GRAB_YUNTAI_DEG);
+
+    USART_SendString("[back] 7/7 close claw (hold next block)\r\n");
+    Claw_CloseHold();
+
+    Show_ArmState();
+    Claw_Report("back", Claw_CurrentDeg());
+    Yuntai_Report("back", Yuntai_CurrentDeg());
+    USART_SendString("[back] done: at grab pose, next block held\r\n");
+}
+
+/* 一键装车三块（@）：
+ *   home -> 载物台回 1 号位 -> 抓第 1 块 -> 放下
+ *   -> (后台转 120° + 回抓取位 -> 抓第 2 块) -> 放下
+ *   -> (后台转 120° + 回抓取位 -> 抓第 3 块) -> 放下
+ * 第 2、3 块不再回默认位，"云台回摆"和"载物台转 120°"是同时进行的。
+ * 三块放完后机械臂回默认位（升降 135 / 平推 0 / 云台 0 / 爪子 45），
+ * 最后载物台从 3 号位转回 1 号位，整套动作结束时平台也回到初始位置。 */
+static void Quick_LoadThreeBlocks(void)
+{
+    USART_SendString("[load] ==== auto load 3 blocks onto the platform ====\r\n");
 
     Arm_Home();
 
-    USART_SendString("[cycle] ---- grab ----\r\n");
+    USART_SendString("[load] platform -> slot 1 (make sure it is empty)\r\n");
+    Platform_Goto(1u);
+
+    USART_SendString("[load] ---- block 1/3 : grab ----\r\n");
     Quick_Grab();
+    USART_SendString("[load] ---- block 1/3 : place ----\r\n");
+    Quick_PlaceOnPlatform(0u);
 
-    USART_SendString("[cycle] ---- carry to platform ----\r\n");
-    Quick_PlaceOnPlatform();
+    USART_SendString("[load] ---- block 2/3 : back to grab pose, platform +120 meanwhile ----\r\n");
+    Quick_ReturnToGrab(1u);
+    USART_SendString("[load] ---- block 2/3 : place ----\r\n");
+    Quick_PlaceOnPlatform(0u);
 
-    USART_SendString("[cycle] done: block is on the platform\r\n");
+    USART_SendString("[load] ---- block 3/3 : back to grab pose, platform +120 meanwhile ----\r\n");
+    Quick_ReturnToGrab(1u);
+    USART_SendString("[load] ---- block 3/3 : place ----\r\n");
+    Quick_PlaceOnPlatform(0u);
+
+    USART_SendString("[load] 4/5 return arm to the initial pose\r\n");
+    Arm_Home();
+
+    USART_SendString("[load] 5/5 platform back to slot 1 (initial position)\r\n");
+    Platform_Goto(1u);
+
+    USART_SendString("[load] done: 3 blocks on the platform, slot ");
+    UART_SendInt((int32_t)g_platform_slot);
+    USART_SendString(", arm back to home, platform back to slot 1\r\n");
 }
 
 
@@ -1588,15 +1756,20 @@ static void Show_Menu(void)
     USART_SendString("4 / 5 / 6 : FULL grab flow, source yuantai_na(1/2/3) = red / green / blue\r\n");
     USART_SendString("            claw open -> move_all(push,lift,yuntai) x several -> claw close -> open\r\n");
     USART_SendString("            numbers are the source car's; ours NOT calibrated yet.\r\n");
-    USART_SendString("7 / 8 / 9 : wu kuai ping tai (PA2 / CH3) -> source pos 1 / 2 / 3 = 20 / 139 / 256 deg\r\n");
+    USART_SendString("7 / 8 / 9 : wu kuai ping tai (PA2 / CH3) -> pos 1 / 2 / 3 = 20 / 139 / 256 deg\r\n");
+    USART_SendString("            (manual; also sets the slot counter used by $ / @)\r\n");
     USART_SendString("m         : type one move_all by hand,\r\n");
     USART_SendString("            m -> \"push lift yuntai #\"  e.g.  22 50 33#   (integers, '-' allowed)\r\n");
     USART_SendString("!         : QUICK GRAB (measured 2026-10-17): open claw -> yuntai 126deg\r\n");
     USART_SendString("            -> push 65mm at TOP -> lift 110mm -> close claw, HOLD the block\r\n");
     USART_SendString("            (two steps on purpose: no diagonal sweep over the block)\r\n");
-    USART_SendString("@         : FULL CYCLE: home -> GRAB (same as !) -> carry to the on-car platform:\r\n");
-    USART_SendString("            lift 135mm TOP -> retract -> yuntai 254deg -> push 30mm -> lift 110mm -> open\r\n");
+    USART_SendString("@         : AUTO LOAD 3 BLOCKS: home -> slot 1 -> (grab -> place) x 3\r\n");
+    USART_SendString("            after block 1 and 2: lift clear -> retract -> platform +120deg in BACKGROUND\r\n");
+    USART_SendString("            while the yuntai swings back to the grab pose -> grab next -> place\r\n");
+    USART_SendString("            ends at the place pose, platform on slot 3 (2 rotations per 3 blocks)\r\n");
+    USART_SendString("! then $  : one block only: ! grab, then $ place (platform +120deg after release)\r\n");
     USART_SendString("$         : PLACE ONLY (already holding a block): same carry steps, no re-grab\r\n");
+    USART_SendString("% / ^     : platform -> next empty slot (+120deg) / back to slot 1 (20deg)\r\n");
     USART_SendString("-- both --\r\n");
     USART_SendString("p     : print state (arm + claw)   h : this menu\r\n");
     Show_ArmState();
@@ -2026,16 +2199,21 @@ static void Handle_Key(char c)
         /* !：一键夹取 —— 从默认位直接走到实测的夹取姿势并合爪保持 */
         case '!': Quick_Grab();   break;
 
-        /* @：一键整轮：回默认位 -> 原来那套夹取 -> 升到最高 -> 转载物台 -> 放下 */
-        case '@': Quick_GrabAndPlace();    break;
+        /* @：一键装车三块：抓一块放一块；放完直接回抓取位抓下一块，
+         *    载物台在这段时间里后台转 120 度（三块共转两次） */
+        case '@': Quick_LoadThreeBlocks(); break;
 
         /* $：只做"放"—— 手里已经夹着东西时用（不重新夹） */
-        case '$': Quick_PlaceOnPlatform(); break;
+        case '$': Quick_PlaceOnPlatform(1u); break;
 
         /* 7 / 8 / 9：载物台（源码 wukuaipingtai，PA2 / TIM2_CH3）转到 1/2/3 号位 */
-        case '7': Wukuai_Goto(1u); break;
-        case '8': Wukuai_Goto(2u); break;
-        case '9': Wukuai_Goto(3u); break;
+        case '7': Platform_Goto(1u); break;
+        case '8': Platform_Goto(2u); break;
+        case '9': Platform_Goto(3u); break;
+
+        /* % 下一个空位（+120 度）；^ 回 1 号位，方便开始新一轮 */
+        case '%': Platform_Advance(); break;
+        case '^': Platform_Goto(1u); break;
 
         /* m：手输一组 move_all（平推 升降 云台角），标定用 */
         case 'm': case 'M':
