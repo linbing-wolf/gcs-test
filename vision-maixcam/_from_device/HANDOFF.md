@@ -37,12 +37,15 @@
 | --- | --- |
 | 分辨率口径 | 640×480（对外）/ 检测可调 `DET_W,DET_H` |
 | 串口 | 默认 **UART4**：`A21=TX / A22=RX · /dev/ttyS4 · 115200` |
-| ⚠️ 串口前提 | UART4 被「Maix 通信协议」占用 → **先跑工具集 `Disable Maix Comm`**（或 `maix_toolkit/board/disable_comm.py --apply`）并**重启** |
+| 串口前提 | **实测无需处理**：板端 Maix 通信协议占的是 **UART1（A30/B3）**，UART4 空着。
+（旧文档说"UART4 被占用"是历史结论，2026-10-18 在真机上验证过 A21/A22 本来就是 `UART4_TX/RX`）|
 | 帧格式 | `AA 55 LEN payload CRC8 0D` |
 | 命令字 | `A`启停区 `T`任务码 `C`原料区三选一 `D/E`圆盘 `F`码垛 `G`障碍物 `R`复位 `Z`结束 |
 | 颜色码 | **红1 黄2 蓝3 绿4** |
 | 分类类别顺序（字母序）| `background, blue, green, other, red, yellow` |
-| 设备 | MaixCAM2 · `192.168.3.51` · `root/sipeed` |
+| 设备 | MaixCAM2 · 局域网 `192.168.3.51` · **Tailscale `100.118.92.10`（maixcam2-9b80）** · `root/sipeed` |
+| 设备上 APP 目录 | `/maixapp/apps/yyb_mover/`（用 `app_store_cli install <zip>` 安装）|
+| 模型目录 | `/root/models/cls11n.mud` + `cls11n_npu.axmodel` + `cls11n_vnpu.axmodel`（三个必须同目录同名）|
 
 ---
 
@@ -181,7 +184,7 @@ USE_AI = True; AI_KIND = "classify"; AI_MODEL = "/root/models/cls11n.mud"
 
 回复帧：`START,<区号>,x,y,w,h` · `TASK,<G1>,<G3>` · `PICK,color,x,y` · `DISC,x,y,dx,ok` · `STACK,x,y,h` · `OBST,x,y,w,h,dist`/`CLEAR` · `READY`/`OK` · `BUSY` · `NONE[,tag]`/`ERR,msg`
 
-### 7.1 状态机（v2.2.0）
+### 7.1 状态机（v3.3.0）
 
 ```text
 [上电] 自检 → 打开 UART4 → 发一次 READY（提示）→ IDLE
@@ -227,6 +230,10 @@ RUNNING: 阻塞跑一个任务（最长 TASK_TIMEOUT_MS=20s；G 为 OBST_TIMEOUT
 1. **拍图叠加层进图**：之前保存的图带 UI（蓝九宫格线穿棋盘）→ 已改为**先存干净帧再画预览**（toolbox + CLI 采集脚本）。
 2. **app.yaml YAML 报错**：`desc` 里半角冒号导致设备装不上 → 已**加引号**（yyb_mover 同修）。
 3. **selftest 断言**：标定后 `estimate_distance_mm` 不再为 0 → 已改。
+4. **板端不要"边跑 APP 边安装"**：2026-10-18 同时后台跑 main.py + `app_store_cli install`，
+   设备直接失联（需断电重启）。正确顺序：先 `pkill -f "[m]ain\.py"`，再安装，再启动。
+5. **`pkill -f "main.py"` 会杀掉自己的 SSH 会话**（命令串里含 main.py）→ 用 `pkill -f "[m]ain\.py"`。
+6. **设备上没有 `setsid`** → 后台启动只能用 `nohup ... &`。
 
 ---
 
@@ -238,12 +245,12 @@ RUNNING: 阻塞跑一个任务（最长 TASK_TIMEOUT_MS=20s；G 为 OBST_TIMEOUT
 [x] tar 校准集 dataset_split/calib → calib.tar
 [x] pulsar2 转换（输出节点 /model.10/linear/Gemm_output_0；NPU2 + NPU1）
 [x] 写 cls11n.mud（model_type=classifier；input_cache_flush=false）
-[ ] scp 到设备 /root/models/ + 板端实测精度（量化后仿真 99.38%，板上待验）
+[x] scp 到设备 /root/models/（2026-10-18 完成，md5 一致，板端 AI 加载成功：labels=6）
 [x] config.USE_AI=True + AI_MODEL      → 已默认开，且做了「AI 判色 + CV 兜底」
 [x] precision 接进 vision/tasks        → PRECISION_ON / DET_W,DET_H / CENTER_FILTER_N 生效
 [ ] （可选）补手眼标定 → HOMOGRAPHY
 [ ] （可选）重拍畸变图（整块入镜 + 覆盖四角）→ 更新 CAM_K/CAM_DIST
-[ ] （可选）STM32 侧按 stm32_patch/ 改 UART5 + 新协议
+[ ] STM32 侧接入视觉协议（**当前完全没接**，且 vision_uart.c 还是旧的 9 字节 0xFF/0xFE 帧）
 ```
 
 ---
@@ -296,4 +303,57 @@ maixcam-migration/
     ├─ yolo11n-cls.pt
     ├─ runs/cls11n/weights/best.{pt,onnx} ← 转换输入
     └─ TRAINING.md / HANDOFF.md（本文件）
+```
+
+---
+
+## 11. 上板实测与版本历程（2026-10-18）
+
+### 11.1 设备访问
+
+```text
+Tailscale : 100.118.92.10 （maixcam2-9b80）；局域网 192.168.3.51
+SSH       : root / sipeed
+APP 目录  : /maixapp/apps/yyb_mover/     安装：app_store_cli install <zip>
+模型目录  : /root/models/{cls11n.mud, cls11n_npu.axmodel, cls11n_vnpu.axmodel}
+            ↑ 三个文件必须同目录同名，否则 MUD 找不到权重
+```
+
+### 11.2 真机实测确认
+
+| 项 | 结果 |
+| --- | --- |
+| pinmap A21/A22 | 本来就是 `UART4_TX/RX`；旧日志"返回非0"是 `code == 0` 比较枚举的**误报**，v3.2.1 已改为看实际复用功能 |
+| Maix 通信协议 | 占 **UART1（A30/B3）**，与 UART4 不冲突 → **不需要** Disable Maix Comm |
+| AI 模型加载 | ✅ `load model from: /root/models/cls11n_vnpu.axmodel`；`labels num: 6` |
+| input_cache_flush | 板端打印 `flush input cache to ddr before run model: 0`，与 MUD 的 `false` 一致 |
+| output_cache_inval | 板端打印 `1`，与 MUD 一致 |
+| 画面 | 640×480 预览正常（面板 480×640） |
+| 串口回环 | READY 帧已发出，**STM32 侧尚未接入**（协议未实现） |
+
+### 11.3 版本历程
+
+| 版本 | 内容 |
+| --- | --- |
+| **3.1.0** | 阶段交接定稿：BUSY/R 中断、任务码语义校验、启停区区号（右侧道路+AI 双确认）、圆盘 `MOVE` 对齐闭环、G 快响应、STACK 去掉高度 |
+| **3.2.0** | 团队新增：`F,<颜色码>` 按颜色选底座；无同色 → 霍夫找空环中心 |
+| **3.2.1** | pinmap 诊断日志修正（区分真失败/已生效）；AI 模型缺失时打印排查提示 |
+| **3.3.0** | 原料区（转盘）**停稳才回复**：`StopDetector` + `PICK_STOP_ONLY/SPEED_PX_S/HOLD_MS` |
+
+### 11.4 新增文档
+
+| 文档 | 给谁 |
+| --- | --- |
+| `QUICKSTART.md` / `.html` | 人看的快速上手（安装、接线、参数、排障）|
+| `AI_HANDOFF_STM32.md` | STM32 侧 AI 的精确协议交接（帧格式、CRC 向量、状态机）|
+| `COLOR_GUIDE.html` | 颜色码可视化 + 任务码解析器 + 自测 |
+
+### 11.5 仍然没做的（按优先级）
+
+```text
+1. STM32 侧接入视觉协议（当前完全没接；vision_uart.c 还是旧的 9 字节 0xFF/0xFE 帧）
+2. 上板跑通 A/T/C/D/E/F/G 全流程实测
+3. 手眼标定（HOMOGRAPHY）——可选
+4. 现场标定 LAB_TH_*（数据集统计值已有）/ TH_ROAD（需要真实前视画面）
+5. 全线路偏移：PPM_Y 未按实测修正 + 前进左搓（详见队友的路径诊断文档）
 ```

@@ -39,9 +39,9 @@ AI 负责判色（yolo11n-cls，6 类；置信度不够自动退回阈值）
 ## 3. 装到板子上
 
 ```bash
-# ① 让出 UART4（只需一次，然后重启板子）
-python3 /root/disable_comm.py --apply
-#    或：打开设备上的「Maix Toolbox」→ Disable Maix Comm
+# ① （不需要了）旧文档说要先跑 Disable Maix Comm 让出 UART4；
+#    2026-10-18 真机验证：Maix 通信协议占的是 UART1(A30/B3)，UART4 本来就是空的。
+#    如果哪天 A21/A22 真的被占，再跑： python3 /root/disable_comm.py --apply
 
 # ② 传模型（三个文件放同一个目录）
 scp _converted/cls11n.mud _converted/cls11n_npu.axmodel _converted/cls11n_vnpu.axmodel \
@@ -93,6 +93,7 @@ GND 必须共地，115200 8N1
 ```text
 [ ] 启动日志：DET 640x480 → 640x480 | 去畸变 开 | 多帧平均 9
 [ ] 启动日志：[AI] 已加载: /root/models/cls11n.mud (labels=...)
+     另注意一行：[自检] pinmap A21 -> UART4_TX OK（当前=UART4_TX）
 [ ] STM32 发 R → 收到 READY
 [ ] A：有路/无路 → 区号 1/2，屏幕上 ratio 数值合理
 [ ] C：红黄蓝绿都能命中，日志里 来源=ai / cv
@@ -108,7 +109,7 @@ GND 必须共地，115200 8N1
 
 | 现象 | 先查什么 |
 |---|---|
-| 串口打不开 | UART4 是否被 Maix 通信占用（先 Disable Maix Comm）；`ls /dev/ttyS4` |
+| 串口打不开 | 先 `ls /dev/ttyS4`；正常情况 UART4 是空的（Maix Comm 在 UART1）|
 | 能开但收不到命令 | TX/RX 是否交叉；GND；波特率 115200 |
 | AI 没生效 | 日志有没有 `[AI] 已加载`；`/root/models/cls11n.mud` 是否存在 |
 | 颜色老判错 | 现场重标 LAB 阈值（`TH_*`），或调 `AI_MIN_PROB` |

@@ -1,44 +1,30 @@
 <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>快速介绍 · YYB 智能搬运视觉端</title><style>
-:root{--bg:#0f1420;--panel:#161d2c;--panel2:#1c2537;--line:#2a3550;--fg:#e6ecf7;
---muted:#93a1bd;--accent:#4da3ff;--ok:#38d39f;--warn:#ffb454}
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>快速介绍 · YYB 智能搬运视觉端</title>
+<style>
+:root{--bg:#0f1420;--line:#2a3550;--fg:#e6ecf7;--muted:#93a1bd;--accent:#4da3ff}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);line-height:1.7;font-size:15.5px;
-  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+body{margin:0;background:var(--bg);color:var(--fg);line-height:1.7;font-size:15.5px;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
 .wrap{max-width:1000px;margin:0 auto;padding:0 24px 80px}
-header{padding:46px 24px 30px;border-bottom:1px solid var(--line);
-  background:radial-gradient(1100px 380px at 15% -10%,#1d3557 0%,transparent 60%),
-             radial-gradient(800px 260px at 90% 0%,#16324a 0%,transparent 55%),var(--bg)}
-h1{margin:0;font-size:30px}
-.sub{color:var(--muted);font-size:14px;margin-top:6px}
+header{padding:46px 24px 30px;border-bottom:1px solid var(--line);background:radial-gradient(1100px 380px at 15% -10%,#1d3557 0%,transparent 60%),radial-gradient(800px 260px at 90% 0%,#16324a 0%,transparent 55%),var(--bg)}
+h1{margin:0;font-size:30px}.sub{color:var(--muted);font-size:14px;margin-top:6px}
 h2{font-size:22px;margin:34px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
-h3{font-size:17px;margin:24px 0 8px;color:#cfe0ff}
-p{margin:10px 0}
-code{background:#0b1220;border:1px solid var(--line);border-radius:5px;padding:1px 6px;
-  font-family:Consolas,monospace;font-size:13.5px;color:#9fe0ff}
-pre{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
-  overflow:auto}
+h3{font-size:17px;margin:24px 0 8px;color:#cfe0ff}p{margin:10px 0}
+code{background:#0b1220;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-family:Consolas,monospace;font-size:13.5px;color:#9fe0ff}
+pre{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto}
 pre code{background:none;border:none;padding:0;color:#c7d6f0;line-height:1.55}
 table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
 th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
-th{background:var(--panel2);color:#bcd2f5}
-tr:nth-child(even) td{background:#131a28}
-ul,ol{margin:10px 0;padding-left:26px}
-li{margin:5px 0}
-blockquote{margin:12px 0;padding:10px 16px;border-left:3px solid var(--accent);
-  background:var(--panel);color:#cfdcf3;border-radius:0 8px 8px 0}
-a{color:var(--accent)}
-strong{color:#fff}
+th{background:#1c2537;color:#bcd2f5}tr:nth-child(even) td{background:#131a28}
+ul,ol{margin:10px 0;padding-left:26px}li{margin:5px 0}
+blockquote{margin:12px 0;padding:10px 16px;border-left:3px solid var(--accent);background:#161d2c;color:#cfdcf3;border-radius:0 8px 8px 0}
+a{color:var(--accent)}strong{color:#fff}
 </style></head><body>
-<header><div class="wrap"><h1>快速介绍 · YYB 智能搬运视觉端</h1>
-<div class="sub">MaixCAM2 · 版本 3.1.0 · 给人看的快速上手</div></div></header>
-<div class="wrap">
-<h1>快速介绍 · YYB 智能搬运视觉端（MaixCAM2）</h1><blockquote>一句话：<strong>MaixCAM2 当视觉上位机，被动回答 STM32 的问题</strong>。STM32 发命令，视觉回坐标。</blockquote><blockquote>版本：<strong>3.0.0</strong> ｜ 设备：MaixCAM2（AX630C）｜ 串口：UART4 / 115200</blockquote><p>---</p><h2>1. 它能干什么</h2><table><thead><tr><th>命令</th><th>场景</th><th>回什么</th></tr></thead><tbody><tr><td><code>A</code></td><td>启停区</td><td><code>START,&lt;区号&gt;,x,y,w,h</code>（右侧有灰色道路=1 号，没有=2 号）</td></tr><tr><td><code>T,&lt;任务码&gt;</code></td><td>任务码</td><td><code>TASK,&lt;第一批颜色&gt;,&lt;第二批颜色&gt;</code></td></tr><tr><td><code>C,&lt;1~4&gt;</code></td><td>原料区找指定颜色</td><td><code>PICK,颜色,x,y</code></td></tr><tr><td><code>D</code> / <code>E</code></td><td>粗加工区 / 暂存区圆盘</td><td><code>DISC,x,y,dx,ok</code>（<code>ok=1</code> 表示环已对中）</td></tr><tr><td><code>F</code></td><td>码垛</td><td><code>STACK,x,y</code>（<strong>不含高度</strong>，由 STM32 自己算）</td></tr><tr><td><code>G</code></td><td>前方障碍物</td><td><code>OBST,x,y,w,h,mm</code> 或 <code>CLEAR</code></td></tr><tr><td><code>R</code></td><td>复位/握手</td><td><code>READY</code></td></tr><tr><td><code>Z</code></td><td>结束</td><td><code>OK</code></td></tr></tbody></table><p>失败统一回 <code>NONE[,标签]</code>。任务执行中再发命令会收到 <code>BUSY</code>；发 <code>R</code> 会立即中断。</p><p>---</p><h2>2. 它是怎么&quot;看&quot;的</h2><pre><code>经典 CV 负责定位（LAB 阈值找色块、霍夫找圆）
+<header><div class="wrap"><h1>快速介绍 · YYB 智能搬运视觉端</h1><div class="sub">MaixCAM2 · 版本 3.3.0 · 给人看的快速上手</div></div></header>
+<div class="wrap"><h1>快速介绍 · YYB 智能搬运视觉端（MaixCAM2）</h1><blockquote>一句话：<strong>MaixCAM2 当视觉上位机，被动回答 STM32 的问题</strong>。STM32 发命令，视觉回坐标。</blockquote><blockquote>版本：<strong>3.0.0</strong> ｜ 设备：MaixCAM2（AX630C）｜ 串口：UART4 / 115200</blockquote><p>---</p><h2>1. 它能干什么</h2><table><thead><tr><th>命令</th><th>场景</th><th>回什么</th></tr></thead><tbody><tr><td><code>A</code></td><td>启停区</td><td><code>START,&lt;区号&gt;,x,y,w,h</code>（右侧有灰色道路=1 号，没有=2 号）</td></tr><tr><td><code>T,&lt;任务码&gt;</code></td><td>任务码</td><td><code>TASK,&lt;第一批颜色&gt;,&lt;第二批颜色&gt;</code></td></tr><tr><td><code>C,&lt;1~4&gt;</code></td><td>原料区找指定颜色</td><td><code>PICK,颜色,x,y</code></td></tr><tr><td><code>D</code> / <code>E</code></td><td>粗加工区 / 暂存区圆盘</td><td><code>DISC,x,y,dx,ok</code>（<code>ok=1</code> 表示环已对中）</td></tr><tr><td><code>F,&lt;颜色码&gt;</code></td><td>码垛：按颜色找底座</td><td><code>STACK,x,y</code>（<strong>不含高度</strong>；无同色底座时回空环中心）</td></tr><tr><td><code>G</code></td><td>前方障碍物</td><td><code>OBST,x,y,w,h,mm</code> 或 <code>CLEAR</code></td></tr><tr><td><code>R</code></td><td>复位/握手</td><td><code>READY</code></td></tr><tr><td><code>Z</code></td><td>结束</td><td><code>OK</code></td></tr></tbody></table><p>失败统一回 <code>NONE[,标签]</code>。任务执行中再发命令会收到 <code>BUSY</code>；发 <code>R</code> 会立即中断。</p><p>---</p><h2>2. 它是怎么&quot;看&quot;的</h2><pre><code>经典 CV 负责定位（LAB 阈值找色块、霍夫找圆）
 AI 负责判色（yolo11n-cls，6 类；置信度不够自动退回阈值）
-精度链：坐标反畸变（RMS 0.35px 标定）→ 缩回 640×480 → 9 帧平均</code></pre><ul><li>AI 模型：<code>/root/models/cls11n.mud</code>（+ 两个 <code>.axmodel</code>）</li><li>量化后精度：验证集 <strong>99.38%</strong>（与 float 完全一致）</li><li>AI 缺失/报错时<strong>自动退回纯阈值</strong>，不会导致程序不可用</li></ul><p>---</p><h2>3. 装到板子上</h2><pre><code># ① 让出 UART4（只需一次，然后重启板子）
-python3 /root/disable_comm.py --apply
-#    或：打开设备上的「Maix Toolbox」→ Disable Maix Comm
+精度链：坐标反畸变（RMS 0.35px 标定）→ 缩回 640×480 → 9 帧平均</code></pre><ul><li>AI 模型：<code>/root/models/cls11n.mud</code>（+ 两个 <code>.axmodel</code>）</li><li>量化后精度：验证集 <strong>99.38%</strong>（与 float 完全一致）</li><li>AI 缺失/报错时<strong>自动退回纯阈值</strong>，不会导致程序不可用</li></ul><p>---</p><h2>3. 装到板子上</h2><pre><code># ① （不需要了）旧文档说要先跑 Disable Maix Comm 让出 UART4；
+#    2026-10-18 真机验证：Maix 通信协议占的是 UART1(A30/B3)，UART4 本来就是空的。
+#    如果哪天 A21/A22 真的被占，再跑： python3 /root/disable_comm.py --apply
 
 # ② 传模型（三个文件放同一个目录）
 scp _converted/cls11n.mud _converted/cls11n_npu.axmodel _converted/cls11n_vnpu.axmodel \
@@ -48,15 +34,16 @@ scp _converted/cls11n.mud _converted/cls11n_npu.axmodel _converted/cls11n_vnpu.a
 scp dist/maix-yyb_mover-v3.0.0.zip root@&lt;板子IP&gt;:/root/
 app_store_cli install /root/maix-yyb_mover-v3.0.0.zip</code></pre><blockquote>⚠️ 关掉 Maix 通信后，MaixVision 的 <strong>UART 连接</strong>就不能用了，改用<strong>网络(TCP)/SSH</strong>。</blockquote><p>---</p><h2>4. 接线</h2><pre><code>MaixCAM2 A21 (UART4_TX) → STM32 UART 的 RX
 MaixCAM2 A22 (UART4_RX) → STM32 UART 的 TX
-GND 必须共地，115200 8N1</code></pre><p>---</p><h2>5. 常用参数（<code>maixcam_app_v2/config.py</code>）</h2><table><thead><tr><th>参数</th><th>默认</th><th>什么时候改</th></tr></thead><tbody><tr><td><code>USE_AI</code></td><td>True</td><td>模型没装想跑纯 CV 时设 False</td></tr><tr><td><code>AI_MIN_PROB</code></td><td>0.60</td><td>AI 判色太保守/太激进（先开 <code>AI_DEBUG_PROB</code> 看分布）</td></tr><tr><td><code>AI_VETO_OTHER</code></td><td>True</td><td>AI 判成 other 时是否丢弃候选</td></tr><tr><td><code>UNDISTORT_ON</code></td><td>True</td><td>换镜头/重标后</td></tr><tr><td><code>UNDISTORT_MAX_SHIFT</code></td><td>48</td><td>反畸变&quot;防呆&quot;上限（px）</td></tr><tr><td><code>CENTER_FILTER_N</code></td><td>9</td><td>坐标抖动大就加大，反应慢就减小</td></tr><tr><td><code>ALIGN_ON</code></td><td>True</td><td>圆盘是否主动发 MOVE 微调</td></tr><tr><td><code>ALIGN_TOL</code></td><td>5</td><td>环 2 对中容差（px）</td></tr><tr><td><code>STACK_COLOR_VOTE</code></td><td>False</td><td>F 是否也做颜色投票</td></tr><tr><td><code>OBST_STABLE_FRAMES</code></td><td>5</td><td>G 的反应速度</td></tr><tr><td><code>TH_RED/TH_YELLOW/TH_BLUE/TH_GREEN</code></td><td>样本集统计值</td><td>换灯光/换场地后跑 <code>tools_analyze_lab.py</code> 重算</td></tr><tr><td><code>ROI_MATERIAL</code> 等</td><td>起手值</td><td>现场按机位调整</td></tr></tbody></table><p>---</p><h2>6. 上板自检（照着打勾）</h2><pre><code>[ ] 启动日志：DET 640x480 → 640x480 | 去畸变 开 | 多帧平均 9
+GND 必须共地，115200 8N1</code></pre><p>---</p><h2>5. 常用参数（<code>maixcam_app_v2/config.py</code>）</h2><table><thead><tr><th>参数</th><th>默认</th><th>什么时候改</th></tr></thead><tbody><tr><td><code>USE_AI</code></td><td>True</td><td>模型没装想跑纯 CV 时设 False</td></tr><tr><td><code>AI_MIN_PROB</code></td><td>0.60</td><td>AI 判色太保守/太激进（先开 <code>AI_DEBUG_PROB</code> 看分布）</td></tr><tr><td><code>AI_VETO_OTHER</code></td><td>True</td><td>AI 判成 other 时是否丢弃候选</td></tr><tr><td><code>UNDISTORT_ON</code></td><td>True</td><td>换镜头/重标后</td></tr><tr><td><code>UNDISTORT_MAX_SHIFT</code></td><td>48</td><td>反畸变&quot;防呆&quot;上限（px）</td></tr><tr><td><code>CENTER_FILTER_N</code></td><td>9</td><td>坐标抖动大就加大，反应慢就减小</td></tr><tr><td><code>ALIGN_ON</code></td><td>True</td><td>圆盘是否主动发 MOVE 微调</td></tr><tr><td><code>ALIGN_TOL</code></td><td>5</td><td>环 2 对中容差（px）</td></tr><tr><td><code>STACK_COLOR_VOTE</code></td><td>False</td><td>F 是否也做颜色投票</td></tr><tr><td><code>PICK_STOP_ONLY</code></td><td>True</td><td>原料区必须等转盘/物料停稳才回复</td></tr><tr><td><code>PICK_STOP_SPEED_PX_S</code></td><td>8.0</td><td>判定停稳的残余速度（px/s）</td></tr><tr><td><code>PICK_STOP_HOLD_MS</code></td><td>300</td><td>需持续静止多久</td></tr><tr><td><code>OBST_STABLE_FRAMES</code></td><td>5</td><td>G 的反应速度</td></tr><tr><td><code>TH_RED/TH_YELLOW/TH_BLUE/TH_GREEN</code></td><td>样本集统计值</td><td>换灯光/换场地后跑 <code>tools_analyze_lab.py</code> 重算</td></tr><tr><td><code>ROI_MATERIAL</code> 等</td><td>起手值</td><td>现场按机位调整</td></tr></tbody></table><p>---</p><h2>6. 上板自检（照着打勾）</h2><pre><code>[ ] 启动日志：DET 640x480 → 640x480 | 去畸变 开 | 多帧平均 9
 [ ] 启动日志：[AI] 已加载: /root/models/cls11n.mud (labels=...)
+     另注意一行：[自检] pinmap A21 -&gt; UART4_TX OK（当前=UART4_TX）
 [ ] STM32 发 R → 收到 READY
 [ ] A：有路/无路 → 区号 1/2，屏幕上 ratio 数值合理
 [ ] C：红黄蓝绿都能命中，日志里 来源=ai / cv
 [ ] D/E：会连续发 MOVE 并收敛到 |dx|≤5，ok=1
-[ ] F：STACK,x,y（不含高度）
+[ ] F,&lt;颜色&gt;：STACK,x,y（颜色一致 / 无底座回环心）
 [ ] G：OBST/CLEAR 不来回抖
-[ ] 断开相机 → 收到 ERR,camera（可选验证）</code></pre><p>---</p><h2>7. 常见问题</h2><table><thead><tr><th>现象</th><th>先查什么</th></tr></thead><tbody><tr><td>串口打不开</td><td>UART4 是否被 Maix 通信占用（先 Disable Maix Comm）；<code>ls /dev/ttyS4</code></td></tr><tr><td>能开但收不到命令</td><td>TX/RX 是否交叉；GND；波特率 115200</td></tr><tr><td>AI 没生效</td><td>日志有没有 <code>[AI] 已加载</code>；<code>/root/models/cls11n.mud</code> 是否存在</td></tr><tr><td>颜色老判错</td><td>现场重标 LAB 阈值（<code>TH_*</code>），或调 <code>AI_MIN_PROB</code></td></tr><tr><td>坐标整体偏</td><td>是否开了去畸变但 STM32 的像素→mm 仍按原始像素标定</td></tr><tr><td>圆盘一直不等</td><td>看 <code>MOVE</code> 方向是否反了（dx&gt;0 期望向右）；或 <code>ALIGN_TOL</code> 太小</td></tr><tr><td>启停区老判 2 号</td><td>看屏幕 <code>ROAD YES/no</code> 和 ratio，调 <code>ROI_ROAD</code>/<code>TH_ROAD</code></td></tr><tr><td>码垛超时</td><td>确认 <code>STACK_COLOR_VOTE=False</code>；ROI 是否对准</td></tr></tbody></table><p>---</p><h2>8. 文件地图</h2><pre><code>maixcam_app_v2/
+[ ] 断开相机 → 收到 ERR,camera（可选验证）</code></pre><p>---</p><h2>7. 常见问题</h2><table><thead><tr><th>现象</th><th>先查什么</th></tr></thead><tbody><tr><td>串口打不开</td><td>先 <code>ls /dev/ttyS4</code>；正常情况 UART4 是空的（Maix Comm 在 UART1）</td></tr><tr><td>能开但收不到命令</td><td>TX/RX 是否交叉；GND；波特率 115200</td></tr><tr><td>AI 没生效</td><td>日志有没有 <code>[AI] 已加载</code>；<code>/root/models/cls11n.mud</code> 是否存在</td></tr><tr><td>颜色老判错</td><td>现场重标 LAB 阈值（<code>TH_*</code>），或调 <code>AI_MIN_PROB</code></td></tr><tr><td>坐标整体偏</td><td>是否开了去畸变但 STM32 的像素→mm 仍按原始像素标定</td></tr><tr><td>圆盘一直不等</td><td>看 <code>MOVE</code> 方向是否反了（dx&gt;0 期望向右）；或 <code>ALIGN_TOL</code> 太小</td></tr><tr><td>启停区老判 2 号</td><td>看屏幕 <code>ROAD YES/no</code> 和 ratio，调 <code>ROI_ROAD</code>/<code>TH_ROAD</code></td></tr><tr><td>码垛超时</td><td>确认 <code>STACK_COLOR_VOTE=False</code>；ROI 是否对准</td></tr></tbody></table><p>---</p><h2>8. 文件地图</h2><pre><code>maixcam_app_v2/
   main.py        命令分发 + 主循环 + 启动重试
   protocol.py    帧格式 / CRC / 拆帧 / pack_*
   tasks.py       各任务（A/C/D/E/F/G）
@@ -66,5 +53,4 @@ GND 必须共地，115200 8N1</code></pre><p>---</p><h2>5. 常用参数（<code>
   config.py      唯一参数源
   selftest*.py   三个本地自检（不上板也能跑）
 _converted/      模型产物（mud + 2 个 axmodel）
-dist/            可安装的 APP 包</code></pre>
-</div></body></html>
+dist/            可安装的 APP 包</code></pre></div></body></html>
