@@ -1,0 +1,74 @@
+{
+  "passed": true,
+  "criterion": "minimum total distance for fixed station order, no obstacles/dwell",
+  "plans": [
+    {
+      "start": "A",
+      "nodes": [
+        "A",
+        "B",
+        "E",
+        "F",
+        "E",
+        "D",
+        "E",
+        "H",
+        "E",
+        "F",
+        "E",
+        "D",
+        "E",
+        "H",
+        "E",
+        "B",
+        "A"
+      ],
+      "goals": [
+        "B",
+        "F",
+        "D",
+        "H",
+        "F",
+        "D",
+        "H",
+        "A"
+      ],
+      "totalMm": 15040,
+      "floydLowerBoundMm": 15040
+    },
+    {
+      "start": "C",
+      "nodes": [
+        "C",
+        "B",
+        "E",
+        "F",
+        "E",
+        "D",
+        "E",
+        "H",
+        "E",
+        "F",
+        "E",
+        "D",
+        "E",
+        "H",
+        "E",
+        "B",
+        "C"
+      ],
+      "goals": [
+        "B",
+        "F",
+        "D",
+        "H",
+        "F",
+        "D",
+        "H",
+        "C"
+      ],
+      "totalMm": 15040,
+      "floydLowerBoundMm": 15040
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "exitCode": 0,
+  "scope": "host command/state/motor submission checks; not board runtime",
+  "sourceSha256": "bcd59cf920f3d8df710ef09b0a70c01853ecaa6f50d0c1fb7bc6d2c01340bc21",
+  "output": "PASS entry: 33726 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks"
+}

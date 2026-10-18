@@ -38,6 +38,7 @@ temp/
 !/README.md
 !/stm32-car-test/
 !/stm32-car-arm-merged/
+!/stm32-car-arm-merged2/
 !/test-code/
 !/文档/
 !/附件/
@@ -74,3 +75,12 @@ __pycache__/
 !/stm32-car-arm-merged/keil/OBJ/table_navigation.map
 /stm32-car-arm-merged/evidence/**/*.o
 !/stm32-car-arm-merged/evidence/**/*.log
+
+# 合并工程(2)：保留源码/文档/交付固件与证据，忽略本地编译产物。
+/stm32-car-arm-merged2/keil/*.uvguix.*
+/stm32-car-arm-merged2/keil/OBJ/*
+!/stm32-car-arm-merged2/keil/OBJ/table_navigation.axf
+!/stm32-car-arm-merged2/keil/OBJ/table_navigation.hex
+!/stm32-car-arm-merged2/keil/OBJ/table_navigation.map
+/stm32-car-arm-merged2/evidence/**/*.o
+!/stm32-car-arm-merged2/evidence/**/*.log

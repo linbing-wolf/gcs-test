@@ -1,0 +1,9 @@
+verified blocked masks 512/4096, queries 12754584
+verified blocked masks 1024/4096, queries 19131876
+verified blocked masks 1536/4096, queries 25509168
+verified blocked masks 2048/4096, queries 28697814
+verified blocked masks 2560/4096, queries 35075106
+verified blocked masks 3072/4096, queries 38263752
+verified blocked masks 3584/4096, queries 41452398
+verified blocked masks 4096/4096, queries 43046721
+PASS 531441 states, 43046721 exact C route comparisons; independent Floyd passed; table bytes 343680

@@ -1,0 +1,60 @@
+{
+  "scope": "ideal kinematic replay of source coordinate conventions; no hardware accessed",
+  "operatorStart": "bottom-right zone 2 facing scan area",
+  "before": {
+    "scenario": "runimu A from actual zone 2, previous positive map-to-yaw conversion",
+    "points": [
+      {
+        "nodeEstimate": "B",
+        "idealPhysicalXY": [
+          2190,
+          1200
+        ]
+      },
+      {
+        "nodeEstimate": "E",
+        "idealPhysicalXY": [
+          1200,
+          1200
+        ]
+      },
+      {
+        "nodeEstimate": "F",
+        "idealPhysicalXY": [
+          1200,
+          2200
+        ]
+      }
+    ]
+  },
+  "after": {
+    "scenario": "runimu C from actual zone 2, corrected initial heading and drawing handedness",
+    "points": [
+      {
+        "nodeEstimate": "B",
+        "idealPhysicalXY": [
+          2190,
+          1200
+        ]
+      },
+      {
+        "nodeEstimate": "E",
+        "idealPhysicalXY": [
+          1200,
+          1200
+        ]
+      },
+      {
+        "nodeEstimate": "F",
+        "idealPhysicalXY": [
+          1200,
+          200
+        ]
+      }
+    ]
+  },
+  "expectedRawMaterialXY": [
+    1200,
+    200
+  ]
+}

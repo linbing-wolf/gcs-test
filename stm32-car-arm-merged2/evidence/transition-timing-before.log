@@ -1,0 +1,4 @@
+moving plan=A count=18 avg_ms=59.0 max_ms=64 reused=0
+plan=A total_sim_ms=151800 alignments=25 baseline_count=18 baseline_avg_ms=59.0 baseline_range_ms=54..64 same_heading_alignments=7 same_heading_avg_ms=367.0 same_heading_range_ms=305..461 zero_to_alignment_avg_ms=535.7 zero_to_alignment_range_ms=446..841
+moving plan=C count=18 avg_ms=59.3 max_ms=64 reused=0
+plan=C total_sim_ms=152200 alignments=25 baseline_count=18 baseline_avg_ms=59.3 baseline_range_ms=54..64 same_heading_alignments=7 same_heading_avg_ms=354.9 same_heading_range_ms=310..461 zero_to_alignment_avg_ms=532.5 zero_to_alignment_range_ms=446..801

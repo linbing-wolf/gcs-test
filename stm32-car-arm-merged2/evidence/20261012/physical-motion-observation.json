@@ -1,0 +1,15 @@
+{
+  "userObservation": "After correcting pose command and sending go B, vehicle moved normally.",
+  "measuredDistanceMm": null,
+  "accuracyVerified": false,
+  "sourceChanges": false,
+  "hardwareMotionObservedByUser": true,
+  "coreState": "State.RUNNING",
+  "CAN_ESR": "0x0",
+  "CAN_TSR": "0x1c000303",
+  "rx_flags": "0x4040",
+  "pose_rpm": "0x1e0100",
+  "nav_state_word": "0x307",
+  "drive_generation": 3,
+  "recordedAt": "2026-10-12T13:23:32.774367+00:00"
+}

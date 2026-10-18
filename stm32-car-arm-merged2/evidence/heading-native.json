@@ -1,0 +1,50 @@
+{
+  "passed": true,
+  "scope": "host mocks and simulated heading, not physical vehicle",
+  "imuUartVariants": [
+    0,
+    1
+  ],
+  "sourceHashes": {
+    "src/main_table_nav.c": "20d7d5e435b449f41d703f3b8cf523dcca8f28f798223718d3deaed56d6cc65a",
+    "src/car_config.h": "2f2c6541912c6c458ba84e9328eaae6931371f0bb11d86aa85568c0cae209b34",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "d87c2723dc7e0121637e28d7c5faf8f6992adcd08b541201fe7b1cf6ac4e1c12",
+    "lookup/route_table.c": "dcb8855c454a1eafce8ad9ed5077c5f414a9716bb026171aecd366733b5a26c0",
+    "tests/verify_entry.c": "86ec8ab3ddab04592f996c59b6667e47f98943a52dc6a27d050f7fed0422d0dc",
+    "tests/verify_heading.c": "bc652b3d2978bc63a3df92e8c3601db6992ed6dc4855829194ef399cd29d9836",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "5ad27c1903a151c7858aca80235fdc826e8e471892fa52f2c9c7a3d50e5e3c7d",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923"
+  },
+  "results": [
+    {
+      "output": [
+        "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS entry: 51539 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+        "PASS IMU route A: 15040 mm, 136 corrections, model error +8%, drift 0.8deg/chunk, wrap crossing (simulated)",
+        "PASS IMU route C: 15040 mm, 137 corrections, model error +8%, drift 0.8deg/chunk, wrap crossing (simulated)",
+        "PASS heading/feedback: 188951 assertions; parser/freshness/motor4/deadlines/IMU A+C/convergence/stop/drift"
+      ],
+      "imuUartEnabled": 0,
+      "exitCode": 0
+    },
+    {
+      "output": [
+        "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+        "PASS entry: 51539 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+        "PASS IMU route A: 15040 mm, 136 corrections, model error +8%, drift 0.8deg/chunk, wrap crossing (simulated)",
+        "PASS IMU route C: 15040 mm, 137 corrections, model error +8%, drift 0.8deg/chunk, wrap crossing (simulated)",
+        "PASS heading/feedback: 190550 assertions; parser/freshness/motor4/deadlines/IMU A+C/convergence/stop/drift"
+      ],
+      "imuUartEnabled": 1,
+      "exitCode": 0
+    }
+  ]
+}

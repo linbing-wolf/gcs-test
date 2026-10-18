@@ -1,0 +1,93 @@
+{
+  "version": "shared-heading-turn-20261014",
+  "date": "2026-10-14",
+  "sourceHashes": {
+    "src/car_config.h": "2f2c6541912c6c458ba84e9328eaae6931371f0bb11d86aa85568c0cae209b34",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/heading_control.c": "cbab3c61d451349eb9a0fafc2b51477b2d5d7847f98d29d7acb5936e982c4dbb",
+    "src/heading_control.h": "f2cb093cbc8f7527b950c9895cc06cf9136715ebb2b0f8581359711eb6e998a3",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/main_table_nav.c": "c4a727e16e17c511c3a5bdb0db1736d93725b3a18699d9dd0420bc6cda5cc744",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "d87c2723dc7e0121637e28d7c5faf8f6992adcd08b541201fe7b1cf6ac4e1c12",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "2bfcdd5dc3ea1601487f63d2d1c3ce41c1f3524ad6ec34545a40b9ae9db3c128"
+  },
+  "nativeResult": "evidence/shared-turn-native.json",
+  "nativePassed": true,
+  "hostAssertions": {
+    "0": 228008,
+    "1": 229607
+  },
+  "armBuilds": {
+    "default": {
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "keilExitCode": 1,
+      "compiledUnits": 67,
+      "axfHexComparedBytes": 436732,
+      "binaryHashes": {
+        "table_navigation.axf": "510aff805dca3718db125fd5ca0f424cd182aa1db4099879160078ad6c3a3349",
+        "table_navigation.hex": "38d5ca6bc8773d2e34a8b23e1dc3cd628bad690aca2f3d44f2ec5533027f080b",
+        "table_navigation.map": "c061bcc0894240775be518cb04201de16dcd2942cadfd925e25f6ec0975dec76"
+      }
+    },
+    "enabled": {
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "keilExitCode": 1,
+      "compiledUnits": 67,
+      "axfHexComparedBytes": 436780,
+      "binaryHashes": {
+        "table_navigation.axf": "2c0c8515cb781881fe339eb2c6f99ac789ad4d333bd2a5fd9b63ac20481a895f",
+        "table_navigation.hex": "5e8aa2e026d156ac6bfdec803b0775c89ce45cd5ed89e5fbde34d4a2245cd7c5",
+        "table_navigation.map": "e208f794509a4daea8c3a05c09fed5ea117d39c3627fd32535df262be364e996"
+      }
+    }
+  },
+  "sharedCore": [
+    "src/heading_control.h",
+    "src/heading_control.c"
+  ],
+  "standaloneEntry": "start_heading_turn(relative_degrees, rpm); main loop updates until done/fault/stop",
+  "changedCommands": [
+    "left90",
+    "right90",
+    "left180",
+    "right180"
+  ],
+  "relativeOrigin": "fresh measured heading at each accepted command",
+  "noImuFallback": true,
+  "imuAdapterDefaultEnabled": false,
+  "cases": [
+    "12 direction/angle/origin cases including +/-180 crossing",
+    "overshoot reversal",
+    "sequential calls from current yaw",
+    "RPM and busy command rejection",
+    "all four motor feedback required",
+    "stop/mode switch and stale sample rejection",
+    "total deadline during rotation",
+    "A/C route regressions"
+  ],
+  "unchanged": [
+    "car_config values",
+    "raw tl/tr behavior",
+    "legacy run A/C route geometry",
+    "motion/navigation implementation and public headers",
+    "lookup data",
+    "CAN and UART adapters",
+    "compiler options"
+  ],
+  "hardwareAccessed": false,
+  "flashedThisRun": false,
+  "deviceCommandsSent": false,
+  "physicalTurnVerified": false,
+  "imuWiringAndModelConfirmed": false,
+  "motor4PhysicalRootCauseConfirmed": false
+}
