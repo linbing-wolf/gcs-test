@@ -1,0 +1,78 @@
+{
+  "version": "heading-feedback-20261014",
+  "date": "2026-10-14",
+  "sourceHashes": {
+    "src/car_config.h": "2f2c6541912c6c458ba84e9328eaae6931371f0bb11d86aa85568c0cae209b34",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/main_table_nav.c": "20d7d5e435b449f41d703f3b8cf523dcca8f28f798223718d3deaed56d6cc65a",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "d87c2723dc7e0121637e28d7c5faf8f6992adcd08b541201fe7b1cf6ac4e1c12",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "2bfcdd5dc3ea1601487f63d2d1c3ce41c1f3524ad6ec34545a40b9ae9db3c128"
+  },
+  "driverHashes": {
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923"
+  },
+  "nativeResult": "evidence/heading-native.json",
+  "nativePassed": true,
+  "hostAssertions": {
+    "0": 188951,
+    "1": 190550
+  },
+  "armBuilds": {
+    "default-final": {
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "keilExitCode": 1,
+      "compiledUnits": 66,
+      "axfHexComparedBytes": 435660,
+      "uart2IrqVector": "0x800585b",
+      "binaryHashes": {
+        "table_navigation.axf": "8602ffe54264873a7046b52e53395543c484d5744b0a33e51c4c7383e9245fe9",
+        "table_navigation.hex": "ac2f3d14be846da870522cd9a1fbe8daba930eb40b52fa9bf2a3b9462932b72e",
+        "table_navigation.map": "665932ba990794e90b04cd95f8f10890b283b286e72222ab4a40a4dda9a0e15a"
+      }
+    },
+    "enabled-final": {
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "keilExitCode": 1,
+      "compiledUnits": 66,
+      "axfHexComparedBytes": 435724,
+      "uart2IrqVector": "0x800585b",
+      "binaryHashes": {
+        "table_navigation.axf": "097d00dcdeb9d416e3224457979402c30ac8ffa169f8d049f84f203c056ac8ee",
+        "table_navigation.hex": "dfa0e6c64d0d8b8f9322c4394711064831dbd22906aae1f7f4ea78d4ba8e9a4d",
+        "table_navigation.map": "e88795264aa7e8f21b300c72a135c77e7304a11bb8ba2a6359d6c0dbe6838e0c"
+      }
+    }
+  },
+  "scope": "IMU heading feedback, short forward chunks, strict four-motor feedback; not XY localization",
+  "imuAdapterDefaultEnabled": false,
+  "imuModelAndWiringConfirmed": false,
+  "motor4PhysicalRootCauseConfirmed": false,
+  "physicalRunVerified": false,
+  "hardwareAccessed": false,
+  "flashedThisRun": false,
+  "deviceCommandsSent": false,
+  "unchanged": [
+    "motion implementation and public motion/navigation headers",
+    "road geometry and fixed route",
+    "lookup data",
+    "compiler options"
+  ],
+  "limits": [
+    "No real IMU/CAN timing verification",
+    "Stop is requested, not physically confirmed",
+    "Emm short replies have no action transaction ID",
+    "No continuous straight-line PID or XY position loop"
+  ]
+}

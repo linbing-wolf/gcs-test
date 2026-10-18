@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-17",
+  "purpose": "prepare current storage80 revision for GitHub publication",
+  "runtimeVersion": "storage80-20261017",
+  "runtimeSourceHashesMatch": "evidence/暂存区内移80验证.json",
+  "sourceAndMapHashesVerified": true,
+  "hexMatchesVerifiedStorage80Firmware": true,
+  "localAxfMapDifferFromIsolatedBuild": [
+    "keil/OBJ/table_navigation.axf",
+    "keil/OBJ/table_navigation.map"
+  ],
+  "currentFirmwareHashes": {
+    "axf": "02a38484fc3a3fbc090309bd45e31ecbbee5b4f79dc699585405918af773368f",
+    "hex": "d5f732307802c7ad14f8582120b967796a8728314715b70e569dca00c9bbb83b",
+    "map": "ca91d67f8b4fd2264306615c1b4675eb646d4300b71a3c65f8b949534660a9a9"
+  },
+  "axfHexLoadBytesEqual": true,
+  "loadBytesCompared": 412272,
+  "newArmBuildPerformedThisPublication": false,
+  "hardwareAccessed": false,
+  "unresolvedUserObservation": {
+    "sameInitialAndFinalReferencePoint": true,
+    "returnBDoesNotCoincideWithInitialB": true,
+    "AEstimatedCorrectionBodyMm": {
+      "forward": 100,
+      "left": 100
+    },
+    "CEstimatedCorrectionBodyMm": {
+      "backward": 100,
+      "left": 100
+    },
+    "rootCause": "not established; at least part of position error exists before final return segment",
+    "returnCompensationChanged": false
+  },
+  "previousBuildAndSimulationEvidenceIsNotVehicleAcceptance": true,
+  "freshStagedNativeRegression": {
+    "passed": true,
+    "imuUartVariants": [
+      0,
+      1
+    ],
+    "assertions": {
+      "0": 1178450,
+      "1": 1180756
+    },
+    "canIrqPassed": true,
+    "packageFiles": 347
+  }
+}

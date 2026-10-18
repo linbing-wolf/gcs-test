@@ -1,0 +1,1 @@
+PASS CAN driver: burst FIFO drain, overrun, empty FIFO, valid interrupt release, TX mailbox failure

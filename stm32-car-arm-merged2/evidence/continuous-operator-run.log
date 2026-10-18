@@ -1,0 +1,97 @@
+med heading_control=IMU
+[run checkpoint] job=1/8; station action skipped
+[heading] phase=coarse
+[turn] left pulses=3554 rpm=60 planned_degrees=88 estimate=1510ms; physical_angle=unconfirmed
+[run] MOVING step=11 job=1/8 node_est=B ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] left pulses=107 rpm=30 planned_degrees=0 estimate=231ms; physical_angle=unconfirmed
+[run] MOVING step=12 job=1/8 node_est=B ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=26 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=13 job=1/8 node_est=B ack=0 ready=0 pending=0 heading_est=1 action=forward physical_pose=unconfirmed heading_control=IMU
+[segment] forward 490 mm, rpm=90 acc=150 id=27 estimate=1657ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=14 job=1/8 node_est=B ack=0 ready=0 pending=0 heading_est=1 action=forward physical_pose=unconfirmed heading_control=IMU
+[heading] phase=coarse
+[turn] left pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=15 job=1/8 node_est=E ack=0 ready=0 pending=0 heading_est=1 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] left pulses=134 rpm=30 planned_degrees=0 estimate=258ms; physical_angle=unconfirmed
+[run] MOVING step=16 job=1/8 node_est=E ack=0 ready=0 pending=0 heading_est=1 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=30 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=17 job=1/8 node_est=E ack=0 ready=0 pending=0 heading_est=2 action=forward physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=31 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=18 job=1/8 node_est=E ack=0 ready=0 pending=0 heading_est=2 action=forward physical_pose=unconfirmed heading_control=IMU
+[run checkpoint] job=2/8; station action skipped
+[heading] phase=coarse
+[turn] right pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=19 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=coarse
+[turn] right pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=20 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=280 rpm=30 planned_degrees=0 estimate=374ms; physical_angle=unconfirmed
+[run] MOVING step=21 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=123 rpm=30 planned_degrees=0 estimate=247ms; physical_angle=unconfirmed
+[run] MOVING step=22 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=46 rpm=30 planned_degrees=0 estimate=200ms; physical_angle=unconfirmed
+[run] MOVING step=23 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=37 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=24 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=0 action=forward physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=38 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=25 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=0 action=forward physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=42 rpm=30 planned_degrees=0 estimate=200ms; physical_angle=unconfirmed
+[run] MOVING step=26 job=2/8 node_est=F ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=40 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=27 job=2/8 node_est=E ack=0 ready=0 pending=0 heading_est=0 action=forward physical_pose=unconfirmed heading_control=IMU
+[segment] forward 360 mm, rpm=90 acc=150 id=41 estimate=1377ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=28 job=2/8 node_est=E ack=0 ready=0 pending=0 heading_est=0 action=forward physical_pose=unconfirmed heading_control=IMU
+[run checkpoint] job=3/8; station action skipped
+[heading] phase=coarse
+[turn] right pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=29 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=coarse
+[turn] right pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=30 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=280 rpm=30 planned_degrees=0 estimate=374ms; physical_angle=unconfirmed
+[run] MOVING step=31 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=128 rpm=30 planned_degrees=0 estimate=252ms; physical_angle=unconfirmed
+[run] MOVING step=32 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=0 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=46 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=33 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=2 action=forward physical_pose=unconfirmed heading_control=IMU
+[segment] forward 360 mm, rpm=90 acc=150 id=47 estimate=1377ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=34 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=2 action=forward physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=43 rpm=30 planned_degrees=0 estimate=200ms; physical_angle=unconfirmed
+[run] MOVING step=35 job=3/8 node_est=D ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=coarse
+[turn] right pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=36 job=3/8 node_est=E ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=174 rpm=30 planned_degrees=0 estimate=294ms; physical_angle=unconfirmed
+[run] MOVING step=37 job=3/8 node_est=E ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=67 rpm=30 planned_degrees=0 estimate=200ms; physical_angle=unconfirmed
+[run] MOVING step=38 job=3/8 node_est=E ack=0 ready=0 pending=0 heading_est=2 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 500 mm, rpm=90 acc=150 id=52 estimate=1679ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=39 job=3/8 node_est=E ack=0 ready=0 pending=0 heading_est=1 action=forward physical_pose=unconfirmed heading_control=IMU
+[heading] phase=fine
+[turn] right pulses=57 rpm=30 planned_degrees=0 estimate=200ms; physical_angle=unconfirmed
+[run] MOVING step=40 job=3/8 node_est=E ack=0 ready=0 pending=0 heading_est=1 action=turn physical_pose=unconfirmed heading_control=IMU
+[segment] forward 360 mm, rpm=90 acc=150 id=54 estimate=1377ms trim_forward=0 mm (feedforward, not arrival)
+[run] MOVING step=41 job=3/8 node_est=E ack=0 ready=0 pending=0 heading_est=1 action=forward physical_pose=unconfirmed heading_control=IMU
+[run checkpoint] job=4/8; station action skipped
+[heading] phase=coarse
+[turn] left pulses=3600 rpm=60 planned_degrees=90 estimate=1525ms; physical_angle=unconfirmed
+[run] MOVING step=42 job=4/8 node_est=H ack=0 ready=0 pending=0 heading_est=1 action=turn physical_pose=unconfirmed heading_control=IMU
+[run fault] motion timeout/failure; stopped; no automatic retry
+[run] FAULT step=42 job=4/8 node_est=H ack=15 ready=7 pending=0 heading_est=1 action=turn physical_pose=unconfirmed heading_control=IMU
+[feedback] invalid=0 rejected_shape=0 can_rx_fault=0
+[motor] addr=1 replies=376 status_replies=255 action_status_replies=81 command_dec=58 value_dec=3 flags_dec=3 flags_valid=1 enabled=1 arrived=1 stalled=0 protected=0 arrival_notices=0 age_ms=104 status_age_ms=106 error_valid=1 error_counts=398 error_age_ms=8110 speed_valid=0 speed_rpm=0 speed_age_ms=17014
+[motor] addr=2 replies=285 status_replies=243 action_status_replies=81 command_dec=58 value_dec=3 flags_dec=3 flags_valid=1 enabled=1 arrived=1 stalled=0 protected=0 arrival_notices=0 age_ms=106 status_age_ms=107 error_valid=0 error_counts=0 error_age_ms=168815 speed_valid=0 speed_rpm=0 speed_age_ms=168819
+[motor] addr=3 replies=280 status_replies=235 action_status_replies=80 command_dec=58 value_dec=3 flags_dec=3 flags_valid=1 enabled=1 arrived=1 stalled=0 protected=0 arrival_notices=0 age_ms=208 status_age_ms=209 error_valid=0 error_counts=-176 error_age_ms=26089 speed_valid=0 speed_rpm=0 speed_age_ms=60883
+[motor] addr=4 replies=285 status_replies=224 action_status_replies=80 command_dec=55 value_dec=1 flags_dec=1 flags_valid=1 enabled=1 arrived=0 stalled=0 protected=0 arrival_notices=0 age_ms=185 status_age_ms=211 error_valid=1 error_counts=-233 error_age_ms=190 speed_valid=1 speed_rpm=0 speed_age_ms=694
+[imu] uart_enabled=1 fresh=1 yaw_cdeg=15210 age_ms=26 samples=1689 checksum_errors=0

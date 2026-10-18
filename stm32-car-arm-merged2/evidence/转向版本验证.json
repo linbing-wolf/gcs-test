@@ -1,0 +1,141 @@
+{
+  "version": "rotation-20261013",
+  "scope": "pulse rotation calibration and turn-then-forward full-route execution; original manual navigation retained",
+  "sourceHashes": {
+    "src/car_config.h": "58e216cca2e7648a58e2d8b3e580722c918144c3b14425552d3e06584b2fb7a6",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/main_table_nav.c": "8f8a0be9f09362cef6ae6116547f8628c101fd5eb5524e9203a30ce274b4f746",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "d87c2723dc7e0121637e28d7c5faf8f6992adcd08b541201fe7b1cf6ac4e1c12",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "2bfcdd5dc3ea1601487f63d2d1c3ce41c1f3524ad6ec34545a40b9ae9db3c128",
+    "tests/verify_entry.c": "ba19b7381e2c82e02c3d0f811b547a62bbdaae0558a6e2d04c33666734e099d5"
+  },
+  "nativePassed": true,
+  "nativeOutput": [
+    "PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+    "PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)",
+    "PASS entry: 46223 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks"
+  ],
+  "keilExitCode": 1,
+  "errors": 0,
+  "warnings": 30,
+  "warningsUnchanged": true,
+  "compiledUnits": 65,
+  "axfHexComparedBytes": 431564,
+  "irqVectors": {
+    "Reset_Handler": "0x8000269",
+    "USART3_IRQHandler": "0x800707f",
+    "TIM5_IRQHandler": "0x8007169",
+    "CAN1_RX0_IRQHandler": "0x8002f0d"
+  },
+  "binaryHashes": {
+    "table_navigation.axf": "cb82c03de474a67ae8e2454266f013c335be7a0aef2e2b44a3cde8154ba45edb",
+    "table_navigation.hex": "f2da607f372ff665bb22f7325113b49c37f1863be1a205664730b30e4f2ab777",
+    "table_navigation.map": "faa8ef7f010996667952d58f2bfbc7808c007d06a0a85baa4b2f0bd530e84831"
+  },
+  "modelGeometry": {
+    "assembly": "gcs-gold-medal-main/gcs-gold-medal-main/model/工创搬运/1A整车第三版装配A.SLDASM",
+    "method": "read-only SOLIDWORKS API; solid body extreme points, width mid-plane transformed to assembly coordinates; no model save",
+    "wheelbaseMm": 190.00000000000017,
+    "trackMm": 215.96408086808162,
+    "wheels": [
+      {
+        "name": "100mm麦克纳姆轮右-4",
+        "worldCenterMm": [
+          91.50749529732626,
+          -29.343054778374402,
+          107.60479163675625
+        ],
+        "localBoundsMetres": [
+          -0.050359354909766126,
+          -0.002070710000683,
+          -0.05029624592949176,
+          0.05027605625109811,
+          0.047929289999919994,
+          0.050297142362589795
+        ]
+      },
+      {
+        "name": "100mm麦克纳姆轮左-3",
+        "worldCenterMm": [
+          91.50661248305684,
+          -29.343054778374864,
+          -108.3592892313403
+        ],
+        "localBoundsMetres": [
+          -0.05036112053830375,
+          -0.002070710000682,
+          -0.05029714236258981,
+          0.05027605625109811,
+          0.04792928999992,
+          0.050296245929491744
+        ]
+      },
+      {
+        "name": "100mm麦克纳姆轮左-4",
+        "worldCenterMm": [
+          -98.49338751694341,
+          -29.343951211464827,
+          107.60479163674076
+        ],
+        "localBoundsMetres": [
+          -0.05036112053830375,
+          -0.002070710000682,
+          -0.05029714236258981,
+          0.05027605625109811,
+          0.04792928999992,
+          0.050296245929491744
+        ]
+      },
+      {
+        "name": "100mm麦克纳姆轮右-3",
+        "worldCenterMm": [
+          -98.49250470267386,
+          -29.34395121146769,
+          -108.35928923132595
+        ],
+        "localBoundsMetres": [
+          -0.050359354909766126,
+          -0.002070710000683,
+          -0.05029624592949176,
+          0.05027605625109811,
+          0.047929289999919994,
+          0.050297142362589795
+        ]
+      }
+    ],
+    "modelEstimateFormula": "ppm_y * (wheelbase_mm + track_mm) * pi/4",
+    "ppmY": 10.36,
+    "estimated90Pulses": 3303,
+    "physicalVerification": false
+  },
+  "turnDefaults": {
+    "rpm": 30,
+    "testPulses": 200,
+    "model90InitialPulses": 3303,
+    "ccw90CalibratedPulses": 0,
+    "cw90CalibratedPulses": 0
+  },
+  "fullRoute": {
+    "distanceMm": 15040,
+    "forwardSegments": 18,
+    "turnActions": 16,
+    "totalActions": 34,
+    "jobs": 8,
+    "forwardRpm": 60,
+    "turnRpm": 30,
+    "returnsInitialHeading": true,
+    "stationDwellMs": 0
+  },
+  "completionRequires": "four position ACKs and solicited enabled/non-stalled/arrived replies for EACH rotation and forward segment; estimates never advance route",
+  "imuAngleFeedbackUsed": false,
+  "vendorLookupGeometryTablesUnchanged": true,
+  "flashedThisRun": false,
+  "vehicleCommandsSent": false,
+  "physicalTurningVerified": false,
+  "motor4ArrivalIssueResolved": false
+}

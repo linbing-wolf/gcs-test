@@ -1,0 +1,109 @@
+{
+  "version": "right-gripper-stations-20261014",
+  "date": "2026-10-14",
+  "sourceHashes": {
+    "src/car_config.h": "c90789c9246baac63db38c0c3f8ef9f7e8ba9c52450d52c4664c18709624a310",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/heading_control.c": "66f1fb3e2d8004b5d674248f596ec3cda7401cf33e0c5994c4c45bb36acc4592",
+    "src/heading_control.h": "526b291029063ea1a5d1b8be8e9b67c36aba61f857fa931e5aaecbc2116be1b9",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/main_table_nav.c": "a9432740b6661110c1b8c738167c1f27c4ba0b3fbd6b75d94e105e1bba0e895c",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "34639cfb728522f7a4d3de3d4f8bff746379c008bf7b9f41590f0f972526b62e",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "e0805cc76b164c315495f448d4b812f7a8a9f22008ce22cc6b78130e230b3906"
+  },
+  "nativeResult": "evidence/right-gripper-native.json",
+  "nativePassed": true,
+  "hostAssertions": {
+    "0": 532236,
+    "1": 534483
+  },
+  "armBuilds": {
+    "default": {
+      "imuUartEnabled": true,
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "compiledUnits": 67,
+      "keilExitCode": 1,
+      "axfHexComparedBytes": 442252,
+      "binaryHashes": {
+        "table_navigation.axf": "19f669151f27c4e0f957b8c164fad58224cf79653974be287e33aebf4d33d5ae",
+        "table_navigation.hex": "30398edaa630e5f37b0de939148d498e62bc64c5a42f7c3f2c9c53169f55697d",
+        "table_navigation.map": "0914994af9dc1d3f9b03d9f25b62a38144b78abec3fa7ef62ee50f5cd7b26054"
+      }
+    },
+    "disabled": {
+      "imuUartEnabled": false,
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "compiledUnits": 67,
+      "keilExitCode": 1,
+      "axfHexComparedBytes": 442256,
+      "binaryHashes": {
+        "table_navigation.axf": "67f7c2c1addeacb944eb55029b57de8723a593032cb2ba108ab9bc167c37f0c0",
+        "table_navigation.hex": "e7ec17e73dd4eba0fbf21e74b8aa1c5a45c46b4b33ae82a7c06b926c779d7589",
+        "table_navigation.map": "705c420406682552975c03c3ba79b9c0884f77d5b01eb8817c2af6ba1a5b12c8"
+      }
+    }
+  },
+  "stationOrientation": {
+    "gripperSide": "right",
+    "appliesTo": "runimu A/C, both batches",
+    "F": {
+      "bodyHeading": 1,
+      "bodyFacing": "left (-X)",
+      "rightFacing": "up, raw material"
+    },
+    "D": {
+      "bodyHeading": 3,
+      "bodyFacing": "right (+X)",
+      "rightFacing": "down, rough processing"
+    },
+    "H": {
+      "bodyHeading": 0,
+      "bodyFacing": "down (+Y)",
+      "rightFacing": "left, temporary storage"
+    },
+    "perPlanChecks": 6,
+    "advanceCheckpointOnlyAfterHeadingAndFreshFourWheelStopped": true,
+    "independentRightNormalVectorTest": true,
+    "physicalVerified": false
+  },
+  "simulation": {
+    "scope": "software plant only, not field accuracy acceptance",
+    "distanceMm": 15040,
+    "straightGeometrySegments": 18,
+    "turnsPerPlan": 22,
+    "reverseSegmentsInCurrentPlan": 0,
+    "reverseControllerStillEnabled": true,
+    "reverseApproachAndYawDisturbanceRecoveryTestPassed": true,
+    "stationFaultsDoNotAdvanceJob": [
+      "wheel-4 not stopped",
+      "IMU invalid",
+      "operator stop"
+    ]
+  },
+  "stationAction": "route test still skips gripper actions and station dwell; continues after orientation ready",
+  "unchanged": [
+    "project/uvoptx settings",
+    "route nodes and road geometry",
+    "map and start-heading correction",
+    "heading controller/gains",
+    "four-wheel feedback/ACK/stopped conditions",
+    "legacy position modes",
+    "lookup tables",
+    "vendor drivers",
+    "turn postcheck"
+  ],
+  "hardwareAccessed": false,
+  "flashedThisRun": false,
+  "deviceCommandsSent": false,
+  "physicalGraspOrHeadingAccuracyVerified": false
+}

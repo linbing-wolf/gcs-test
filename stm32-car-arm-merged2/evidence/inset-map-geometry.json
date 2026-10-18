@@ -1,0 +1,119 @@
+{
+  "geometryValidationPassed": true,
+  "parameters": {
+    "topInsetMm": 90,
+    "bottomInsetMm": 50
+  },
+  "nodes": [
+    [
+      2250,
+      170
+    ],
+    [
+      2190,
+      1200
+    ],
+    [
+      2250,
+      2230
+    ],
+    [
+      1200,
+      2010
+    ],
+    [
+      1200,
+      1200
+    ],
+    [
+      1200,
+      290
+    ],
+    [
+      340,
+      290
+    ],
+    [
+      340,
+      1200
+    ],
+    [
+      340,
+      2010
+    ]
+  ],
+  "roads": [
+    [
+      0,
+      1,
+      1090
+    ],
+    [
+      1,
+      2,
+      1090
+    ],
+    [
+      2,
+      3,
+      1270
+    ],
+    [
+      3,
+      8,
+      860
+    ],
+    [
+      8,
+      7,
+      810
+    ],
+    [
+      7,
+      6,
+      910
+    ],
+    [
+      6,
+      5,
+      860
+    ],
+    [
+      5,
+      0,
+      1170
+    ],
+    [
+      5,
+      4,
+      910
+    ],
+    [
+      4,
+      3,
+      810
+    ],
+    [
+      7,
+      4,
+      860
+    ],
+    [
+      4,
+      1,
+      990
+    ]
+  ],
+  "sourceHashes": {
+    "src/car_config.h": "17f80166c2fe4d51a8c2f4731661f8b5f990e711950dd984b47fd23d927b28e3",
+    "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
+    "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
+    "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
+    "tests/export_map.c": "9134e256b50484c7c966c1544d8b689509f710e41eb15099115642c28e8b5f45",
+    "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+    "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+    "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+    "tools/generate-route-table.cjs": "34be5c6f892d03a0a38c82057ccaa2faa8dafd0f29a33a31c584f1474432ea83",
+    "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44"
+  }
+}

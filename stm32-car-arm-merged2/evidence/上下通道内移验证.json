@@ -1,0 +1,299 @@
+{
+  "version": "map-inset-20261017",
+  "date": "2026-10-17",
+  "sourceHashes": {
+    "src/main_table_nav.c": "f68fae25642ae14877064dfe1f8aec7dfc91ea65d553895983cb48cb1ae8caf1",
+    "src/car_config.h": "17f80166c2fe4d51a8c2f4731661f8b5f990e711950dd984b47fd23d927b28e3",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/heading_control.c": "66f1fb3e2d8004b5d674248f596ec3cda7401cf33e0c5994c4c45bb36acc4592",
+    "src/heading_control.h": "526b291029063ea1a5d1b8be8e9b67c36aba61f857fa931e5aaecbc2116be1b9",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
+    "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
+    "lookup/table_data.h": "3dfa385b61cb7b84967e2b1dfad424f6a54c9100615eab64b515c0d962815547",
+    "lookup/generation.json": "ce5ad88b156b87ea9e407779d02fcf52d395f8cee5fe9d3d235c4a6bc512da68",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "tests/verify_entry.c": "49f1fef46db05d08fd4652badc7adbcfb6d9102f87b6be063335c21f3c1bcbde",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/verify_heading.c": "8964c84153ef285f402d419673d821ab91123191a3ffef62bc6d7447cae15e7f",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "db9851a0240b6d5cc3892b3dad8f31165180d7cc5e66d0a63ea49acc90393924",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923",
+    "vendor/stm32/SYSTEM/Serial.c": "4ce4e8b43dee20b4c545287f6dc61c07f85888629fab97fad61f911c1d186d4a",
+    "tests/export_map.c": "9134e256b50484c7c966c1544d8b689509f710e41eb15099115642c28e8b5f45",
+    "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+    "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+    "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+    "tools/generate-route-table.cjs": "34be5c6f892d03a0a38c82057ccaa2faa8dafd0f29a33a31c584f1474432ea83",
+    "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44"
+  },
+  "nativeResult": "evidence/inset-native.json",
+  "nativePassed": true,
+  "hostAssertions": {
+    "0": 651260,
+    "1": 653553
+  },
+  "reversePolicy": {
+    "scope": "runimu A/C",
+    "requiresCompletedUndirectedRoadThisRun": true,
+    "requiresDestinationDirectlyBehind": true,
+    "partialTraversalDoesNotQualify": true,
+    "historyResetOnNewRun": true,
+    "roadHistoryHeadingCases": 576,
+    "backwardApproachHeadingRecoveryAndStationOrientationPassed": true
+  },
+  "fullRouteSimulation": {
+    "distanceMm": 14480,
+    "straightSegments": 18,
+    "turnsPerPlan": 22,
+    "reverseSegmentsPerPlan": 0,
+    "rightGripperChecksPerPlan": 6
+  },
+  "armBuild": {
+    "imuUartEnabled": true,
+    "passed": true,
+    "status": "passed_after_user_authorized_outside_sandbox_build",
+    "errors": 0,
+    "warnings": 30,
+    "warningsUnchanged": true,
+    "keilExitCode": 1,
+    "compiledUnits": 67,
+    "projectUnits": 67,
+    "buildEnvironment": "outside-sandbox local Keil build under existing user authorization",
+    "outsideSandboxBuildExplicitlyAuthorized": true,
+    "newFirmwareGenerated": true,
+    "firmwareMatchesCurrentSource": true,
+    "axfHexComparedBytes": 444360,
+    "binaryHashes": {
+      "table_navigation.axf": "381310dd677d4a2b7ec8e53504b817cd231fc9f09bb4abd422a7c04df6b88b25",
+      "table_navigation.hex": "c383148b0250eb3da64edf87c06f818913f687db4c9258cb254fc6b5f7582a3a",
+      "table_navigation.map": "6c1a98a62b1197f66cb7c902f96c3c22f3cb122471d7c243f12afcf516bdaad1"
+    }
+  },
+  "preexistingBuildOutputDifferencesBackedUp": [
+    "keil/OBJ/table_navigation.axf",
+    "keil/OBJ/table_navigation.map",
+    "keil/TableNavigation.uvoptx"
+  ],
+  "rawStationCollision": {
+    "approachDistanceChanged": true,
+    "EFDistanceMm": 910,
+    "EDDistanceMm": 810,
+    "physicalCollisionClearanceVerified": false,
+    "physicalGripperReachVerified": false
+  },
+  "unchanged": [
+    "A/C start coordinates and B/E/H",
+    "full_route task/node sequence",
+    "IMU and motor control parameters",
+    "four-wheel feedback and emergency-stop conditions",
+    "completed-road reverse policy",
+    "PC9 notification",
+    "XM1601 scan behavior",
+    "lookup public API and static lookup-only MCU operation",
+    "vendor drivers",
+    "project and user uvoptx"
+  ],
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalCollisionOrReverseVerified": false,
+  "startButton": {
+    "port": "GPIOC",
+    "pin": 9,
+    "activeLevel": "high",
+    "pull": "down",
+    "debounceMs": 30,
+    "debugUart": "USART3 PB10 TX / PB11 RX 115200 8N1",
+    "message": "[button] START pressed\r\n",
+    "oneMessagePerPress": true,
+    "releaseDebouncedBeforeRearming": true,
+    "bootHeldSuppressed": true,
+    "nonblockingDebounce": true,
+    "startsMotion": false,
+    "physicalTested": false
+  },
+  "scanner": {
+    "model": "XM1601",
+    "uart": "USART1 PB6 TX / PB7 RX",
+    "configuredBaud": 9600,
+    "actualBaudUnconfirmed": true,
+    "mode": "continuous requested at boot",
+    "triggerPC0": "released high, open drain",
+    "PC4PC5": "not configured",
+    "requiresAckForBothSetupCommands": true,
+    "setupHex": [
+      "7E 00 08 01 00 60 21 4B F0",
+      "7E 00 08 01 00 00 D6 DF 22"
+    ],
+    "expectedAckHex": "02 00 00 01 00 33 31",
+    "resultPrefix": "[scan] ",
+    "resultEnding": "CRLF",
+    "moduleBaudOrFlashWritten": false,
+    "physicalScanVerified": false,
+    "baiduShareRead": false,
+    "baiduAccessBlockedByBrowserSafety": true,
+    "commandSource": "user supplied manual photo",
+    "pinSource": "user supplied P1 connector image"
+  },
+  "mapInset": {
+    "topInsetMm": 90,
+    "bottomInsetMm": 50,
+    "fixedNodes": [
+      "A",
+      "B",
+      "C",
+      "E",
+      "H"
+    ],
+    "nodes": [
+      [
+        2250,
+        170
+      ],
+      [
+        2190,
+        1200
+      ],
+      [
+        2250,
+        2230
+      ],
+      [
+        1200,
+        2010
+      ],
+      [
+        1200,
+        1200
+      ],
+      [
+        1200,
+        290
+      ],
+      [
+        340,
+        290
+      ],
+      [
+        340,
+        1200
+      ],
+      [
+        340,
+        2010
+      ]
+    ],
+    "roads": [
+      [
+        0,
+        1,
+        1090
+      ],
+      [
+        1,
+        2,
+        1090
+      ],
+      [
+        2,
+        3,
+        1270
+      ],
+      [
+        3,
+        8,
+        860
+      ],
+      [
+        8,
+        7,
+        810
+      ],
+      [
+        7,
+        6,
+        910
+      ],
+      [
+        6,
+        5,
+        860
+      ],
+      [
+        5,
+        0,
+        1170
+      ],
+      [
+        5,
+        4,
+        910
+      ],
+      [
+        4,
+        3,
+        810
+      ],
+      [
+        7,
+        4,
+        860
+      ],
+      [
+        4,
+        1,
+        990
+      ]
+    ],
+    "directedGeometryChecks": 24,
+    "tableValidation": {
+      "states": 531441,
+      "queries": 43046721,
+      "exactBaselineRoute": true,
+      "independentFloyd": true,
+      "blockedEdgesExcluded": true,
+      "invalidInputs": true,
+      "tableDataBytes": 377792,
+      "seconds": 3.476,
+      "hardwareRun": false
+    },
+    "tableSourceHashes": {
+      "src/car_config.h": "17f80166c2fe4d51a8c2f4731661f8b5f990e711950dd984b47fd23d927b28e3",
+      "src/structure.h": "7223445c124049591bee4d3dd011720d97118332dd3528d115a201a0a53a2fe1",
+      "src/road_map.c": "48b89a20346501ce9a60057093e9e0e24309a503e06eda0cb47f8b68d796d23a",
+      "lookup/route_table.c": "02f9a3568c981eee7899a0949be33b2ac794ba64b7851cf59f65ac95f26660b4",
+      "tests/export_map.c": "9134e256b50484c7c966c1544d8b689509f710e41eb15099115642c28e8b5f45",
+      "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+      "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+      "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+      "tools/generate-route-table.cjs": "34be5c6f892d03a0a38c82057ccaa2faa8dafd0f29a33a31c584f1474432ea83",
+      "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44",
+      "lookup/table_data.h": "3dfa385b61cb7b84967e2b1dfad424f6a54c9100615eab64b515c0d962815547",
+      "lookup/generation.json": "ce5ad88b156b87ea9e407779d02fcf52d395f8cee5fe9d3d235c4a6bc512da68"
+    },
+    "staleTableGuards": {
+      "tests": [
+        {
+          "compilerExit": 1,
+          "compileRejected": true,
+          "packageRejected": true,
+          "parameter": "CAR_MAP_TOP_INSET_MM"
+        },
+        {
+          "compilerExit": 1,
+          "compileRejected": true,
+          "packageRejected": true,
+          "parameter": "CAR_MAP_BOTTOM_INSET_MM"
+        }
+      ],
+      "passed": true
+    }
+  }
+}

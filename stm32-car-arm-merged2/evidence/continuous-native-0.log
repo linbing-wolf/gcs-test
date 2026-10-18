@@ -1,0 +1,11 @@
+PASS route A: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)
+PASS route C: 18 forward segments, 16 turns, 15040 mm, return heading +Y (simulated)
+PASS entry: 55832 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks
+PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity
+PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap
+PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses
+PASS continuous route A: 15040mm, 18 uninterrupted geometry segments, fresh four-wheel encoders/speed/status, 4deg disturbance, no 500mm stops (simulated)
+PASS continuous route C: 15040mm, 18 uninterrupted geometry segments, fresh four-wheel encoders/speed/status, 4deg disturbance, no 500mm stops (simulated)
+PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed
+PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation
+PASS heading/feedback: 433293 assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions

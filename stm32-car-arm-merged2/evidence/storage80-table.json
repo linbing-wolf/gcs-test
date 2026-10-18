@@ -1,0 +1,152 @@
+{
+  "passed": true,
+  "sourceHashes": {
+    "src/car_config.h": "ea0c00ac8df6159e1835238b8fff26eb6b7bae3de53490df70e47c3121c3a680",
+    "src/structure.h": "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+    "src/road_map.c": "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
+    "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
+    "tests/export_map.c": "42f4de04fdd40e16dd18b3c3c53159a5f41acc9014518b7657826ffa9c2ebecd",
+    "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+    "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+    "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+    "tools/generate-route-table.cjs": "5b88b19a7f8e47229af8c36a3c0af0a324ab9779c5313231248b7d0f44e99e3e",
+    "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44",
+    "lookup/table_data.h": "52f9e9aa531bf693809ca61739188329f362bf5ca0be17c485ae05a6861fadc6",
+    "lookup/generation.json": "407f1d42188f82da99471ab383824fe62883cc6d488330438b974346544069c4"
+  },
+  "map": {
+    "geometryValidationPassed": true,
+    "parameters": {
+      "topInsetMm": 90,
+      "bottomInsetMm": 50,
+      "rawExtraInsetMm": 50,
+      "storageInsetMm": 80
+    },
+    "nodes": [
+      [
+        2250,
+        170
+      ],
+      [
+        2190,
+        1200
+      ],
+      [
+        2250,
+        2230
+      ],
+      [
+        1200,
+        2010
+      ],
+      [
+        1200,
+        1200
+      ],
+      [
+        1200,
+        340
+      ],
+      [
+        340,
+        290
+      ],
+      [
+        420,
+        1200
+      ],
+      [
+        340,
+        2010
+      ]
+    ],
+    "roads": [
+      [
+        0,
+        1,
+        1090
+      ],
+      [
+        1,
+        2,
+        1090
+      ],
+      [
+        2,
+        3,
+        1270
+      ],
+      [
+        3,
+        8,
+        860
+      ],
+      [
+        8,
+        7,
+        890
+      ],
+      [
+        7,
+        6,
+        990
+      ],
+      [
+        6,
+        5,
+        910
+      ],
+      [
+        5,
+        0,
+        1220
+      ],
+      [
+        5,
+        4,
+        860
+      ],
+      [
+        4,
+        3,
+        810
+      ],
+      [
+        7,
+        4,
+        780
+      ],
+      [
+        4,
+        1,
+        990
+      ]
+    ],
+    "sourceHashes": {
+      "src/car_config.h": "ea0c00ac8df6159e1835238b8fff26eb6b7bae3de53490df70e47c3121c3a680",
+      "src/structure.h": "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+      "src/road_map.c": "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
+      "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
+      "tests/export_map.c": "42f4de04fdd40e16dd18b3c3c53159a5f41acc9014518b7657826ffa9c2ebecd",
+      "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+      "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+      "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+      "tools/generate-route-table.cjs": "5b88b19a7f8e47229af8c36a3c0af0a324ab9779c5313231248b7d0f44e99e3e",
+      "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44",
+      "lookup/table_data.h": "52f9e9aa531bf693809ca61739188329f362bf5ca0be17c485ae05a6861fadc6",
+      "lookup/generation.json": "407f1d42188f82da99471ab383824fe62883cc6d488330438b974346544069c4"
+    }
+  },
+  "validation": {
+    "states": 531441,
+    "queries": 43046721,
+    "exactBaselineRoute": true,
+    "independentFloyd": true,
+    "blockedEdgesExcluded": true,
+    "invalidInputs": true,
+    "tableDataBytes": 343680,
+    "seconds": 3.604,
+    "hardwareRun": false
+  },
+  "hardwareRun": false
+}

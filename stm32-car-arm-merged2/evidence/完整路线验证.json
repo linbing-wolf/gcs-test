@@ -1,0 +1,167 @@
+{
+  "version": "full-route-20261013",
+  "sourceSha256": "bcd59cf920f3d8df710ef09b0a70c01853ecaa6f50d0c1fb7bc6d2c01340bc21",
+  "sourceHashes": {
+    "src/main_table_nav.c": "bcd59cf920f3d8df710ef09b0a70c01853ecaa6f50d0c1fb7bc6d2c01340bc21",
+    "src/motion.c": "ad7a3987f8cc9020117363715ec43796099a03d1eab85456f9b98959012d70a1",
+    "src/motion.h": "731371660fcf90f99babb84ab5a245b48026f23b7f6872a94fa1324c4af35450",
+    "src/full_route.h": "80422dd0b5ea6b28286676462eaded854e97f2dc6749a04d36d8b3d84ff3a840",
+    "vendor/stm32/can_ZDT/can.c": "63c80fa4590c138ca44979db8e2fc6d0d5beab7a498ec7953b14194bde8296f7",
+    "tests/verify_entry.c": "8dacaf83de5df991e0dff6455208728df568ead1cea6be3a99c4c027e4024224"
+  },
+  "measurementSource": "operator report in this conversation; 60 rpm, 1000 mm target, 950 mm lateral travel before correction",
+  "ppmXBefore": 10.5,
+  "ppmXAfter": 11.052632,
+  "ppmY": 10.36,
+  "basePulses1000mm": {
+    "forward": 10360,
+    "backward": 10360,
+    "left": 11053,
+    "right": 11053
+  },
+  "forwardTrimMmPerM": {
+    "left": 20,
+    "right": 8
+  },
+  "wheelPulses1000mm": {
+    "left": [
+      11260,
+      10845,
+      11260,
+      10845
+    ],
+    "right": [
+      10970,
+      11136,
+      10970,
+      11136
+    ]
+  },
+  "wheelRpmAt60": {
+    "left": [
+      60,
+      58,
+      60,
+      58
+    ],
+    "right": [
+      59,
+      60,
+      59,
+      60
+    ]
+  },
+  "feedbackUsedInFullRoute": true,
+  "headingCorrectionImplemented": false,
+  "fullRoute": {
+    "distanceMm": 15040,
+    "segments": 18,
+    "roadCount": 16,
+    "jobs": 8,
+    "rpm": 60,
+    "stationDwellMs": 0,
+    "optimality": {
+      "passed": true,
+      "criterion": "minimum total distance for fixed station order, no obstacles/dwell",
+      "plans": [
+        {
+          "start": "A",
+          "nodes": [
+            "A",
+            "B",
+            "E",
+            "F",
+            "E",
+            "D",
+            "E",
+            "H",
+            "E",
+            "F",
+            "E",
+            "D",
+            "E",
+            "H",
+            "E",
+            "B",
+            "A"
+          ],
+          "goals": [
+            "B",
+            "F",
+            "D",
+            "H",
+            "F",
+            "D",
+            "H",
+            "A"
+          ],
+          "totalMm": 15040,
+          "floydLowerBoundMm": 15040
+        },
+        {
+          "start": "C",
+          "nodes": [
+            "C",
+            "B",
+            "E",
+            "F",
+            "E",
+            "D",
+            "E",
+            "H",
+            "E",
+            "F",
+            "E",
+            "D",
+            "E",
+            "H",
+            "E",
+            "B",
+            "C"
+          ],
+          "goals": [
+            "B",
+            "F",
+            "D",
+            "H",
+            "F",
+            "D",
+            "H",
+            "C"
+          ],
+          "totalMm": 15040,
+          "floydLowerBoundMm": 15040
+        }
+      ]
+    }
+  },
+  "completionRequires": "four fresh position ACKs and four solicited enabled/non-stalled/arrived status replies per segment; no timer-only advancement",
+  "driverProtocolSource": "https://blog.csdn.net/zhangdatou666/article/details/132644047",
+  "canIrqHookCompiled": true,
+  "defaultTestRpm": 60,
+  "defaultAcceleration": 150,
+  "nativePassed": true,
+  "nativeOutput": "PASS entry: 33726 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks",
+  "keilRebuildExitCode": 1,
+  "errors": 0,
+  "warnings": 30,
+  "warningsUnchanged": true,
+  "compiledUnits": 65,
+  "axfHexComparedBytes": 429072,
+  "irqVectors": {
+    "Reset_Handler": "0x8000269",
+    "USART3_IRQHandler": "0x800707f",
+    "TIM5_IRQHandler": "0x8007169",
+    "CAN1_RX0_IRQHandler": "0x8002f0d"
+  },
+  "hashes": {
+    "table_navigation.axf": "14adba6b9a7c826383aabf28b8f3bd1d724e8029842039b5da3beaf672e26234",
+    "table_navigation.hex": "d729fc449f9d214b75ffd3a442ffeb1fefd80af2442a2e4575b2e7970b6d3c76",
+    "table_navigation.map": "fc9aac92a65f9dae9ee021ccbcbff4f0282040669c9db094e69dca87826519d2"
+  },
+  "lookupRoadTableOtherDriversUnchanged": true,
+  "projectSettingsSemanticallyUnchanged": true,
+  "hardwareAccessed": false,
+  "flashedThisRun": false,
+  "correctedPhysicalDistanceVerified": false
+}

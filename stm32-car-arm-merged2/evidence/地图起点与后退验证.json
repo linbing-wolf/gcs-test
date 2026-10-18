@@ -1,0 +1,119 @@
+{
+  "version": "map-reverse-20261014",
+  "date": "2026-10-14",
+  "sourceHashes": {
+    "src/car_config.h": "4801a80eae805d46b4302e23a98c6c0d0661edabe0e2233963304e6a71d41745",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/heading_control.c": "66f1fb3e2d8004b5d674248f596ec3cda7401cf33e0c5994c4c45bb36acc4592",
+    "src/heading_control.h": "526b291029063ea1a5d1b8be8e9b67c36aba61f857fa931e5aaecbc2116be1b9",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/main_table_nav.c": "d789765761e309b338197378beaa2c8238d5c6d2e07f13f5762779936b521c4d",
+    "src/motion.c": "a90cbd27586cfd08cee44ea6bc33a76b0c2dd4e936744f8606d7afdb16b33c7e",
+    "src/motion.h": "4708023a81df5a534d3dcfd843081068a690781a11817c1770621f6713da65dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "34639cfb728522f7a4d3de3d4f8bff746379c008bf7b9f41590f0f972526b62e",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "e0805cc76b164c315495f448d4b812f7a8a9f22008ce22cc6b78130e230b3906"
+  },
+  "nativeResult": "evidence/map-reverse-native.json",
+  "nativePassed": true,
+  "hostAssertions": {
+    "0": 412425,
+    "1": 414624
+  },
+  "armBuilds": {
+    "default": {
+      "imuUartEnabled": true,
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "compiledUnits": 67,
+      "keilExitCode": 1,
+      "axfHexComparedBytes": 441600,
+      "binaryHashes": {
+        "table_navigation.axf": "c9a50ecb2c65b07d294df422153c55a1968a31f8bb6fd94abbf3662139c92633",
+        "table_navigation.hex": "0ba6b37516a9b7755d469d1b750c10f9f0f807cdcc6d1bab034b0e6cfaeece87",
+        "table_navigation.map": "bc000a513095a2f426b2e4917a5602ee49e9f05adc4e246c993c9c2cf3d8ddbb"
+      }
+    },
+    "disabled": {
+      "imuUartEnabled": false,
+      "errors": 0,
+      "warnings": 30,
+      "warningsUnchanged": true,
+      "compiledUnits": 67,
+      "keilExitCode": 1,
+      "axfHexComparedBytes": 441520,
+      "binaryHashes": {
+        "table_navigation.axf": "e6dbe22129c29c26e191a8cdacdb2310c4585b4b443f6353c5e6ad5d16c3b66b",
+        "table_navigation.hex": "9fd3d95c0ec1539d991e01c59bd6f75a29c2b395af8666969ffbac3cb3b929da",
+        "table_navigation.map": "826c0dddc1a69d4e461813f60d171802acaa35d129979150787025bbee34f9c7"
+      }
+    }
+  },
+  "map": {
+    "officialDocxSha256": "c44766339fe0490e3e3fbab1305c6ccd37e4ce41f260cd75b465a261b70e5888",
+    "drawing": "docs/official-field-layout.png",
+    "axes": "X right, Y down; positive IMU yaw means physical left turn",
+    "mapYawSign": -1,
+    "A": "top-right zone 1, initially +Y toward scan",
+    "C": "bottom-right zone 2, initially -Y toward scan",
+    "rawMaterial": "F (1200,200), visited twice",
+    "roughProcessing": "D (1200,2060)",
+    "operatorReportedStart": "bottom-right zone 2 facing scan, previously used runimu A",
+    "nodeSequenceChanged": false,
+    "distanceMm": 15040,
+    "replay": "evidence/map-frame-replay.json"
+  },
+  "reverse": {
+    "enabled": true,
+    "policy": "target displacement is directly behind current planned heading: keep heading and reverse",
+    "perPlanReverseSegments": 7,
+    "perPlanTurns": 10,
+    "previousAllForwardTurns": 16,
+    "forwardReverseHeadingDisturbanceTestCdeg": 400,
+    "all16HeadingDisplacementCasesPassed": true,
+    "independent2DPlantChecksAllJobs": true
+  },
+  "turnDiagnosis": {
+    "leftImuMeasuredCdeg": 8995,
+    "rightImuMeasuredCdeg": -8958,
+    "physicalOvershootReportedDegrees": {
+      "left": [
+        2,
+        3
+      ],
+      "right": [
+        5,
+        6
+      ]
+    },
+    "lastLeftDoneYawCdeg": 13805,
+    "nextRightStartYawCdeg": 14570,
+    "manualMovementBetweenTurnsConfirmed": false,
+    "physicalAngleRootCauseConfirmed": false,
+    "angleControllerAndGainsChanged": false,
+    "fixedTargetCompensationAdded": false,
+    "postDoneObservationDelaysMs": [
+      500,
+      1000,
+      2000
+    ],
+    "postDoneObservationMovesMotors": false
+  },
+  "unchanged": [
+    "byte-identical current project/uvoptx settings",
+    "legacy run A/C motion behavior",
+    "raw pulse tests and standalone turn targets/controller",
+    "route node order and road geometry",
+    "lookup tables",
+    "vendor drivers",
+    "four-wheel freshness/ACK/stopped requirements"
+  ],
+  "hardwareAccessed": false,
+  "flashedThisRun": false,
+  "deviceCommandsSent": false,
+  "physicalRouteOrAngleVerified": false
+}
