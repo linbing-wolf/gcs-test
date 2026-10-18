@@ -62,12 +62,13 @@ class FakeImage:
     """
 
     def __init__(self, blob_code=1, road=False, circle_x=640, blobs=None,
-                 circles=None):
+                 circles=None, blob_x=600):
         self.blob_code = blob_code
         self.road = road
         self.circle_x = circle_x
         self.blobs = blobs          # [(code,x,y,w,h), ...] 指定多目标
         self.circles = circles      # [(x,y,r), ...] 指定多个圆
+        self.blob_x = blob_x        # 物料中心 x（转盘测试用）
 
     def find_blobs(self, *a, **kw):
         roi = kw.get('roi') or (a[1] if len(a) > 1 else None)
@@ -75,7 +76,7 @@ class FakeImage:
             return [FakeBlob(0, roi[0], roi[1], roi[2], roi[3])]
         if self.blobs:
             return [FakeBlob(*b) for b in self.blobs]
-        return [FakeBlob(self.blob_code, 600, 400, 100, 80)]
+        return [FakeBlob(self.blob_code, self.blob_x, 400, 100, 80)]
 
     def find_circles(self, *a, **kw):
         if self.circles:
@@ -95,16 +96,17 @@ class FakeImage:
 
 class FakeCam:
     def __init__(self, code=1, blob_code=None, road=False, circle_x=640,
-                 blobs=None, circles=None):
+                 blobs=None, circles=None, blob_x=600):
         self.code = blob_code or code
         self.road = road
         self.circle_x = circle_x
         self.blobs = blobs
         self.circles = circles
+        self.blob_x = blob_x
 
     def read(self):
         return FakeImage(self.code, self.road, self.circle_x,
-                         self.blobs, self.circles)
+                         self.blobs, self.circles, self.blob_x)
     def skip_frames(self, n): pass
 
 
@@ -178,6 +180,23 @@ class _Link:
 
     def send_payload(self, p):
         self.sent.append(p)
+
+
+class _SpinCam(FakeCam):
+    """模拟转盘：永不停（settle_at=None）或转 N 帧后停住"""
+
+    def __init__(self, *a, settle_at=None, **k):
+        super().__init__(*a, **k)
+        self.n = 0
+        self.settle_at = settle_at
+
+    def read(self):
+        self.n += 1
+        if self.settle_at is None or self.n <= self.settle_at:
+            self.blob_x = 300 + (self.n * 6) % 280      # 一直在动
+        else:
+            self.blob_x = 300 + (self.settle_at * 6) % 280
+        return super().read()
 
 
 class _CountCam(FakeCam):
@@ -304,6 +323,30 @@ def main():
                                   (1, 460, 280, 40, 40)])  # 中心 (480,300) 距离 ~173
     out = frame_str(tasks.task_stack(cam_multi, clf0, None, p=P_ID, color_code='1'))
     check('同色多个 → 取最近', out == 'STACK,170,200', out)
+
+    print('\n== 原料区：停止才回复（转盘）==')
+    # StopDetector 单元测试（可控时间）
+    sd = tasks.StopDetector(speed_px_s=8.0, hold_ms=300)
+    t, x = 0, 0.0
+    ok = sp = None
+    for _ in range(20):
+        t += 50; x += 2.0
+        ok, sp = sd.update(x, 0.0, t)
+    check('慢速移动(40px/s) → 不停稳', not ok and sp > 8, 'ok=%s speed=%.1f' % (ok, sp))
+    for _ in range(20):
+        t += 50
+        ok, sp = sd.update(x, 0.0, t)
+    check('停住 1s → 停稳', ok and sp < 0.001, 'ok=%s speed=%.3f' % (ok, sp))
+
+    # 一直转 → 不该回复（超时应回 NONE）
+    out = frame_str(tasks.task_pick(_SpinCam(1), vision.ColorClassifier(ai=None),
+                                    None, '1', timeout_ms=600, p=P_ID))
+    check('一直在转 → NONE,C', out == 'NONE,C', out)
+
+    # 转一会儿停住 → 回复
+    out = frame_str(tasks.task_pick(_SpinCam(1, settle_at=20), vision.ColorClassifier(ai=None),
+                                    None, '1', p=P_ID))
+    check('停稳后 → PICK', out.startswith('PICK,1,'), out)
 
     print('\n== 圆盘对齐（MOVE 闭环）==')
     old_settle = config.ALIGN_SETTLE_MS

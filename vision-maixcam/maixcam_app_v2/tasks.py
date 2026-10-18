@@ -52,6 +52,50 @@ def _confirm_road(ai, img, roi):
     return False, "ai=%s %.2f" % (label, prob)
 
 
+class StopDetector:
+    """判断目标是否"停稳"（用于转盘：必须停下才回复）
+
+    判据：与 hold_ms 之前那一帧相比，位移不超过 tol_px。
+    转盘慢转时相邻帧只差 1~2px，但 300ms 累计就会超阈值，所以比"逐帧阈值"可靠。
+
+    speed_px_s 是允许的残余速度（像素/秒，对外 640x480 口径）：
+        tol_px = speed_px_s * hold_ms / 1000，且不小于 3px（抗抖动）
+    """
+
+    def __init__(self, speed_px_s=8.0, hold_ms=300, min_tol_px=3.0):
+        self.hold_ms = max(0, int(hold_ms))
+        self.tol = max(float(min_tol_px), float(speed_px_s) * self.hold_ms / 1000.0)
+        self.buf = []
+        self.speed = 0.0
+
+    def reset(self):
+        self.buf = []
+        self.speed = 0.0
+
+    def update(self, x, y, now_ms):
+        """喂一帧位置 → (是否停稳, 当前速度 px/s)"""
+        if self.hold_ms <= 0:
+            return True, 0.0
+        self.buf.append((now_ms, x, y))
+        cut = now_ms - 2 * self.hold_ms - 200
+        while len(self.buf) > 1 and self.buf[0][0] < cut:
+            self.buf.pop(0)
+        ref = None
+        for t, px, py in self.buf:          # 取"至少 hold_ms 之前"的最后一帧
+            if now_ms - t >= self.hold_ms:
+                ref = (t, px, py)
+            else:
+                break
+        if ref is None:
+            self.speed = 0.0
+            return False, 0.0
+        t0, x0, y0 = ref
+        dt = now_ms - t0
+        d = ((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
+        self.speed = d * 1000.0 / dt if dt else 0.0
+        return (d <= self.tol), self.speed
+
+
 class TaskCtl:
     """任务执行期间的串口看门（一问一答的补充）
 
@@ -255,9 +299,13 @@ def task_task(code):
 def task_pick(cam, clf, disp, color_code, timeout_ms=config.TASK_TIMEOUT_MS, p=None, ctl=None):
     P = _pipeline(p)
     roi = P.roi(config.ROI_MATERIAL)
-    log("[C] 原料区找颜色=%s 的物料" % color_code)
     tracker = StabilityTracker(config.STABLE_FRAMES, color_window=config.COLOR_WINDOW,
                                confidence=config.COLOR_CONFIDENCE)
+    # 转盘：必须等物料真的停稳才回复（stop_only=False 可退回旧行为）
+    stop_only = bool(getattr(config, "PICK_STOP_ONLY", True))
+    stop_det = StopDetector(getattr(config, "PICK_STOP_SPEED_PX_S", 8.0),
+                            getattr(config, "PICK_STOP_HOLD_MS", 300))
+    log("[C] 原料区找颜色=%s 的物料（停止才回复=%s）" % (color_code, stop_only))
     t0 = ticks_ms()
     while not app.need_exit():
         if ctl is not None and not ctl.tick():
@@ -265,17 +313,23 @@ def task_pick(cam, clf, disp, color_code, timeout_ms=config.TASK_TIMEOUT_MS, p=N
         img = cam.read()
         draw_roi(img, roi)
         it = clf.find_color(img, color_code, roi, P.area(config.MIN_PIXELS))
+        stopped, speed = False, 0.0
         if it:
             draw_item(img, it, "PICK")
             if it.get("src") == "ai":
                 img.draw_string(2, 16, "AI c=%s" % it.get("ai_code"), image.COLOR_GREEN, 1)
+            px, py = P.point(it["cx"], it["cy"])
+            stopped, speed = stop_det.update(px, py, ticks_ms())
+            img.draw_string(2, 32, "%s %.0fpx/s" % ("STOPPED" if stopped else "MOVING", speed),
+                            image.COLOR_GREEN if stopped else image.COLOR_YELLOW, 1)
         else:
+            stop_det.reset()
             img.draw_string(2, 2, "PICK c=%s: not found" % color_code, image.COLOR_RED, 1)
         ok, _, it = tracker.update(it)
-        if ok:
+        if ok and (stopped or not stop_only):
             cx, cy = P.smooth("C", *P.point(it["cx"], it["cy"]))
-            log("[C] 找到 (%d,%d) 颜色=%s 来源=%s" %
-                (cx, cy, color_code, it.get("src", "cv")))
+            log("[C] 找到 (%d,%d) 颜色=%s 来源=%s 已停稳(%.1fpx/s)" %
+                (cx, cy, color_code, it.get("src", "cv"), speed))
             if disp:
                 disp.show(img)
             return pack_pick(color_code, cx, cy)

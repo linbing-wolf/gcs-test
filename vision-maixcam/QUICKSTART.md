@@ -79,6 +79,9 @@ GND 必须共地，115200 8N1
 | `ALIGN_ON` | True | 圆盘是否主动发 MOVE 微调 |
 | `ALIGN_TOL` | 5 | 环 2 对中容差（px）|
 | `STACK_COLOR_VOTE` | False | F 是否也做颜色投票 |
+| `PICK_STOP_ONLY` | True | 原料区必须等转盘/物料停稳才回复 |
+| `PICK_STOP_SPEED_PX_S` | 8.0 | 判定停稳的残余速度（px/s）|
+| `PICK_STOP_HOLD_MS` | 300 | 需持续静止多久 |
 | `OBST_STABLE_FRAMES` | 5 | G 的反应速度 |
 | `TH_RED/TH_YELLOW/TH_BLUE/TH_GREEN` | 样本集统计值 | 换灯光/换场地后跑 `tools_analyze_lab.py` 重算 |
 | `ROI_MATERIAL` 等 | 起手值 | 现场按机位调整 |
