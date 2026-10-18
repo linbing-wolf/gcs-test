@@ -88,6 +88,10 @@
 #define CAR_VELOCITY_REPLY_MS       150u
 #define CAR_VELOCITY_FEEDBACK_MS    300u
 #define CAR_VELOCITY_ACK_MS         150u
+/* 四轮都已下令零速时，反馈短暂过期不立刻判死；先重试轮询这么久，仍拿不到才停机。 */
+#define CAR_VELOCITY_STALE_HOLD_MS 1500u
+/* 停站（扫码/作业）期间不轮询四轮，恢复行驶后先补采反馈，这段窗口内不判过期。 */
+#define CAR_VELOCITY_RESUME_GRACE_MS 1200u
 #define CAR_VELOCITY_STALL_MS      1500u      /* 轮子被命令运动但位置长期不变时停止。 */
 #define CAR_VELOCITY_STOP_RPM         1       /* 四轮新速度反馈的停稳阈值。 */
 #define CAR_ENCODER_COUNTS_PER_REV 65536u     /* 0x36编码器位置计数/圈。 */
@@ -105,9 +109,9 @@
 #define CAR_STATION_RAW_HEADING       1u      /* 原料在上：车头向左，右侧向上。 */
 #define CAR_STATION_ROUGH_HEADING     3u      /* 粗加工在下：车头向右，右侧向下。 */
 #define CAR_STATION_STORAGE_HEADING   0u      /* 暂存在左：车头向下，右侧向左。 */
-/* B 点扫码：二维码板在场地右边缘，车到 B 后车头转到 +X 正对二维码。
- * 如果扫码模块实际装在车身右侧而不是车头，把这里改成 0（车头仍朝 +Y）。 */
-#define CAR_SCAN_HEADING              3u      /* 3=+X，正对场地右侧二维码板。 */
+  /* B 点扫码：到 B 后原地转 90°，车头朝 -X（场地中心），扫码模块正好面向右侧二维码。
+   * 扫完直接沿 -X 去中心 E，不再转回 +Y。 */
+#define CAR_SCAN_HEADING              1u      /* 1=-X，朝场地中心，正对右侧二维码板。 */
 
 #if (CAR_IMU_YAW_SIGN != 1 && CAR_IMU_YAW_SIGN != -1) || \
     (CAR_MAP_YAW_SIGN != 1 && CAR_MAP_YAW_SIGN != -1) || \

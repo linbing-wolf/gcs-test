@@ -123,6 +123,9 @@ static const ArmStep load3_steps[] = {
 #define LOAD1_MAX 20u
 static ArmStep load1_steps[LOAD1_MAX];
 static uint8_t load1_count;
+#define PICKPOSE_MAX 6u
+static ArmStep pickpose_steps[PICKPOSE_MAX];
+static uint8_t pickpose_count;
 #define PICK_COUNT (sizeof(pick_steps)/sizeof(pick_steps[0]))
 #define HOME_COUNT (sizeof(home_steps)/sizeof(home_steps[0]))
 #define PLACE_COUNT (sizeof(place_steps)/sizeof(place_steps[0]))
@@ -149,6 +152,15 @@ static int append_step(int slide, int lift, float yaw, float claw, float platfor
     s = &load1_steps[load1_count++];
     s->slide = slide; s->lift = lift; s->yaw = yaw; s->claw = claw;
     s->platform = platform; s->mask = mask;
+    return 1;
+}
+static int append_pickpose(int slide, int lift, float yaw, float claw, uint8_t mask)
+{
+    ArmStep *s;
+    if (pickpose_count >= PICKPOSE_MAX) return 0;
+    s = &pickpose_steps[pickpose_count++];
+    s->slide = slide; s->lift = lift; s->yaw = yaw; s->claw = claw;
+    s->platform = 0; s->mask = mask;
     return 1;
 }
 
@@ -389,6 +401,7 @@ static const ArmStep *current_step(void)
     }
     if(arm.sequence==5)return &load3_steps[arm.step];
     if(arm.sequence==6)return &load1_steps[arm.step];
+    if(arm.sequence==7)return &pickpose_steps[arm.step];
     return &arm.single;
 }
 static void begin_step(uint32_t now)
@@ -461,6 +474,24 @@ static int build_load_one(void)
     if (!append_step(ARM_SLIDE_HOME_MM, 0, 0, 0, 0, SLIDE)) return 0;
     if (!append_step(0, 0, ARM_PICK_YAW_DEG, 0, next, YAW | PLATFORM)) return 0;
     return load1_count;
+}
+/* 原料区取料预备位：齿条收回、升到最高、云台转到抓取角、爪子张开。
+ * 视觉模块必须等云台转到抓取角之后再确认物块；确认后 load1 只剩
+ * “伸齿条 -> 下降 -> 合爪”，不会再在相机确认后重新转云台。 */
+static int build_pick_pose(void)
+{
+    pickpose_count = 0;
+    if (!arm.referenced)
+        return 0;
+    if (arm.lift != ARM_LIFT_HOME_MM
+        && !append_pickpose(0, ARM_LIFT_HOME_MM, 0, 0, LIFT)) return 0;
+    if (arm.slide != ARM_SLIDE_HOME_MM
+        && !append_pickpose(ARM_SLIDE_HOME_MM, 0, 0, 0, SLIDE)) return 0;
+    if (arm.yaw != ARM_PICK_YAW_DEG
+        && !append_pickpose(0, 0, ARM_PICK_YAW_DEG, 0, YAW)) return 0;
+    if (arm.claw != ARM_CLAW_OPEN_DEG
+        && !append_pickpose(0, 0, 0, ARM_CLAW_OPEN_DEG, CLAW)) return 0;
+    return pickpose_count;
 }
 int arm_command(const char *s,uint32_t now)
 {
@@ -572,6 +603,19 @@ int arm_command(const char *s,uint32_t now)
             arm_output(message);
         }
         arm.sequence=6;arm.count=built;arm.step=0;begin_step(now);return 1;
+    }
+    /* 先把云台摆到抓取角，视觉再开始确认；已在预备位时为空操作。 */
+    if(!strcmp(s,"arm pickpose") || !strcmp(s,"arm pick pose")) {
+        uint8_t built;
+        if(!arm.referenced) {
+            arm_output("[arm rejected: actual pose unknown; arm pose SLIDE LIFT YAW CLAW required]\r\n");return 1;
+        }
+        built=(uint8_t)build_pick_pose();
+        if(!built) {
+            arm_output("[arm pickpose: already at pick-ready pose; vision may confirm]\r\n");return 1;
+        }
+        arm_output("[arm pickpose: lift home -> slide home -> yaw pick angle -> claw open]\r\n");
+        arm.sequence=7;arm.count=built;arm.step=0;begin_step(now);return 1;
     }
     if(!strncmp(s,"arm platform ",13) && numbers(s+13,v,1,0) && v[0]>=1 && v[0]<=3) {
         static const float angles[3]={ARM_PLATFORM_FIRST_DEG,ARM_PLATFORM_SECOND_DEG,ARM_PLATFORM_THIRD_DEG};

@@ -134,8 +134,10 @@ typedef struct
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
     uint16_t lateral_rpm;
     uint8_t station_align_pending; /* 工位已走到，但尚未完成右侧朝向和停稳确认。 */
-    uint8_t scan_turn_stage;  /* 0正常；1到B转朝二维码；2扫码完成转回路线航向。 */
-    RoadHeading scan_return_heading; /* 到B扫码前的路线航向，扫完转回它。 */
+    uint8_t station_shift;    /* 1：正在进行工位内 150 mm 索引，完成后回 RUN_STATION。 */
+    uint8_t station_saved_imu; /* 进入工位索引前的行驶模式，索引结束后恢复。 */
+    uint16_t station_saved_turn_rpm;
+    uint8_t scan_turn_stage;  /* 0正常；1到B后转90°面向二维码。 */
     int8_t travel_sign;       /* 平移方向：+1前/左，-1后/右；行程仍为正数。 */
     uint16_t remaining_mm, action_mm;
     int16_t yaw_zero_cdeg;
@@ -145,6 +147,8 @@ typedef struct
     VelocityPhase velocity_phase;
     uint8_t velocity_query_index, velocity_waiting, velocity_sent;
     uint32_t velocity_ms, control_ms, phase_ms, zero_ms, stopped_ms, log_ms;
+    uint32_t stale_ms; /* 零速保持下反馈首次过期时刻；用于有限重试。 */
+    uint32_t resume_ms; /* 停站恢复时刻；窗口内先补采四轮反馈，不判过期。 */
     uint32_t baseline_after_ms; /* 编码器基线必须采样于已确认的停稳区间内。 */
     uint32_t wheel_start_ms[4];
     int16_t wheel_rpm[4];
@@ -732,12 +736,15 @@ static void run_status(void)
 {
     static const char *names[] =
     {
-        "IDLE", "PREFLIGHT", "MOVING", "DONE_BY_MOTOR", "STOPPED", "FAULT", "ALIGN"
+        "IDLE", "PREFLIGHT", "MOVING", "DONE_BY_MOTOR", "STOPPED", "FAULT", "ALIGN", "STATION"
     };
     if (run.translation_only) {
         text("[shift closed-loop] ");
         text(run.state == RUN_DONE ? "DONE_BY_IMU_ENCODER" : names[run.state]);
-        text(run.travel_sign > 0 ? " travel=LEFT" : " travel=RIGHT");
+        if (run.travel_axis == BODY_LEFT)
+            text(run.travel_sign > 0 ? " travel=LEFT" : " travel=RIGHT");
+        else
+            text(run.travel_sign > 0 ? " travel=FORWARD" : " travel=BACKWARD");
         text(" distance_mm="); signed_number(run.progress_mm);
         text(" target_mm="); number(run.remaining_mm ? run.remaining_mm : run.action_mm);
         text(" error_cdeg="); signed_number(run.heading_control.error_cdeg);
@@ -978,6 +985,22 @@ static int run_segment(void)
 static void run_done(void)
 {
     run_active = 0;
+    if (run.station_shift) {
+        /* 工位内索引完成：四轮已停稳，回到“停在工位、等下一步抓放”的状态。
+         * plan/edge/job 全程保留，工位作业做完后照常续跑路线。 */
+        run.station_shift = 0;
+        run.translation_only = 0;
+        run.imu_mode = run.station_saved_imu;
+        run.turn_rpm = run.station_saved_turn_rpm;
+        run.turning = 0;
+        run.travel_axis = BODY_FORWARD;
+        run.state = RUN_STATION;
+        nav_stop(&nav);
+        nav.position_confirmed = 0;
+        pose_set = 0;
+        text("[station index] done by encoder distance + IMU heading + four-wheel stop\r\n");
+        return;
+    }
     run.state = RUN_DONE;
     nav_stop(&nav);
     nav.position_confirmed = 0;
@@ -1136,6 +1159,81 @@ static int start_heading_shift(int16_t mm, uint16_t rpm)
     return 1;
 }
 
+/* 工位内短距离索引（粗加工/暂存区的 1/2/3 号环）。
+ *
+ * 和手动 l/r 横移共用同一套 IMU 航向 + 编码器距离 + 四轮停稳闭环，区别是：
+ *   1) 轴是车身前后（环位沿车头方向排开），不是横移；
+ *   2) 不清空 run.plan/edge/job/road —— 这不是新路线，只是停在工位里的平移；
+ *   3) 完成后回到 RUN_STATION，由工位状态机接着做抓放。
+ * 调用前机械臂必须已收臂（slide/lift/yaw 回默认位）且不在动作中，车必须已停稳。 */
+int station_chassis_start(int16_t mm)
+{
+    HeadingSample sample = heading_snapshot();
+    uint16_t distance;
+    uint8_t i;
+    if (!mm) return 1;
+    if (run_active || stop_pending || drive.state == MOTION_RUNNING || run.state != RUN_STATION)
+        return 0;
+    if (!arm_parked() || arm_busy() || arm_failed()) return 0;
+    distance = (uint16_t)(mm > 0 ? mm : -mm);
+    /* 工位索引最多跨两环（300 mm）；留 100 mm 余量，防止任务码/配置写错后乱跑。 */
+    if (distance > 400u) return 0;
+    if (!heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS)) return 0;
+    nav_stop(&nav);
+    turn_postcheck.active = 0;
+    pose_set = nav.position_confirmed = 0;
+    /* 只清运动闭环的现场，保留路线进度。 */
+    run.turning = run.finishing = 0;
+    run.transition_ready = 0;
+    run.acks = run.ready = run.pending = 0;
+    run.next_motor = 1;
+    run.diagnostic_ms = 0;
+    run.diagnostic_speed = 0;
+    run.velocity_query_index = run.velocity_waiting = run.velocity_sent = 0;
+    run.velocity_ms = run.control_ms = run.phase_ms = 0;
+    run.zero_ms = run.stopped_ms = 0;
+    run.stale_ms = run.resume_ms = run.baseline_after_ms = 0;
+    run.log_ms = 0;
+    run.progress_mm = 0;
+    for (i = 0; i < MOTOR_COUNT; i++) {
+        run.wheel_rpm[i] = 0;
+        run.encoder_sign[i] = 0;
+        run.encoder_start[i] = 0;
+        run.wheel_start_ms[i] = 0;
+    }
+    run.station_saved_imu = run.imu_mode;
+    run.station_saved_turn_rpm = run.turn_rpm;
+    run.imu_mode = run.translation_only = 1;
+    run.turn_only = 0;
+    run.travel_axis = BODY_FORWARD;
+    run.travel_sign = mm > 0 ? 1 : -1;
+    run.remaining_mm = distance;
+    run.lateral_rpm = CAR_LATERAL_MAX_RPM;
+    run.turn_rpm = CAR_TURN_CLOSED_LOOP_RPM;
+    if (!heading_control_start(&run.heading_control, sample, 0, clock_ms)) return 0;
+    run.state = RUN_PREFLIGHT;
+    run.segment_ms = clock_ms;
+    run.last_query_ms = clock_ms - CAR_RUN_QUERY_INTERVAL_MS;
+    imu_uart_fault = 0;
+    memset(motor_feedback, 0, sizeof(motor_feedback));
+    invalid_can_replies = rejected_can_frames = 0;
+    run_clear_rx();
+    run.station_shift = 1;
+    run_active = 1;
+    text("[station index] start ");
+    signed_number(mm);
+    text(" mm heading_dec=");
+    number((uint32_t)run.heading);
+    text("; encoder+IMU closed loop, arm must stay parked\r\n");
+    run_status();
+    return 1;
+}
+
+/* 工位状态机查询用：平移进行中返回 1；完成、故障或从未开始返回 0。 */
+int station_chassis_busy(void) { return run.station_shift && run.state != RUN_FAULT ? 1 : 0; }
+/* 平移被 run_fault 中止：station_job 据此停车报故障，不再执行后续抓放。 */
+int station_chassis_failed(void) { return run.station_shift && run.state == RUN_FAULT; }
+
 /* 四轮到位后推进当前动作；此函数可能提交下一动作或结束全程。 */
 static void run_advance_segment(void);
 static void run_finish_node(void);
@@ -1185,8 +1283,8 @@ static void run_advance_segment(void)
     node = full_route_nodes[run.plan][run.edge];
     if (run.imu_mode && node == NODE_B && run.job == 0u
         && node == full_route_jobs[run.plan][run.job]) {
-        /* B 点先转车头正对二维码板，转到并停稳后才进入等待任务码的工位状态。 */
-        run.scan_return_heading = run.heading;
+        /* B 点先原地转 90° 到 -X：车头朝场地中心，扫码模块正好面向二维码。
+         * 转到并停稳后才进入等待任务码的工位状态；扫完直接沿 -X 前进。 */
         run.scan_turn_stage = 1u;
         run.target_heading = (RoadHeading)CAR_SCAN_HEADING;
         run.remaining_mm = 0;
@@ -1285,6 +1383,14 @@ static void run_resume_after_station(void)
     run_active = 1;
     run.state = RUN_MOVING;
     run_clear_rx();
+    /* 停站期间主循环不跑 run_update()，四轮位置/转速/状态时间戳整体停在停站前。
+     * 这里丢弃停站前遗留的查询事务，并开一个补采窗口：先轮询到四轮都新鲜，
+     * 再允许发第一个速度命令，避免复位第一帧就判 four-wheel ... stale。 */
+    run.pending = 0;
+    run.velocity_waiting = 0;
+    run.stale_ms = 0;
+    run.resume_ms = clock_ms ? clock_ms : 1u;
+    run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     if (!run_road())
         run_fault("next road after station failed");
 }
@@ -1631,6 +1737,26 @@ static void run_velocity_log(void)
     text("\r\n");
 }
 
+/* 反馈过期时逐个报出四轮的回复年龄，定位是哪一轮、哪一类回复先断的。 */
+static void run_fault_stale_feedback(void)
+{
+    uint8_t i;
+    run_fault("four-wheel velocity/position/status stale");
+    text("[stale detail]");
+    for (i = 0; i < MOTOR_COUNT; i++) {
+        MotorFeedback *f = &motor_feedback[i];
+        text(" w"); number((uint32_t)(i + 1u));
+        text(":pos_age="); number((uint32_t)(clock_ms - f->position_ms));
+        text(":spd_age="); number((uint32_t)(clock_ms - f->speed_ms));
+        text(":flg_age="); number((uint32_t)(clock_ms - f->status_ms));
+        text(":rpm="); signed_number(f->speed_rpm);
+        text(":ok="); number(f->position_valid ? 1u : 0u);
+        text("/"); number(f->speed_valid ? 1u : 0u);
+        text("/"); number(f->status_replies ? 1u : 0u);
+    }
+    text(" (valid=pos/speed/status)\r\n");
+}
+
 static void run_velocity_update(void)
 {
     RunCanFrame frame;
@@ -1669,11 +1795,37 @@ static void run_velocity_update(void)
         run_fault("missing motor velocity ACK");return;
     }
     if (!run_velocity_feedback_fresh()) {
-        if (run.state != RUN_PREFLIGHT || (uint32_t)(clock_ms - run.segment_ms) > CAR_VELOCITY_FEEDBACK_MS) {
-            run_fault("four-wheel velocity/position/status stale");return;
+        uint8_t all_zero = 1;
+        for (i = 0; i < MOTOR_COUNT; i++)
+            if (run.wheel_rpm[i]) all_zero = 0;
+        if (run.state == RUN_PREFLIGHT
+            && (uint32_t)(clock_ms - run.segment_ms) <= CAR_VELOCITY_FEEDBACK_MS) {
+            run_velocity_query();return;
         }
-        run_velocity_query();return;
+        /* 刚离开停站：先补采一轮四轮反馈，窗口内不判过期（车仍停着，没有速度命令）。 */
+        if (run.resume_ms && (uint32_t)(clock_ms - run.resume_ms) <= CAR_VELOCITY_RESUME_GRACE_MS) {
+            if (!run.stale_ms) {
+                run.stale_ms = clock_ms ? clock_ms : 1u;
+                text("[run resume] four-wheel feedback stale after station; resampling before motion\r\n");
+            }
+            run_velocity_query();
+            return;
+        }
+        /* 四轮已下令零速：车本身不会再动，允许有限时间把反馈重新拉回来。 */
+        if (all_zero) {
+            if (!run.stale_ms) {
+                run.stale_ms = clock_ms ? clock_ms : 1u;
+                text("[run hold] four-wheel feedback stale while commanded zero; retrying\r\n");
+            }
+            if ((uint32_t)(clock_ms - run.stale_ms) <= CAR_VELOCITY_STALE_HOLD_MS) {
+                run_velocity_query();return;
+            }
+        }
+        run_fault_stale_feedback();
+        return;
     }
+    run.stale_ms = 0;
+    run.resume_ms = 0;
     if (run.state == RUN_PREFLIGHT) {
         for (i = 0; i < MOTOR_COUNT; i++)
             if (motor_feedback[i].speed_rpm > CAR_VELOCITY_STOP_RPM || motor_feedback[i].speed_rpm < -CAR_VELOCITY_STOP_RPM) {
@@ -1782,15 +1934,8 @@ static void run_velocity_update(void)
             if (run.scan_turn_stage == 1u) {
                 run.scan_turn_stage = 0;
                 run.turning = 0;
-                text("[scan station] QR facing ready; vehicle held for task code\r\n");
+                text("[scan station] rotated 90deg; QR facing ready; vehicle held for task code\r\n");
                 run_finish_node();
-                return;
-            }
-            if (run.scan_turn_stage == 2u) {
-                run.scan_turn_stage = 0;
-                run.turning = 0;
-                text("[scan station] rotated back to route heading; resume route\r\n");
-                run_resume_after_station();
                 return;
             }
             if (run.turn_only || run.finishing) {run_done();return;}
@@ -2053,6 +2198,7 @@ static void help(void)
     text("TURN: ccw90 N / cw90 N = measured 90-degree pulses (0 disables run; RAM only)\r\n");
     text("TURN: left90 / right90 / left180 / right180 = IMU relative angle closed-loop\r\n");
     text("run A / run C = full route-only test from actual start zone; heading +Y, rpm " CAR_STRING_VALUE(CAR_RUN_RPM) "\r\n");
+    text("resume = after a finished station, force the vehicle onto the next road\r\n");
     text("test = single-segment calibration | nav = return to navigation (stops)\r\n");
     text("TEST: dist 50..2000 mm | rpm 20..300 | f/b/l/r (body directions)\r\n");
     text("TEST l/r: IMU heading + encoder distance, lateral rpm limited to " CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; fresh IMU required\r\n");
@@ -2215,6 +2361,17 @@ static void command(char *command_text)
     if (station_command(command_text))
         return;
     if (arm_serial_command(command_text)) return;
+    if (!strcmp(command_text, "resume")) {
+        /* 人工续跑：工位已经做完但车还停在等站状态时，直接开下一段路。
+         * 现场卡住时用，不动任务码，也不改已标定的参数。 */
+        if (run.state == RUN_STATION && !station_active() && !station_failed()) {
+            text("[resume] station finished; continue route\r\n");
+            run_resume_after_station();
+        } else {
+            text("[resume rejected: not waiting at a finished station]\r\n");
+        }
+        return;
+    }
     if (arm_lock.state || arm_enabled()) {
         /* 手臂使能且停在默认位时允许发车；工位作业会直接驱动已声明的姿态。 */
         int run_allowed = (!strncmp(command_text, "runimu ", 7) || !strncmp(command_text, "run ", 4))
@@ -2341,6 +2498,7 @@ static void turn_postcheck_update(void)
 static void firmware_step(void)
 {
     uint8_t value;
+    static uint32_t hold_report_ms;
     if (stop_pending)
     {
         uint8_t overflow;
@@ -2353,6 +2511,7 @@ static void firmware_step(void)
         {
             run_active = 0;
             run.state = RUN_STOPPED;
+            run.station_shift = 0;
             run_clear_rx();
         }
         nav_stop(&nav);
@@ -2397,28 +2556,39 @@ static void firmware_step(void)
         /* 手臂使能后仍要继续推进全程：工位作业需要它，路上它只是保持默认位。 */
         if (arm_lock.state == 2)
             arm_update(clock_ms);
-        if (station_active()) {
+        if (station_active())
             station_update(clock_ms);
-            if (station_failed()) {
-                run_active = 0;
-                run.state = RUN_FAULT;
-                text("[run fault] station work failed; vehicle held; fix cause then restart run\r\n");
+        if (station_failed()) {
+            run_active = 0;
+            run.state = RUN_FAULT;
+            text("[run fault] station work failed; vehicle held; fix cause then restart run\r\n");
+            return;
+        }
+        if (run.state == RUN_STATION) {
+            /* 工位内底盘索引：station_update() 已启动平移，这里继续推进
+             * 编码器+IMU+四轮停稳闭环；完成后 run_done() 回到 RUN_STATION。 */
+            if (run_active) {
+                run_update();
                 return;
             }
-            if (!station_active() && run.state == RUN_STATION) {
-                if (run.job == 0u && run.imu_mode) {
-                    /* 扫码完成：先转回进 B 前的路线航向，再让路线状态机继续。 */
-                    run.scan_turn_stage = 2u;
-                    run.target_heading = run.scan_return_heading;
-                    run.remaining_mm = 0;
-                    run_active = 1;
-                    run_clear_rx();
-                    text("[scan station] task accepted; rotate back to heading_dec=");
-                    number(run.target_heading);
-                    text("\r\n");
-                    run_begin_alignment();
-                } else
-                    run_resume_after_station();
+            /* 工位可能在本轮 update 里刚好完成，必须在这里再判断一次；
+             * 否则扫码一接受就变 ST_DONE，车会一直停在 B 点不动。 */
+            if (!station_active()) {
+                /* 扫码完成时车头已朝 -X，正好是 B→E 的行驶方向；直接继续，不再转回。 */
+                if (run.job == 0u && run.imu_mode)
+                    text("[scan station] task accepted; continue toward center E\r\n");
+                run_resume_after_station();
+            }
+            else if ((uint32_t)(clock_ms - hold_report_ms) >= 2000u) {
+                /* 停站超过 2s 还没走：把判断条件全打出来，省得靠猜。 */
+                hold_report_ms = clock_ms;
+                text("[hold] state=STATION job="); number(run.job);
+                text(" edge="); number(run.edge);
+                text(" stn_phase="); number((uint16_t)station_phase());
+                text(" task_ready="); number((uint16_t)station_task_ready());
+                text(" arm_ready="); number((uint16_t)(arm_ready() ? 1 : 0));
+                text(" arm_parked="); number((uint16_t)(arm_parked() ? 1 : 0));
+                text("\r\n");
             }
             return;
         }
