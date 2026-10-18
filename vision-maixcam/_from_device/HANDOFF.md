@@ -339,6 +339,7 @@ APP 目录  : /maixapp/apps/yyb_mover/     安装：app_store_cli install <zip>
 | **3.2.0** | 团队新增：`F,<颜色码>` 按颜色选底座；无同色 → 霍夫找空环中心 |
 | **3.2.1** | pinmap 诊断日志修正（区分真失败/已生效）；AI 模型缺失时打印排查提示 |
 | **3.3.0** | 原料区（转盘）**停稳才回复**：`StopDetector` + `PICK_STOP_ONLY/SPEED_PX_S/HOLD_MS` |
+| **3.4.0** | **屏幕命令回显条**（`screen_echo.py`）：画面底部常驻 RX/TX/状态+收发计数+坏帧数；空闲时每 100ms 刷预览（不再冻屏）；`R/T/Z` 也有痕迹。开关 `SCREEN_ECHO / SCREEN_ECHO_IDLE_MS / SCREEN_ECHO_LINES` |
 
 ### 11.4 新增文档
 

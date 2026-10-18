@@ -116,6 +116,9 @@ class FrameParser:
         self.buf = bytearray()
         self.frame_timeout_ms = max(0, int(frame_timeout_ms or 0))
         self._last_ms = 0
+        # 计数器：屏幕回显条 / 现场排障用（bad=坏帧总数）
+        self.ok = 0
+        self.bad = 0
 
     def feed(self, data):
         now = ticks_ms()
@@ -125,6 +128,7 @@ class FrameParser:
             print("[!] 半帧超时(%dms)，丢弃 %d 字节" %
                   (now - self._last_ms, len(self.buf)))
             self.buf = bytearray()
+            self.bad += 1
         self._last_ms = now
         self.buf += bytes(data)
         out = []
@@ -148,8 +152,10 @@ class FrameParser:
             tail = self.buf[3 + ln + 1]
             if tail == FRAME_TAIL and crc == crc8(bytes([ln]) + payload):
                 out.append(payload)
+                self.ok += 1
             else:
                 print("[!] 坏帧丢弃: crc/tail 不符")
+                self.bad += 1
             del self.buf[:total]
         return out
 

@@ -66,6 +66,28 @@ GND 必须共地，115200 8N1
 
 ---
 
+## 4.5 屏幕回显条（v3.4.0 新增）
+
+以前：单片机不发命令时屏幕**冻在上一帧**，而且 `R`/`T`/`Z` 这类不读相机的命令
+在屏幕上**毫无痕迹**——看不出"到底收到没有、回的什么"。
+
+现在画面底部常驻三条（`config.SCREEN_ECHO=True`，默认开）：
+
+```text
+RX: C,1                    ← 最近收到的命令（R/T/Z 也会有痕迹）
+TX: PICK,1,312,238         ← 最近发出的回复
+IDLE  rx=12 tx=12 bad=0    ← 状态 + 收/发条数 + 坏帧数
+```
+
+- `IDLE` = 在等命令；`RUNNING` = 正在跑任务；第 3 行**变红**说明有坏帧
+  （`bad>0`：CRC/帧尾/半帧丢弃——通常是波特率或接线问题）
+- 空闲时每 `SCREEN_ECHO_IDLE_MS`(100ms) 刷一帧预览，所以屏幕不再冻住
+- 任务执行期间的画面里也会带上这条回显（不用改任何任务代码）
+- 不想要：`SCREEN_ECHO=False`（屏幕行为完全恢复原样）；
+  想只看一行：`SCREEN_ECHO_LINES=1`
+
+---
+
 ## 5. 常用参数（`maixcam_app_v2/config.py`）
 
 | 参数 | 默认 | 什么时候改 |
@@ -82,6 +104,9 @@ GND 必须共地，115200 8N1
 | `PICK_STOP_ONLY` | True | 原料区必须等转盘/物料停稳才回复 |
 | `PICK_STOP_SPEED_PX_S` | 8.0 | 判定停稳的残余速度（px/s）|
 | `PICK_STOP_HOLD_MS` | 300 | 需持续静止多久 |
+| `SCREEN_ECHO` | True | 屏幕底部命令回显条（RX/TX/计数）|
+| `SCREEN_ECHO_IDLE_MS` | 100 | 空闲时多久刷一次预览（0=不刷，屏幕会冻住）|
+| `SCREEN_ECHO_LINES` | 3 | 回显条行数 1~3 |
 | `OBST_STABLE_FRAMES` | 5 | G 的反应速度 |
 | `TH_RED/TH_YELLOW/TH_BLUE/TH_GREEN` | 样本集统计值 | 换灯光/换场地后跑 `tools_analyze_lab.py` 重算 |
 | `ROI_MATERIAL` 等 | 起手值 | 现场按机位调整 |

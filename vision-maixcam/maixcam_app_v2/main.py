@@ -24,6 +24,7 @@ import ai_model
 import precision
 import protocol
 import tasks
+import screen_echo
 from protocol import (VisionLink, preflight, parse_command, pack_ready, pack_ok,
                       pack_error, pack_none)
 
@@ -85,6 +86,20 @@ if config.TOUCH_UI:
         ui_rects = ui.layout()
         ui.status = "TOUCH MODE - pick a task"
 
+# ---- 屏幕命令回显条：把 display 包一层，任务里原有的 disp.show() 自动带上回显 ----
+# 触屏模式不读串口命令，且屏幕下方是按钮，不加（避免压住按钮）
+screen_echo.set_state("IDLE")
+if disp is not None and getattr(config, "SCREEN_ECHO", False) and ui is None:
+    disp = screen_echo.wrap(disp)
+
+
+def echo_bad_frames():
+    """把链路层的坏帧数同步到回显条（CRC/帧尾/半帧都算）"""
+    try:
+        screen_echo.set_bad(getattr(link.parser, "bad", 0))
+    except Exception:
+        pass
+
 
 def log(*a):
     if config.VERBOSE:
@@ -101,6 +116,7 @@ def reply(payload):
         ctl.reset_flag = False
         TASK = None
     link.send_payload(payload)
+    screen_echo.set_tx(payload)
 
 
 def dispatch(cmd, arg):
@@ -209,21 +225,42 @@ def main():
     log("握手: 下位机发 R → READY；任务中收到 R 立即中断，收到其它命令回 BUSY")
     log("=" * 56)
 
-    link.send_payload(pack_ready())
+    reply(pack_ready())
     log("已发送 READY")
 
     if ui is not None:
         log("[触屏] 触屏调试模式（不读串口命令）")
         ui_loop()
     else:
+        # 空闲时定期刷一帧预览 + 回显条：屏幕不再"冻住"，并显示 rx/tx/坏帧计数
+        # SCREEN_ECHO=False 时完全退回旧行为（空闲不刷屏）
+        idle_ms = max(0, int(getattr(config, "SCREEN_ECHO_IDLE_MS", 100)))
+        show_idle = (disp is not None and idle_ms > 0
+                     and getattr(config, "SCREEN_ECHO", False))
+        last_echo = 0
         while not app.need_exit():
             raw = link.poll_command()
             if raw is None:
+                if show_idle:
+                    now = ticks_ms()
+                    if (now - last_echo) >= idle_ms:
+                        last_echo = now
+                        echo_bad_frames()
+                        screen_echo.set_state("IDLE")
+                        try:
+                            disp.show(cam.read())
+                        except Exception as e:
+                            log("[回显] 空闲预览失败，已关闭: %s" % e)
+                            show_idle = False
                 sleep_ms(5)
                 continue
             cmd, arg = parse_command(raw)
+            screen_echo.set_rx(raw)
+            echo_bad_frames()
+            screen_echo.set_state("RUNNING")
             log("[命令] %r" % raw)
             dispatch(cmd, arg)
+            screen_echo.set_state("IDLE")
 
     link.close()
     log("退出")
