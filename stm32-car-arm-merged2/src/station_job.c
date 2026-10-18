@@ -98,10 +98,11 @@ static void push_retreat_home(void)
 static void push_take_from_platform(void)
 {
     /* 先在高处转向杯位并张开爪子，再伸齿条、下降；避免闭爪贴着杯壁下降。 */
-    push(SS_YAW, (int)(STN_PLATFORM_TAKE_YAW * 10.0f));
-    push(SS_SLIDE, STN_PLATFORM_TAKE_SLIDE);
+    /* 上料和放回载物台是同一组几何姿态，直接复用唯一配置源。 */
+    push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+    push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
-    push(SS_LIFT, STN_PLATFORM_TAKE_LIFT);
+    push(SS_LIFT, ARM_PLACE_LIFT_MM);
     push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
     push(SS_LIFT, ARM_LIFT_HOME_MM);
     push(SS_SLIDE, ARM_SLIDE_HOME_MM);

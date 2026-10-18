@@ -45,11 +45,4 @@ static const StationPose stn_rough_place = {0, 0, 0.0f};
 #define STN_STORAGE_LAYER_LIFT_MM 0
 static const StationPose stn_storage_place = {0, 0, 0.0f};
 
-/* 从车上载物台把物块夹起来的姿态，沿用已标定的载物台放置参数即可；
- * 若实测发现爪子下不到杯里，只改这三项。 */
-#define STN_PLATFORM_TAKE_READY 0
-#define STN_PLATFORM_TAKE_SLIDE 30
-#define STN_PLATFORM_TAKE_LIFT 110
-#define STN_PLATFORM_TAKE_YAW  254.0f
-
 #endif

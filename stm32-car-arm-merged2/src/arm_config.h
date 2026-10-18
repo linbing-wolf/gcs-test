@@ -31,13 +31,13 @@
 #define ARM_CLAW_MAX_DEG             270.0f
 #define ARM_CLAW_OFFSET_DEG            1.0f
 #define ARM_CLAW_OPEN_DEG             45
-#define ARM_CLAW_CLOSE_DEG             0
-#define ARM_PICK_SLIDE_MM             65
-#define ARM_PICK_LIFT_MM             110
-#define ARM_PICK_YAW_DEG             126.0f /* 1275us，采用远程当前抓取标定。 */
-#define ARM_PLACE_SLIDE_MM            30
+#define ARM_CLAW_CLOSE_DEG            15
+#define ARM_PICK_SLIDE_MM             55
+#define ARM_PICK_LIFT_MM             105
+#define ARM_PICK_YAW_DEG             131.0f
+#define ARM_PLACE_SLIDE_MM            35
 #define ARM_PLACE_LIFT_MM            110
-#define ARM_PLACE_YAW_DEG            254.0f /* 564us，放上载物台。 */
+#define ARM_PLACE_YAW_DEG            256.0f
 #define ARM_PLATFORM_FIRST_DEG        20.0f /* PA2，沿用随包PWM.c三个档位。 */
 #define ARM_PLATFORM_SECOND_DEG      139.0f
 #define ARM_PLATFORM_THIRD_DEG       256.0f
