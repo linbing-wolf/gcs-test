@@ -1,5 +1,15 @@
 # STM32 侧改动清单（视觉口 → UART5）
 
+> ## ⚠️ 本文已过时（协议变了）
+> 本目录的 `vision_uart.c/h` 实现的是**旧协议**（`0xFF` + 9 字节 + `0xFE`，单字节命令字），
+> 对应的是树莓派时代的视觉端。当前视觉端是 **v3.3.0**，用**变长帧**协议：
+> `AA 55 | LEN | payload | CRC8 | 0x0D`，命令是 ASCII 文本（`R` / `A` / `T,134+123+314+231` / `C,1` / `D` …）。
+>
+> **请改用 `test-code/stm32/vision_proto.c/h`**（已按 v3.3.0 实现并在电脑端自检通过，
+> 见 `test-code/stm32/README_视觉联调.md`）。
+> 接线结论仍然有效：**MaixCAM2 ↔ STM32 UART5（PC12=TX / PD2=RX）**。
+> 精确协议以 `AI_HANDOFF_STM32.md` 为准。
+
 > 配套：MaixCAM2 视觉端已完成（`maixcam_app/`）。
 > 本文档是 **STM32 固件** 需要做的全部改动。
 > 目标：让 STM32 通过 **UART5（PC12=TX / PD2=RX）** 和 MaixCAM2 通信，协议与原树莓派版本完全一致。

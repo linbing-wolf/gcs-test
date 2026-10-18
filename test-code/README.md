@@ -39,6 +39,8 @@ test-code/
 | `main_armclaw.c` | 机械臂 + 爪子 + 云台 + 载物台合并测试（当前调试主程序） |
 | `main_armclaw_bak_1610.c` | 上述程序 2026-10-16 的备份 |
 | `main_scan.c` | 扫码模块串口接收测试 |
+| `main_vision.c` + `vision_proto.c/h` | **上位机（MaixCAM2 视觉端）联调测试台**：按 v3.3.0 协议发命令、解析回复、自动判定全流程。说明见 `stm32/README_视觉联调.md` |
+| `vision_host_test.c` | 视觉协议的电脑端自检（`gcc -DVISION_HOST_TEST vision_host_test.c vision_proto.c`，不需硬件）|
 
 ### `main_armclaw.c` 当前实测参数
 
