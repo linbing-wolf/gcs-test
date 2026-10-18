@@ -38,5 +38,5 @@ foreach($packageFile in $packageTarget.Groups.Group.Files.File){
 foreach($packageInclude in $packageTarget.TargetOption.TargetArmAds.Cads.VariousControls.IncludePath.Split(';')){
     if($packageInclude){[void](Resolve-PackageInput $packageProjectDir $packageInclude)}
 }
-if($packageUnits -ne 67){throw "Unexpected compilation unit count: $packageUnits"}
-Write-Output ('PASS package: '+@($packageManifest.files.PSObject.Properties).Count+' files match; generated route table matches map inputs; 67 units and include paths stay inside package. No hardware accessed.')
+if($packageUnits -ne 70){throw "Unexpected compilation unit count: $packageUnits"}
+Write-Output ('PASS package: '+@($packageManifest.files.PSObject.Properties).Count+' files match; generated route table matches map inputs; 70 units and include paths stay inside package. No hardware accessed.')

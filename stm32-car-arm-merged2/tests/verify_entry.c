@@ -21,6 +21,8 @@ static uint32_t interrupt_at_position;
 static uint32_t fail_can_at_position;
 static char output[32768];
 static size_t output_size;
+static uint8_t simulate_uart_cost;
+static uint32_t uart_fraction_us;
 static uint8_t status_auto_reply,position_ack_enabled,bus_off;
 static uint8_t simulated_start_button;
 uint8_t entry_host_start_button_pressed(void) {return simulated_start_button;}
@@ -31,6 +33,11 @@ void entry_host_scanner_init(uint32_t baud) {scanner_initialized_baud=baud;}
 int entry_host_scanner_tx_ready(void) {return scanner_can_tx;}
 void entry_host_scanner_send_byte(uint8_t value)
 {CHECK(scanner_sent_count<sizeof(scanner_sent));scanner_sent[scanner_sent_count++]=value;}
+static uint8_t vision_tx_bytes[4096], vision_tx_ready=1;
+static unsigned vision_tx_count;
+void entry_host_vision_init(uint32_t baud) {CHECK(baud==115200u);vision_tx_count=0;vision_tx_ready=1;}
+int entry_host_vision_tx_ready(void) {return vision_tx_ready;}
+void entry_host_vision_send_byte(uint8_t byte) {CHECK(vision_tx_count<sizeof(vision_tx_bytes));vision_tx_bytes[vision_tx_count++]=byte;}
 static uint8_t motor_flags[4];
 static uint32_t status_queries;
 static uint32_t diagnostic_queries;
@@ -41,26 +48,70 @@ static uint8_t velocity_ack_enabled, position_auto_reply, speed_auto_reply;
 static uint8_t missing_velocity_ack, missing_feedback_motor, moving_at_stop_motor;
 static uint32_t velocity_batches;
 static uint32_t interrupt_at_velocity, fail_can_at_velocity;
-typedef struct {
-    uint8_t rotating,clockwise;
-    RoadHeading heading;
-    BodyAxis axis;
-    int16_t mm;
-    uint32_t pulses;
-} RunAction;
-static RunAction run_actions[64];
-static uint8_t run_action_count;
 
 void entry_host_send_byte(uint8_t value)
 {
     CHECK(output_size+1<sizeof(output));
     output[output_size++]=(char)value;output[output_size]=0;
+    if(simulate_uart_cost) {
+        /* 115200 8N1约87us/字符；由下一次plant_step积分这段控制停顿。 */
+        uart_fraction_us+=87;
+        clock_ms+=uart_fraction_us/1000u;uart_fraction_us%=1000u;
+    }
+}
+static uint16_t arm_claw_us,arm_yaw_us,arm_platform_us;
+static uint32_t arm_enables,arm_stops,arm_positions,arm_queries;
+static int64_t arm_encoder[2];
+static uint8_t arm_auto_reply=1,arm_ack=1,arm_freeze,arm_bad_direction,arm_flags=3;
+static uint8_t arm_missing_motor,arm_moving_motor,arm_inject_stop,arm_inject_can_error;
+static uint8_t arm_trace_address[128],arm_trace_dir[128];
+static uint32_t arm_trace_pulses[128];
+static uint16_t arm_trace_yaw_us[128],arm_trace_claw_us[128];
+void entry_host_arm_pwm(uint16_t claw,uint16_t yaw) {arm_claw_us=claw;arm_yaw_us=yaw;}
+void entry_host_arm_platform_pwm(uint16_t pulse) {arm_platform_us=pulse;}
+void Emm_V5_En_Control(uint8_t addr,bool enabled,bool synchronous)
+{CHECK((addr==5 || addr==7) && enabled && !synchronous);arm_enables++;}
+static void arm_fixture_position(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,
+                                 uint32_t pulses,bool absolute,bool synchronous)
+{
+    const uint8_t reply[3]={0xfd,2,0x6b};
+    int64_t delta=(int64_t)pulses*65536u/3200u;
+    CHECK((addr==5 || addr==7) && dir<=1 && rpm==ARM_AXIS_RPM && acc==ARM_AXIS_ACCEL && !absolute && !synchronous);
+    CHECK(arm_positions<128);
+    arm_trace_address[arm_positions]=addr;arm_trace_dir[arm_positions]=dir;
+    arm_trace_yaw_us[arm_positions]=arm_yaw_us;arm_trace_claw_us[arm_positions]=arm_claw_us;
+    arm_trace_pulses[arm_positions++]=pulses;
+    if(dir)delta=-delta;
+    if(arm_bad_direction)delta=-delta;
+    if(!arm_freeze)arm_encoder[addr==5]+=delta;
+    if(arm_ack)route_test_can_rx((uint32_t)addr<<8,4,0,3,reply);
+    if(arm_inject_stop)queue_byte('!');
+    if(arm_inject_can_error)route_test_can_error(2);
+}
+static void arm_fixture_query(uint8_t addr,SysParams_t parameter)
+{
+    uint8_t reply[7]={0x3a,0,0x6b,0,0,0,0x6b};
+    int64_t value=parameter==S_CPOS?arm_encoder[addr==5]:(addr==arm_moving_motor?10:0);
+    uint32_t magnitude=(uint32_t)(value<0?-value:value);
+    uint8_t length=3;
+    arm_queries++;
+    if(!arm_auto_reply || addr==arm_missing_motor)return;
+    if(parameter==S_FLAG)reply[1]=arm_flags;
+    else if(parameter==S_CPOS){
+        reply[0]=0x36;reply[1]=value<0;reply[2]=(uint8_t)(magnitude>>24);reply[3]=(uint8_t)(magnitude>>16);
+        reply[4]=(uint8_t)(magnitude>>8);reply[5]=(uint8_t)magnitude;length=7;
+    }else{
+        CHECK(parameter==S_VEL);reply[0]=0x35;reply[1]=value<0;
+        reply[2]=(uint8_t)(magnitude>>8);reply[3]=(uint8_t)magnitude;reply[4]=0x6b;length=5;
+    }
+    route_test_can_rx((uint32_t)addr<<8,4,0,length,reply);
 }
 void delay_ms(uint16_t milliseconds) {clock_ms+=milliseconds;}
 void Emm_V5_Pos_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,
                         uint32_t pulses,bool absolute,bool synchronous)
 {
     SentPosition *p;
+    if(addr==5 || addr==7){arm_fixture_position(addr,dir,rpm,acc,pulses,absolute,synchronous);return;}
     CHECK(position_count<256);
     p=&sent[position_count++];p->addr=addr;p->dir=dir;p->rpm=rpm;p->acc=acc;
     p->pulses=pulses;p->absolute=absolute;p->synchronous=synchronous;
@@ -75,6 +126,7 @@ int entry_host_can_bus_off(void) {return bus_off;}
 void Emm_V5_Read_Sys_Params(uint8_t addr,SysParams_t parameter)
 {
     uint8_t reply[7]={0x3a,0,0x6b,0,0,0,0x6b};
+    if(addr==5 || addr==7){arm_fixture_query(addr,parameter);return;}
     CHECK(addr>=1 && addr<=4);
     if(parameter==S_FLAG) {
         status_queries++;reply[1]=motor_flags[addr-1u];
@@ -112,17 +164,10 @@ void Emm_V5_Synchronous_motion(uint8_t addr)
         memcpy(simulated_wheel_rpm,staged_wheel_rpm,sizeof(simulated_wheel_rpm));
         velocity_batches++;return;
     }
-    if(run_active) {
-        RunAction *action;
-        CHECK(run_action_count<64);
-        action=&run_actions[run_action_count++];
-        action->rotating=drive.rotating;action->clockwise=drive.clockwise;
-        action->heading=run.heading;action->axis=drive.parameters.axis;
-        action->mm=drive.parameters.mm;action->pulses=drive.pulses;
-    }
 }
 void Emm_V5_Stop_Now(uint8_t addr,bool synchronous)
-{CHECK(addr>=1 && addr<=4 && !synchronous);stop_count++;simulated_wheel_rpm[addr-1u]=staged_wheel_rpm[addr-1u]=0;}
+{if(addr==5 || addr==7){CHECK(!synchronous);arm_stops++;return;}
+ CHECK(addr>=1 && addr<=4 && !synchronous);stop_count++;simulated_wheel_rpm[addr-1u]=staged_wheel_rpm[addr-1u]=0;}
 void Emm_V5_Vel_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,bool synchronous)
 {
     CHECK(addr>=1 && addr<=4 && acc==150);velocity_count++;
@@ -145,17 +190,23 @@ static void reset_fixture(void)
     MotionConfig config={CALIBRATED_PPM_X,CALIBRATED_PPM_Y,1,0,-1,1,
                          LEFT_FORWARD_MM_PER_M,RIGHT_FORWARD_MM_PER_M};
     NavMotionPort port={port_start,port_poll,port_stop,&drive};
+    arm_init();memset(&arm_lock,0,sizeof(arm_lock));
+    simulate_uart_cost=0;uart_fraction_us=0;
+    arm_claw_us=arm_yaw_us=arm_platform_us=0;
+    arm_enables=arm_stops=arm_positions=arm_queries=0;
+    memset(arm_encoder,0,sizeof(arm_encoder));arm_auto_reply=arm_ack=1;arm_flags=3;
+    arm_freeze=arm_bad_direction=arm_missing_motor=arm_moving_motor=arm_inject_stop=arm_inject_can_error=0;
     clock_ms=0;rx_head=rx_tail=stop_pending=rx_overflow=0;
     simulated_start_button=0;start_button_init();
     memset(&scanner,0,sizeof(scanner));scanner_head=scanner_tail=scanner_rx_error=scanner_rx_overflow=0;
     scanner_sent_count=0;scanner_can_tx=1;scanner_initialized_baud=0;
     line_length=pose_set=test_mode=0;speed_rpm=0;test_distance=1000;test_rpm=60;
-    turn_rpm=CAR_TURN_RPM;turn_pulses=CAR_TURN_TEST_PULSES;
-    turn_ccw90=CAR_TURN_CCW_90_PULSES;turn_cw90=CAR_TURN_CW_90_PULSES;
+    turn_rpm=CAR_TURN_RPM;
     reported_nav=NAV_FAULT;reported_motion=MOTION_FAULT;
     memset((void *)rx_buffer,0,sizeof(rx_buffer));memset(line,0,sizeof(line));
     memset(sent,0,sizeof(sent));position_count=sync_count=stop_count=velocity_count=0;
     interrupt_at_position=fail_can_at_position=0;output_size=0;output[0]=0;
+    vision_init();station_init();(void)station_command("station auto off");output_size=0;output[0]=0;
     memset(&run,0,sizeof(run));run_active=run_rx_head=run_rx_tail=run_rx_overflow=0;
     memset(&turn_postcheck,0,sizeof(turn_postcheck));
     heading_sensor_reset(&heading_sensor);
@@ -168,7 +219,6 @@ static void reset_fixture(void)
     memset(staged_wheel_rpm,0,sizeof(staged_wheel_rpm));memset(simulated_encoder,0,sizeof(simulated_encoder));
     memset(reported_wheel_rpm,0,sizeof(reported_wheel_rpm));
     memset(motor_flags,3,sizeof(motor_flags));
-    run_action_count=0;memset(run_actions,0,sizeof(run_actions));
     CHECK(motion_init(&drive,&io,&config));CHECK(nav_init(&nav,NODE_A,HEAD_Y_POS,&port));
 }
 static void send_line(const char *s)
@@ -325,174 +375,36 @@ static void trim_tests(void)
     drive.config.left_forward_mm_per_m=20;drive.config.right_forward_mm_per_m=-101;
     CHECK(!motion_init(&candidate,&drive.io,&drive.config));
 }
-static void run_to_first_segment(void)
-{
-    unsigned ticks=0;
-    while(run.state==RUN_PREFLIGHT && ticks++<100) {clock_ms+=25;firmware_step();}
-    firmware_step();
-    CHECK(run.state==RUN_MOVING && position_count==4 && run.acks==15);
-}
-static void calibrate_turn_fixture(void)
-{
-    /* 模拟值只用于软件验证；绝不写入上车默认配置。 */
-    turn_ccw90=1000;turn_cw90=1100;
-}
 static void rotation_tests(void)
 {
-    const uint32_t pulses[4]={200,200,200,200};
-    const uint16_t rpm[4]={30,30,30,30};
-    const uint8_t ccw[4]={CAR_TURN_CCW_DIR,CAR_TURN_CCW_DIR,CAR_TURN_CCW_DIR,CAR_TURN_CCW_DIR};
-    const uint8_t cw[4]={!CAR_TURN_CCW_DIR,!CAR_TURN_CCW_DIR,!CAR_TURN_CCW_DIR,!CAR_TURN_CCW_DIR};
-    const char *invalid[]={"pulses 0","pulses 20001","pulses -1","pulses 65536",
-        "rpm 19","rpm 301","ccw90 20001","cw90 65536","dist 100","f","l","tr extra"};
+    static const char *invalid[]={"rpm 19","rpm 301","rpm -1","rpm 65536","dist 100","f","l"};
     unsigned i;
-    reset_fixture();CHECK(!turn_ccw90 && !turn_cw90);
-    send_line("run A");CHECK(!run_active && !position_count && strstr(output,"calibrate"));
-    send_line("turn");CHECK(test_mode==2 && !position_count && !pose_set);
-    send_line("left90");CHECK(!position_count && strstr(output,"[rejected"));
+    reset_fixture();send_line("turn");CHECK(test_mode==MODE_ROTATION_TEST && !position_count && !pose_set);
+    send_line("left90");CHECK(!run_active && !position_count && strstr(output,"[rejected"));
     for(i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++) {
-        send_line(invalid[i]);CHECK(strstr(output,"[rejected") && !position_count);
+        send_line(invalid[i]);CHECK(strstr(output,"[rejected") && !position_count && !run_active);
     }
-    send_line("tl");CHECK(position_count==4 && drive.rotating && !drive.clockwise && !drive.forward_trim_mm);
-    check_positions(0,ccw,pulses,rpm);
-    send_line("tr");send_line("pulses 400");send_line("ccw90 1000");
-    CHECK(position_count==4 && turn_pulses==200 && !turn_ccw90);
-    await_estimate();CHECK(drive.state==MOTION_WAIT_CONFIRM && !nav.position_confirmed);
-    CHECK(strstr(output,"ACTUAL angle"));
-    stop_request();send_line("tr");check_positions(4,cw,pulses,rpm);
-    stop_request();send_line("ccw90 1000");send_line("run A");
-    CHECK(!run_active && position_count==8); /* 只标一侧不能跑全程。 */
-    send_line("cw90 1100");send_line("left90");
-    CHECK(position_count==8 && !run_active && strstr(output,"[rejected"));
-    send_line("pulses 1000");send_line("tl");CHECK(drive.pulses==1000 && !drive.clockwise);
-    stop_request();send_line("pulses 2200");send_line("tr");CHECK(drive.pulses==2200 && drive.clockwise);
-    clock_ms=drive.started_ms+drive.timeout_ms;firmware_step();
-    CHECK(drive.state==MOTION_IDLE && position_count==16 && strstr(output,"stop requested"));
-    clock_ms+=60000;firmware_step();CHECK(position_count==16);
-    send_line("ccw90 0");send_line("run C");CHECK(!run_active && position_count==16);
+    send_line("rpm 60");CHECK(turn_rpm==60 && strstr(output,"[accepted"));
+    send_line("info");CHECK(strstr(output,"rpm=60") && strstr(output,"imu_turn=continuous_velocity"));
+    CHECK(!strstr(output,"pulses=") && !strstr(output,"model90_initial="));
     send_line("nav");CHECK(!test_mode && !pose_set);
-    reset_fixture();send_line("turn");interrupt_at_position=2;send_line("tl");firmware_step();
-    CHECK(position_count==2 && !sync_count && drive.state==MOTION_IDLE);
-    reset_fixture();CHECK(!motion_start_rotation(&drive,2,200,30,150,0));
-    CHECK(!motion_start_rotation(&drive,0,0,30,150,0));
-    CHECK(!motion_start_rotation(&drive,0,40001,30,150,0));
-    CHECK(!motion_start_rotation(&drive,0,200,19,150,0));
 }
-static void full_route_tests(void)
+static void removed_run_tests(void)
 {
-    uint8_t plan,job,node,cursor,i;
-    uint16_t passed,total;
-    RouteTablePath route;
-    for(plan=0;plan<2;plan++) {
-        /* 与当前查表的各阶段最短路逐节点核对，使用与当前几何配套的查表。 */
-        node=full_route_nodes[plan][0];cursor=0;passed=total=0;
-        for(job=0;job<FULL_ROUTE_JOBS;job++) {
-            CHECK(route_table_lookup(node,full_route_jobs[plan][job],0,passed,&route));
-            total+=route.distance;
-            for(i=1;i<route.count;i++) {
-                int road=road_index(route.nodes[i-1],route.nodes[i]);
-                CHECK(road>=0 && ++cursor<FULL_ROUTE_NODES);
-                CHECK(full_route_nodes[plan][cursor]==route.nodes[i]);passed|=(uint16_t)(1u<<road);
-            }
-            node=full_route_jobs[plan][job];
-        }
-        CHECK(total==EXPECTED_FULL_ROUTE_MM && cursor==16);
-        reset_fixture();calibrate_turn_fixture();send_line(plan?"run C":"run A");
-        CHECK(run_active && !test_mode && !pose_set && !nav.position_confirmed);
-        for(i=0;i<4;i++) CHECK(motor_flags[i]==3);
-        {
-            unsigned ticks=0;
-            while(run_active && ticks++<15000) {clock_ms+=25;firmware_step();}
-            CHECK(ticks<15000 && run.state==RUN_DONE && run.job==8);
-        }
-        CHECK(run.steps>18 && run.distance_mm==EXPECTED_FULL_ROUTE_MM && position_count==4u*run.steps && sync_count==run.steps);
-        CHECK(run.heading==HEAD_Y_POS && run.finishing);
-        CHECK(!pose_set && !nav.position_confirmed && drive.state==MOTION_IDLE && run.edge==16);
-        CHECK(strstr(output,"done by motor feedback") && status_queries>=76);
-        {
-            /* 独立重放实际提交的旋转/正向直行，验证轨迹与每个几何段、最终朝向。 */
-            RoadPoint start,point;
-            int x,y,heading=0,straight=0,turns=0;
-            unsigned action_index,edge=0,segment=0;
-            RoadPlan expected;
-            CHECK(road_point(full_route_nodes[plan][0],&start));
-            x=start.x;y=start.y;
-            CHECK(road_plan(full_route_nodes[plan][0],full_route_nodes[plan][1],&expected));
-            for(action_index=0;action_index<run_action_count;action_index++) {
-                RunAction *action=&run_actions[action_index];
-                CHECK((int)action->heading==heading);
-                if(action->rotating) {
-                    uint32_t quarter=action->clockwise?1100u:1000u;
-                    int quarters=(int)(action->pulses/quarter);
-                    CHECK(action->pulses%quarter==0 && (quarters==1 || quarters==2));
-                    heading=(heading+(action->clockwise?4-quarters:quarters))%4;
-                    turns++;
-                } else {
-                    MotionParameters geometry=expected.segments[segment];
-                    int dx=heading==1?-action->mm:heading==3?action->mm:0;
-                    int dy=heading==0?action->mm:heading==2?-action->mm:0;
-                    CHECK(action->axis==BODY_FORWARD && action->mm>0);
-                    CHECK(dx==(geometry.axis==BODY_LEFT?-geometry.mm:0));
-                    CHECK(dy==(geometry.axis==BODY_FORWARD?geometry.mm:0));
-                    CHECK(action->pulses==(uint32_t)(action->mm*CALIBRATED_PPM_Y+0.5f));
-                    x+=dx;y+=dy;straight++;segment++;
-                    if(segment==expected.count) {
-                        edge++;segment=0;
-                        CHECK(road_point(full_route_nodes[plan][edge],&point));
-                        CHECK(x==point.x && y==point.y);
-                        if(edge<FULL_ROUTE_NODES-1u)
-                            CHECK(road_plan(full_route_nodes[plan][edge],full_route_nodes[plan][edge+1],&expected));
-                    }
-                }
-            }
-            CHECK(straight==18 && edge==16 && x==start.x && y==start.y && heading==0);
-            CHECK(run_action_count==run.steps && run.steps==straight+turns);
-            printf("PASS route %c: 18 forward segments, %d turns, %u mm, return heading +Y (simulated)\n",plan?'C':'A',turns,EXPECTED_FULL_ROUTE_MM);
-        }
+    static const char *modes[]={"nav","test","turn"};
+    static const char *removed[]={"run A","run C","ccw90 1000","cw90 1100","tl","tr","pulses 200"};
+    unsigned mode,command_index;
+    for(mode=0;mode<3;mode++)for(command_index=0;command_index<sizeof(removed)/sizeof(removed[0]);command_index++) {
+        uint32_t positions,velocities,batches;
+        reset_fixture();send_line(modes[mode]);
+        positions=position_count;velocities=velocity_count;batches=velocity_batches;
+        send_line(removed[command_index]);
+        CHECK(strstr(output,"[rejected") && !run_active && run.state==RUN_IDLE);
+        CHECK(position_count==positions && velocity_count==velocities && velocity_batches==batches);
     }
-    /* 估时经过、但任一电机未到位：不能推进下一段。 */
-    reset_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();motor_flags[1]=1;
-    clock_ms=drive.started_ms+drive.estimate_ms;
-    for(i=0;i<12;i++) {clock_ms+=25;firmware_step();}
-    CHECK(run_active && position_count==4 && run.ready!=15);
-    CHECK(run.turning && run.heading==HEAD_Y_POS && drive.rotating);
-    send_line("go B");CHECK(strstr(output,"[rejected") && position_count==4);
-    stop_request();clock_ms+=60000;firmware_step();
-    CHECK(!run_active && run.state==RUN_STOPPED && position_count==4 && !pose_set);
-    reset_fixture();calibrate_turn_fixture();status_auto_reply=0;send_line("run A");clock_ms+=1001;firmware_step();
-    CHECK(run.state==RUN_FAULT && position_count==0 && strstr(output,"reply timeout"));
-    reset_fixture();calibrate_turn_fixture();position_ack_enabled=0;send_line("run A");
-    {unsigned ticks=0;while(run.state==RUN_PREFLIGHT && ticks++<100){clock_ms+=25;firmware_step();}}
-    clock_ms=run.segment_ms+1501;firmware_step();
-    CHECK(run.state==RUN_FAULT && position_count==4 && strstr(output,"position ACK"));
-    reset_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();
-    {
-        const uint8_t rejected[3]={0xfd,0xe2,0x6b};
-        route_test_can_rx(0x100,4,0,3,rejected);firmware_step();
-        CHECK(run.state==RUN_FAULT && position_count==4 && strstr(output,"command rejected"));
-    }
-    reset_fixture();calibrate_turn_fixture();motor_flags[2]=7;send_line("run A");
-    for(i=0;i<10;i++) {clock_ms+=25;firmware_step();}
-    CHECK(run.state==RUN_FAULT && position_count==0);
-    reset_fixture();calibrate_turn_fixture();send_line("run A");bus_off=1;firmware_step();
-    CHECK(run.state==RUN_FAULT && position_count==0 && strstr(output,"bus off"));
-    reset_fixture();calibrate_turn_fixture();status_auto_reply=0;send_line("run A");
-    {
-        uint8_t wrong[3]={0x3a,3,0};
-        route_test_can_rx((uint32_t)run.pending<<8,4,0,3,wrong);firmware_step();
-        CHECK(run.ready==0 && run.pending!=0);
-        wrong[2]=0x6b;
-        route_test_can_rx((uint32_t)(run.pending%4u+1u)<<8,4,0,3,wrong);firmware_step();
-        route_test_can_rx((uint32_t)run.pending<<8,0,0,3,wrong);
-        route_test_can_rx(((uint32_t)run.pending<<8)|1u,4,0,3,wrong);
-        route_test_can_rx((uint32_t)run.pending<<8,4,0,2,wrong);firmware_step();
-        CHECK(run.ready==0);
-        for(i=0;i<RUN_RX_SIZE;i++) route_test_can_rx(0x100,4,0,3,wrong);
-        firmware_step();CHECK(run.state==RUN_FAULT && position_count==0);
-    }
-    reset_fixture();calibrate_turn_fixture();send_line("run A");send_line("test");
-    CHECK(!run_active && run.state==RUN_IDLE && test_mode);
-    send_line("f");CHECK(position_count==4 && drive.parameters.mm==1000);
+    send_line("help");CHECK(!strstr(output,"run A / run C") && !strstr(output,"ccw90 N"));
+    CHECK(strstr(output,"runimu A/C") && strstr(output,"left90") && !strstr(output,"tl/tr") && !strstr(output,"pulses 1.."));
+    puts("PASS removed run: old A/C route, raw turns and pulse setters rejected in nav/test/turn without motion; retained diagnostic help");
 }
 static void button_tick(uint8_t pressed,uint32_t elapsed_ms)
 {
@@ -646,14 +558,14 @@ static void body_coordinate_tests(void)
         CHECK(road_motion_parameters(stored,(RoadHeading)heading,&converted));
         CHECK(converted.axis==body.axis && converted.mm==body.mm && converted.rpm==30 && converted.acceleration==150);
     }
-    puts("PASS body coordinates: independent drawing vectors, four headings, forward/backward/left/right, legacy-road encoding preserved");
+    puts("PASS body coordinates: independent drawing vectors, four headings, forward/backward/left/right, stored-road encoding preserved");
 }
 
 int main(void)
 {
-    body_coordinate_tests();direction_tests();range_and_mode_tests();stop_and_timeout_tests();navigation_regression();trim_tests();rotation_tests();full_route_tests();
+    body_coordinate_tests();direction_tests();range_and_mode_tests();stop_and_timeout_tests();navigation_regression();trim_tests();rotation_tests();removed_run_tests();
     start_button_tests();
     scanner_tests();
-    printf("PASS entry: %lu assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/full-route feedback checks\n",(unsigned long)assertions);
+    printf("PASS entry: %lu assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/removed-run checks\n",(unsigned long)assertions);
     return 0;
 }

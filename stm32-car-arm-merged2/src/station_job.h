@@ -12,6 +12,7 @@
  * 粗加工/暂存姿态未标定时拒绝自动执行（见 station_config.h）。
  */
 void station_init(void);
+int station_auto_enabled(void);
 /* 返回 1 已启动作业，0 该节点无动作，-1 拒绝执行（已打印原因）。 */
 int station_start(uint8_t node, uint8_t job_index, uint32_t now);
 void station_update(uint32_t now);

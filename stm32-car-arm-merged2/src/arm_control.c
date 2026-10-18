@@ -250,6 +250,7 @@ int arm_ready(void)
 }
 int arm_platform_slot(void)
 {
+    if (!arm.platform_known) return 0;
     return arm.platform_slot?arm.platform_slot:platform_slot_of(arm.platform);
 }
 /* 只读当前“已确认/已下发”的姿态，用于工位程序跳过无变化的步骤。 */
@@ -475,16 +476,9 @@ int arm_command(const char *s,uint32_t now)
     }
     if(!strcmp(s,"arm on")){
         if(arm.enabled){arm_output("[arm rejected: already on]\r\n");return 1;}
-        arm_init();arm.enabled=1;arm_pwm_init();
-        /* 舵机不记忆机械位置，只认脉宽：使能时直接把云台/爪子写回标定初始角，
-         * 载物台写第一格20度，免得上电后停在上一次测试留下的旧角度。
-         * 平推/升降仍然“未声明”，normal motion 之前必须人工发 arm pose。 */
-        servo_pose((float)ARM_CLAW_OPEN_DEG,ARM_YAW_HOME_DEG);
-        platform_pose(ARM_PLATFORM_FIRST_DEG);
-        arm.platform=ARM_PLATFORM_FIRST_DEG;
-        arm.platform_slot=platform_slot_of(ARM_PLATFORM_FIRST_DEG);
+        arm_init();arm.enabled=1;arm_pwm_init();platform_pwm(0);
         Emm_V5_En_Control(ARM_SLIDE_ADDRESS,true,false);Emm_V5_En_Control(ARM_LIFT_ADDRESS,true,false);
-        arm_output("[arm on: servo homed yaw 0 / claw 45 / platform 20; lift 5 / slide 7; arm pose still required for steppers]\r\n");return 1;
+        arm_output("[arm on: lift 5 / slide 7; arm pose for normal motion; yawtest init for PWM-only test]\r\n");return 1;
     }
     if(!arm.enabled){arm_output("[arm rejected: send arm on first]\r\n");return 1;}
     if(arm.state!=ARM_IDLE && arm.state!=ARM_FAULT){arm_output("[arm rejected: busy; use ! or arm stop]\r\n");return 1;}

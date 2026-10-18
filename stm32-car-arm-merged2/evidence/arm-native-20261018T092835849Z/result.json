@@ -1,0 +1,31 @@
+﻿{
+    "sourceHashes":  {
+                         "src/main_table_nav.c":  "6337ce570a7092a4d3909103758abda3b57449f5b9b6b6e1580ce6cce9fab326",
+                         "src/arm_control.c":  "b057fa664ade5cc0d494a5b69af57c457291abc39cd24733f2937f839af4d914",
+                         "src/station_job.c":  "8f402acc4b3183c6c5af2258c087923b84c24a69ee6f7b17b1edab9e3de1d2c9",
+                         "src/station_job.h":  "a0c43b148fbcf7794708c07fb606f5b2dd0396387c32f195132bc0f0fc037226",
+                         "src/station_config.h":  "4a80975a3c3f3963640d66f153209569e5bd49c43652b6b4bcd96e40323b3704",
+                         "src/vision_link.c":  "0b96e534d95ae3be8362d5f58ced6dacc593800c62abfbd309520e1832174d3e",
+                         "src/vision_link.h":  "f8433ad65c5d05de35d014650dcbf60693fea703ad5fe5354cba27dd8852bd4e",
+                         "tests/vision_host_io.h":  "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+                         "vendor/stm32/lanya/usart5.c":  "ad7e8ebdfd41a4f7f2cce7de56376df36d39c472b45043664eba986d27b0a31d",
+                         "src/arm_control.h":  "089a23e07888b260374159215e32de3897b1e5a21ec404371feb1854ded9a526",
+                         "src/arm_config.h":  "eccc79e5d3a87e35d5a53cbc2e561cb92e907dcc791b4a5b90d1959eb46e6643",
+                         "tests/verify_entry.c":  "d58668506a44f0ce513b08451051ffee25a2aa02f30095c1f7181d7fcd7a44f5",
+                         "tests/verify_arm_integration.c":  "be8e14b56ea39f997181f2c6680ad60b2aeba5814b65a4d5ba71e2b9cf6a561a",
+                         "tests/entry_host_io.h":  "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+                         "tests/arm_host_io.h":  "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71"
+                     },
+    "passed":  true,
+    "exitCode":  0,
+    "scope":  "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+    "sourceSha256":  "6337ce570a7092a4d3909103758abda3b57449f5b9b6b6e1580ce6cce9fab326",
+    "output":  [
+                   "PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis",
+                   "PASS mutual exclusion: removed-run/nav/runimu/shift/turn blocked in arm session; chassis rejects arm acquisition while busy; ! stops both and requires explicit recovery",
+                   "PASS four-wheel interlock: missing status/speed, disabled/stalled wheel 4, moving wheel 4, bus off, queue overflow, active-session watchdog and timestamp wrap",
+                   "PASS arm failure paths: either axis missing, ACK missing, frozen/reversed encoder, stall, stop/CAN fault during submission; platform PWM holds at stop; full-stroke yaw diagnostic",
+                   "PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation",
+                   "PASS arm integration: 74490 assertions; host simulation only, no hardware accessed"
+               ]
+}

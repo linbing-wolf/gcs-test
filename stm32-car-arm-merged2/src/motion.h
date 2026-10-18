@@ -5,7 +5,7 @@ typedef enum
 {
     MOTION_IDLE,          /* 可接受下一次运动。 */
     MOTION_RUNNING,       /* 当前相对位置命令执行中。 */
-    MOTION_WAIT_CONFIRM,  /* 估时已过，仍等待人工确认或全程电机反馈。 */
+    MOTION_WAIT_CONFIRM,  /* 估时已过，仍等待人工确认实际位移。 */
     MOTION_DONE,          /* 当前命令已得到相应确认。 */
     MOTION_FAULT          /* 提交失败或等待超时，已请求停车。 */
 } MotionState;
@@ -42,14 +42,9 @@ typedef struct
     uint32_t pulses;          /* 基础运动脉冲；预补偿后四轮脉冲可能不同。 */
     MotionParameters parameters;
     int16_t forward_trim_mm;  /* 本次横移叠加的前移量，正值向前。 */
-    uint8_t rotating;         /* 1：四轮脉冲旋转；此时parameters.mm不表示距离。 */
-    uint8_t clockwise;        /* 旋转指令方向，物理方向由小脉冲测试验证。 */
 } Motion;
 int motion_init(Motion *motion, const MotionIO *io, const MotionConfig *config);
 int motion_start(Motion *motion, MotionParameters parameters, uint32_t now_ms);
-/* pulses是每轮相对位置脉冲，不是车身角度；无IMU时必须实测标定。 */
-int motion_start_rotation(Motion *motion, uint8_t clockwise, uint32_t pulses,
-                          uint16_t rpm, uint8_t acceleration, uint32_t now_ms);
 MotionState motion_update(Motion *motion, uint32_t now_ms);
 /* 实际反馈或人工确认必须绑定本次命令代号，拒绝上次命令的迟到反馈。 */
 int motion_confirm(Motion *motion, uint32_t generation);

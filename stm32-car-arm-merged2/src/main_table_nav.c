@@ -18,10 +18,12 @@
 #include "heading_control.h"
 #include "arm_control.h"
 #include "arm_config.h"
-#include "vision_link.h"
 #include "station_job.h"
+#include "station_config.h"
+#include "vision_link.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #define RX_SIZE 128u
 #define LINE_SIZE 64u
 
@@ -83,9 +85,6 @@ static uint8_t test_mode;                /* 0：导航/全程；1：平移标定
 static uint16_t test_distance = CAR_TEST_DISTANCE_MM;
 static uint16_t test_rpm = CAR_TEST_RPM;
 static uint16_t turn_rpm = CAR_TURN_RPM;
-static uint16_t turn_pulses = CAR_TURN_TEST_PULSES;
-static uint16_t turn_ccw90 = CAR_TURN_CCW_90_PULSES;
-static uint16_t turn_cw90 = CAR_TURN_CW_90_PULSES;
 static Motion drive;                    /* 当前单段运动状态、脉冲、估时、命令代号。 */
 static Navigation nav;                  /* 人工查表导航的节点、道路、错误状态。 */
 static NavState reported_nav = NAV_FAULT;
@@ -94,16 +93,25 @@ typedef enum
 {
     RUN_IDLE,       /* 未启用全程模式。 */
     RUN_PREFLIGHT,  /* 查询四个驱动器，检查使能和堵转状态。 */
-    RUN_MOVING,     /* 当前段已提交，等待 ACK 和四轮到位状态。 */
+    RUN_MOVING,     /* IMU航向与编码器距离闭环平移，持续检查四轮反馈。 */
     RUN_DONE,       /* 全部指令按电机反馈完成，真实车身位置仍需现场检查。 */
     RUN_STOPPED,    /* 操作者停止，不自动续跑。 */
     RUN_FAULT,     /* 通信/执行异常，不自动重试。 */
     RUN_ALIGN,     /* runimu：停车后用新角度对齐航向。 */
-    RUN_STATION    /* 已到工位并停稳，正在执行抓放作业。 */
+    RUN_OBSTACLE_STOP,
+    RUN_WAIT_OBSTACLE,
+    RUN_STATION
 } RunState;
 typedef enum {
     VELOCITY_TURN, VELOCITY_BASELINE, VELOCITY_FORWARD, VELOCITY_STOP_FORWARD
 } VelocityPhase;
+
+typedef struct {
+    BodyAxis axis;
+    RoadHeading heading;
+    int8_t sign;
+    uint16_t mm;
+} RunLeg;
 typedef struct
 {
     RunState state;
@@ -111,37 +119,32 @@ typedef struct
     uint8_t edge;             /* full_route_nodes 中当前道路起点的下标。 */
     uint8_t segment;          /* 当前道路内部的运动段下标，从 0 开始。 */
     uint8_t job;              /* 已经过的任务点数量，0～8。 */
-    uint16_t steps;            /* 已提交动作数：18个直行段加所需旋转。 */
-    RoadHeading heading;     /* 按电机反馈推算的朝向，不是真实角度测量。 */
+    uint16_t steps;            /* 逻辑平移段及转向计数；直线穿越不增加一次启停。 */
+    RoadHeading heading;     /* 已通过IMU对齐的地图朝向；地面实际姿态仍需检查。 */
     RoadHeading target_heading;
     RoadHeading initial_heading; /* runimu：A右上朝扫码为+Y，C右下朝扫码为-Y。 */
     uint8_t turning;         /* 当前动作是否为旋转；完成前不改变heading。 */
     uint8_t finishing;       /* 已返回起点，正在恢复本轮初始朝向。 */
-    uint8_t acks;             /* 电机1～4对应bit0～3，15表示四轮均回复位置ACK。 */
-    uint8_t ready;            /* 四轮状态掩码；运动时15表示四轮均到位且无堵转。 */
+    uint8_t acks;             /* 电机1～4对应bit0～3，15表示四轮均回复速度ACK。 */
+    uint8_t ready;            /* 四轮新鲜反馈掩码；15不等于地面实际到位。 */
     uint8_t pending;          /* 正在等待回复的电机地址；0 表示无等待。 */
-    uint8_t next_motor;
     uint32_t query_ms;        /* 本次状态请求的发出时间。 */
     uint32_t last_query_ms;
-    uint32_t diagnostic_ms;
-    uint8_t diagnostic_speed;
     uint32_t segment_ms;      /* 当前段开始时间，用于 ACK 超时判断。 */
-    uint32_t generation;      /* 必须与 drive.generation 一致，防止混用运动状态。 */
     uint16_t distance_mm;     /* 已提交的理论距离总和，不是实测行程。 */
     uint16_t completed_roads; /* 本轮已按反馈完整走完的无向道路；部分路段不计入。 */
-    uint8_t imu_mode, turn_only, translation_only;
+    uint8_t imu_mode;         /* 已建立闭环会话，供诊断和中断采样故障检查。 */
+    uint8_t turn_only, translation_only;
+    uint8_t station_enabled, station_phase, scan_turn_stage;
     uint8_t transition_ready; /* 仅本段通过距离/航向/四轮停稳后，可向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
     uint16_t lateral_rpm;
     uint8_t station_align_pending; /* 工位已走到，但尚未完成右侧朝向和停稳确认。 */
-    uint8_t scan_turn_stage;  /* 0正常；1到B转朝二维码；2扫码完成转回路线航向。 */
-    RoadHeading scan_return_heading; /* 到B扫码前的路线航向，扫完转回它。 */
     int8_t travel_sign;       /* 平移方向：+1前/左，-1后/右；行程仍为正数。 */
     uint16_t remaining_mm, action_mm;
     int16_t yaw_zero_cdeg;
     uint16_t turn_rpm;
     HeadingControl heading_control;
-    uint32_t status_ms[4];
     VelocityPhase velocity_phase;
     uint8_t velocity_query_index, velocity_waiting, velocity_sent;
     uint32_t velocity_ms, control_ms, phase_ms, zero_ms, stopped_ms, log_ms;
@@ -151,6 +154,18 @@ typedef struct
     int64_t encoder_start[4];
     int8_t encoder_sign[4];
     int32_t progress_mm;
+    int32_t encoder_offset_mm; /* 同一直行串内已通过的段长；不中断编码器基线。 */
+    uint16_t continuation_mm, blocked_roads;
+    RunLeg road_path[ROAD_MAX_SEGMENTS]; /* 当前道路已完成的车身动作，供反序退回。 */
+    uint8_t road_path_count, return_index, obstacle_phase, obstacle_leg_active, obstacle_node, obstacle_preflight;
+    int32_t forward_mrpm;      /* 直行速度斜坡，0.001RPM；仅在可提交速度批次时推进。 */
+    uint32_t forward_profile_ms, control_dt_ms;
+    int16_t forward_ref_rpm, forward_cmd_rpm, turn_ref_rpm, turn_cmd_rpm;
+    struct {
+        uint32_t sequence, samples, min_ms, max_ms;
+        int32_t min_cdeg, max_cdeg, min_mm, max_mm;
+        uint8_t seen;
+    } heading_window;
     uint8_t pending_command;
     RoadPlan road;            /* structure.h 中取出的当前有向道路参数。 */
 } FullRouteState;
@@ -228,6 +243,9 @@ static void run_status(void);
 static void run_velocity_update(void);
 static void run_begin_alignment(void);
 static int run_velocity_stopped(void);
+static void arm_lock_begin(void);
+static void run_resume_after_station(void);
+static void run_station_update(void);
 /* ===== 2. CAN 接收队列：中断只收报文，全程主循环负责解析 ===== */
 /* CAN IRQ只复制短报文；主循环处理应答，不在IRQ内调用运动函数。 */
 void route_test_can_rx(uint32_t id, uint8_t ide, uint8_t rtr, uint8_t length, const uint8_t *data)
@@ -503,14 +521,10 @@ static void scanner_update(void)
                     scanner.result[--scanner.length] = 0;
                     if (scanner.length) {
                         text("[scan] "); text(scanner.result); text("\r\n"); scanner.results++;
-                        /* 扫码枪读到比赛任务码后直接交给工位状态机；
-                         * 例如 134+123+314+231。 */
-                        {
-                            char task_line[40];
-                            if (scanner.length < sizeof(task_line) - 6u) {
-                                snprintf(task_line, sizeof(task_line), "task %s", scanner.result);
-                                (void)station_command(task_line);
-                            }
+                        if (!run_active && (run.state != RUN_STATION || run.job == 0u)) {
+                            char task_line[sizeof(scanner.result) + 6u];
+                            snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
+                            (void)station_command(task_line);
                         }
                     }
                 }
@@ -712,27 +726,13 @@ static void port_stop(void *user)
     motion_stop((Motion *) user);
 }
 
-/* 原地旋转位置命令。degrees只显示计划角度；0表示原始脉冲试验。 */
-static int port_turn(uint8_t clockwise, uint32_t pulses, uint16_t rpm, uint16_t degrees)
-{
-    if (!motion_start_rotation(&drive, clockwise, pulses, rpm, CAR_MOTION_ACCELERATION, clock_ms))
-        return 0;
-    text("[turn] ");
-    text(clockwise ? "right " : "left ");
-    text("pulses="); number(pulses);
-    text(" rpm="); number(rpm);
-    text(" planned_degrees="); number(degrees);
-    text(" estimate="); number(drive.estimate_ms);
-    text("ms; physical_angle=unconfirmed\r\n");
-    return 1;
-}
-
-/* ===== 5. 完整路线：run A / run C，电机反馈推进 ===== */
+/* ===== 5. 完整路线：runimu A/C，IMU与四轮反馈推进 ===== */
 static void run_status(void)
 {
     static const char *names[] =
     {
-        "IDLE", "PREFLIGHT", "MOVING", "DONE_BY_MOTOR", "STOPPED", "FAULT", "ALIGN"
+        "IDLE", "PREFLIGHT", "MOVING", "DONE_BY_MOTOR", "STOPPED", "FAULT", "ALIGN",
+        "OBSTACLE_STOP", "WAIT_OBSTACLE", "STATION"
     };
     if (run.translation_only) {
         text("[shift closed-loop] ");
@@ -786,6 +786,8 @@ static void run_status(void)
         text(" distance_mm="); signed_number(run.progress_mm);
         text(" station_align_pending="); number(run.station_align_pending);
         text(" completed_roads_mask="); number(run.completed_roads);
+        text(" returning="); number(run.obstacle_phase == 2);
+        text(" blocked_roads_mask="); number(run.blocked_roads);
     }
     text("\r\n");
 }
@@ -848,6 +850,7 @@ static void run_fault(const char *reason)
     else if (can_rx_fault & 2u) reason = "CAN transmit mailbox full; command incomplete";
     else if (can_rx_fault & 1u) reason = "CAN hardware FIFO overrun; feedback lost";
     run_active = 0;
+    if (run.station_enabled) {station_abort();vision_cancel_pick();if (arm_enabled()) {arm_stop();arm_lock.state=3;}}
     run.state = RUN_FAULT;
     nav_stop(&nav);
     pose_set = 0;
@@ -860,119 +863,92 @@ static void run_fault(const char *reason)
     if (run.imu_mode) imu_status();
 }
 
-/* 每个旋转/直行动作都单独检查四轮ACK与到位，不能用旋转估时放行直行。 */
-static int run_submit(MotionParameters parameters, uint8_t clockwise, uint32_t pulses, uint16_t degrees)
+/* 统一计算实际车身动作；预看下一段不能改动当前道路和完成记录。 */
+static int run_resolve_leg(const RoadPlan *road, uint8_t segment, uint8_t edge,
+                           RoadHeading heading, uint16_t completed, RunLeg *leg)
 {
-    int started;
-    uint8_t i;
-    run_clear_rx();
-    if (run_rx_overflow || can_rx_fault) return 0;
-    run.acks = run.ready = run.pending = 0;
-    run.next_motor = 1;
-    memset(run.status_ms, 0, sizeof(run.status_ms));
-    for (i = 0; i < MOTOR_COUNT; i++) {
-        motor_feedback[i].action_status_replies = 0;
-        motor_feedback[i].error_valid = motor_feedback[i].speed_valid = 0;
+    MotionParameters p, body;
+    uint8_t done, returning;
+    if (segment >= road->count || road->count > ROAD_MAX_SEGMENTS) return 0;
+    p = road->segments[segment];
+    if ((unsigned)p.axis > BODY_LEFT || !p.mm) return 0;
+    leg->heading = p.axis == BODY_FORWARD ? (p.mm > 0 ? HEAD_Y_POS : HEAD_Y_NEG)
+                                           : (p.mm > 0 ? HEAD_X_NEG : HEAD_X_POS);
+    leg->axis = BODY_FORWARD;leg->sign = 1;leg->mm = (uint16_t)(p.mm < 0 ? -p.mm : p.mm);
+    done = (completed & (uint16_t)(1u << road->road)) != 0;
+    returning = CAR_RUN_RETURN_LATERAL_ENABLED && CAR_RUN_REVERSE_ENABLED && done
+        && edge == FULL_ROUTE_NODES - 2u && road->from == NODE_B
+        && road->to == full_route_nodes[run.plan][FULL_ROUTE_NODES - 1u]
+        && (road->to == NODE_A || road->to == NODE_C);
+    if ((CAR_RUN_START_LATERAL_ENABLED && !edge && !segment && road->to == NODE_B
+         && (road->from == NODE_A || road->from == NODE_C))
+        || (returning && segment + 1u == road->count)) {
+        if (road_motion_parameters(p, heading, &body) && body.axis == BODY_LEFT) {
+            leg->axis = BODY_LEFT;leg->sign = body.mm > 0 ? 1 : -1;leg->heading = heading;
+            return 1;
+        }
     }
-    run.segment_ms = clock_ms;
-    run.last_query_ms = clock_ms - CAR_RUN_QUERY_INTERVAL_MS;
-    run.diagnostic_ms = clock_ms;
-    run.diagnostic_speed = 0;
-    if (run.turning)
-        started = port_turn(clockwise, pulses, parameters.rpm, degrees);
-    else
-        started = port_start(&drive, parameters, clock_ms);
-    if (!started)
-        return 0;
-    run.generation = drive.generation;
-    if (stop_pending || can_rx_fault) return 0;
-    run.steps++;
-    run.state = RUN_MOVING;
-    if (!run.turning)
-        run.distance_mm += (uint16_t)parameters.mm;
-    run_status();
+    if (returning && !segment && road_motion_parameters(p, run.initial_heading, &body)
+        && body.axis == BODY_FORWARD && body.mm < 0) {
+        leg->heading = run.initial_heading;leg->sign = -1;
+    } else if (CAR_RUN_REVERSE_ENABLED && done
+               && ((unsigned)leg->heading + 4u - (unsigned)heading) % 4u == 2u) {
+        leg->heading = heading;leg->sign = -1;
+    }
     return 1;
 }
 
-static int run_turn_to(RoadHeading target)
+static int run_next_straight(RoadPlan *road, uint8_t *edge, uint8_t *segment,
+                              uint16_t *completed, RunLeg current, RunLeg *next)
 {
-    uint8_t delta = (uint8_t)(((unsigned)target + 4u - (unsigned)run.heading) % 4u);
-    uint8_t clockwise = delta != 1u; /* 相反朝向默认右转180度。 */
-    uint16_t degrees = delta == 2u ? 180u : 90u;
-    uint32_t pulses = clockwise ? turn_cw90 : turn_ccw90;
-    MotionParameters unused = {BODY_FORWARD, 0, CAR_TURN_RPM, CAR_MOTION_ACCELERATION};
-    if (!delta || !pulses)
-        return 0;
-    if (delta == 2u)
-        pulses *= 2u;
-    run.target_heading = target;
-    run.turning = 1;
-    return run_submit(unused, clockwise, pulses, degrees);
+    if (++*segment >= road->count) {
+        uint8_t node = road->to;
+        if (node == full_route_jobs[run.plan][run.job] || *edge + 2u >= FULL_ROUTE_NODES) return 0;
+        *completed |= (uint16_t)(1u << road->road);
+        (*edge)++;*segment = 0;
+        if (!road_plan(full_route_nodes[run.plan][*edge],full_route_nodes[run.plan][*edge + 1u],road)) return 0;
+    }
+    if ((run.blocked_roads & (uint16_t)(1u << road->road))
+        || !run_resolve_leg(road,*segment,*edge,current.heading,*completed,next)) return 0;
+    return next->axis == current.axis && next->sign == current.sign && next->heading == current.heading;
+}
+
+static uint16_t run_straight_remaining(RunLeg current)
+{
+    RoadPlan road = run.road;
+    uint8_t edge = run.edge, segment = run.segment, count;
+    uint16_t completed = run.completed_roads, total = 0;
+    RunLeg next;
+    for (count = 0;count < FULL_ROUTE_NODES * ROAD_MAX_SEGMENTS;count++) {
+        if (!run_next_straight(&road,&edge,&segment,&completed,current,&next)) break;
+        total += next.mm;current = next;
+    }
+    return total;
+}
+
+static void run_segment_log(uint16_t mm)
+{
+    text("[route segment] from="); send_byte((uint8_t)('A' + run.road.from));
+    text(" to="); send_byte((uint8_t)('A' + run.road.to));
+    text(" part="); number(run.segment + 1u);
+    if (run.travel_axis == BODY_LEFT) text(run.travel_sign < 0 ? " travel=RIGHT" : " travel=LEFT");
+    else text(run.travel_sign < 0 ? " travel=BACKWARD" : " travel=FORWARD");
+    text(" distance_mm="); number(mm);
+    text(" target_heading_dec="); number(run.target_heading);
+    text(" road_completed="); number((run.completed_roads & (uint16_t)(1u << run.road.road)) != 0);
+    text(" continue_mm="); number(run.continuation_mm);text("\r\n");
 }
 
 /* 仅在本轮已完整走过的道路上，允许正后方目标省去180度转向。 */
 static int run_segment(void)
 {
-    MotionParameters parameters = run.road.segments[run.segment];
-    RoadHeading target;
-    if ((unsigned)parameters.axis > BODY_LEFT || !parameters.mm)
-        return 0;
-    if (parameters.axis == BODY_FORWARD)
-        target = parameters.mm > 0 ? HEAD_Y_POS : HEAD_Y_NEG;
-    else
-        target = parameters.mm > 0 ? HEAD_X_NEG : HEAD_X_POS;
-    if (run.imu_mode) {
-        uint8_t road_completed = (run.completed_roads & (uint16_t)(1u << run.road.road)) != 0;
-        uint8_t return_road = CAR_RUN_RETURN_LATERAL_ENABLED && CAR_RUN_REVERSE_ENABLED && road_completed
-            && run.edge == FULL_ROUTE_NODES - 2u && run.road.from == NODE_B
-            && run.road.to == full_route_nodes[run.plan][FULL_ROUTE_NODES - 1u]
-            && (run.road.to == NODE_A || run.road.to == NODE_C);
-        MotionParameters body;
-        run.travel_axis = BODY_FORWARD;
-        run.travel_sign = 1;
-        if (CAR_RUN_START_LATERAL_ENABLED && run.edge == 0 && run.segment == 0
-            && run.road.to == NODE_B && (run.road.from == NODE_A || run.road.from == NODE_C)
-            && road_motion_parameters(parameters, run.heading, &body) && body.axis == BODY_LEFT) {
-            run.travel_axis = BODY_LEFT;
-            run.travel_sign = body.mm > 0 ? 1 : -1;
-            target = run.heading;
-        } else if (return_road && run.segment + 1u == run.road.count
-                   && road_motion_parameters(parameters, run.heading, &body) && body.axis == BODY_LEFT) {
-            run.travel_axis = BODY_LEFT;
-            run.travel_sign = body.mm > 0 ? 1 : -1;
-            target = run.heading;
-        } else if (return_road && run.segment == 0
-                   && road_motion_parameters(parameters, run.initial_heading, &body)
-                   && body.axis == BODY_FORWARD && body.mm < 0) {
-            /* 先对齐发车朝向，再沿本轮完整走过的道路后退；末端无需再掉头。 */
-            target = run.initial_heading;
-            run.travel_sign = -1;
-        } else if (CAR_RUN_REVERSE_ENABLED && road_completed
-            && ((unsigned)target + 4u - (unsigned)run.heading) % 4u == 2u) {
-            target = run.heading;
-            run.travel_sign = -1;
-        }
-        run.target_heading = target;
-        run.remaining_mm = (uint16_t)(parameters.mm < 0 ? -parameters.mm : parameters.mm);
-        text("[route segment] from="); send_byte((uint8_t)('A' + run.road.from));
-        text(" to="); send_byte((uint8_t)('A' + run.road.to));
-        text(" part="); number(run.segment + 1u);
-        if (run.travel_axis == BODY_LEFT) text(run.travel_sign < 0 ? " travel=RIGHT" : " travel=LEFT");
-        else text(run.travel_sign < 0 ? " travel=BACKWARD" : " travel=FORWARD");
-        text(" distance_mm="); number(run.remaining_mm);
-        text(" target_heading_dec="); number(run.target_heading);
-        text(" road_completed="); number(road_completed); text("\r\n");
-        run_begin_alignment();
-        return 1;
-    }
-    if (run.heading != target)
-        return run_turn_to(target);
-    run.turning = 0;
-    parameters.axis = BODY_FORWARD;
-    if (parameters.mm < 0)
-        parameters.mm = (int16_t)-parameters.mm;
-    parameters.rpm = CAR_RUN_RPM;
-    return run_submit(parameters, 0, 0, 0);
+    RunLeg leg;
+    if (!run_resolve_leg(&run.road,run.segment,run.edge,run.heading,run.completed_roads,&leg)) return 0;
+    run.travel_axis = leg.axis;run.travel_sign = leg.sign;run.target_heading = leg.heading;
+    run.remaining_mm = leg.mm;run.continuation_mm = run_straight_remaining(leg);
+    run_segment_log(leg.mm);
+    run_begin_alignment();
+    return 1;
 }
 
 static void run_done(void)
@@ -996,8 +972,7 @@ static void run_done(void)
         run_status();
         return;
     }
-    text(run.imu_mode ? "[run done by motor feedback + IMU heading; inspect actual return position]\r\n"
-                      : "[run done by motor feedback; inspect actual return position AND heading]\r\n");
+    text("[run done by motor feedback + IMU heading; inspect actual return position]\r\n");
     run_status();
 }
 
@@ -1011,22 +986,19 @@ static int run_road(void)
     return run_segment();
 }
 
-/* run 命令入口：先停车并清除人工位置确认，进入四轮自检。 */
-static int start_run_mode(uint8_t initial_node, uint8_t imu_mode)
+/* runimu入口：清除人工位置确认，进入IMU和四轮反馈自检。 */
+static int start_run(uint8_t initial_node)
 {
     uint8_t i;
     HeadingSample sample = heading_snapshot();
-    if (run_active || stop_pending || drive.state == MOTION_RUNNING)
+    if (run_active || stop_pending || drive.state == MOTION_RUNNING || run.state == RUN_WAIT_OBSTACLE || run.state == RUN_STATION)
         return 0;
-    if (!imu_mode && (!turn_ccw90 || !turn_cw90 || turn_ccw90 > CAR_TURN_MAX_TEST_PULSES
-        || turn_cw90 > CAR_TURN_MAX_TEST_PULSES))
-    {
-        text("[run rejected: calibrate ccw90 AND cw90 first; defaults=0]\r\n");
-        return 0;
-    }
-    if (imu_mode && !heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS)) {
+    if (!heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS)) {
         text("[runimu rejected: no fresh heading sample]\r\n");
         return 0;
+    }
+    if (station_auto_enabled() && (!arm_ready() || !arm_parked() || arm_lock.state != 2 || arm_platform_slot() != 1)) {
+        text("[runimu rejected: automatic work needs arm on, declared pose/platform slot 1 and parked arm]\r\n");return 0;
     }
     nav_stop(&nav);
     turn_postcheck.active = 0;
@@ -1035,9 +1007,9 @@ static int start_run_mode(uint8_t initial_node, uint8_t imu_mode)
     test_mode = MODE_NAVIGATION;
     memset(&run, 0, sizeof(run));
     run.plan = initial_node == NODE_C;
-    run.imu_mode = imu_mode;
-    run.turn_rpm = imu_mode ? CAR_TURN_CLOSED_LOOP_RPM : CAR_TURN_RPM;
-    run.initial_heading = imu_mode && initial_node == NODE_C ? HEAD_Y_NEG : HEAD_Y_POS;
+    run.imu_mode = 1;run.station_enabled=(uint8_t)station_auto_enabled();
+    run.turn_rpm = CAR_TURN_CLOSED_LOOP_RPM;
+    run.initial_heading = initial_node == NODE_C ? HEAD_Y_NEG : HEAD_Y_POS;
     run.yaw_zero_cdeg = heading_wrap_cdeg((int32_t)sample.yaw_cdeg
         - CAR_MAP_YAW_SIGN * (int32_t)run.initial_heading * 9000);
     imu_uart_fault = 0;
@@ -1047,8 +1019,7 @@ static int start_run_mode(uint8_t initial_node, uint8_t imu_mode)
     run.heading = run.target_heading = run.initial_heading;
     run.state = RUN_PREFLIGHT;
     run.segment_ms = clock_ms;
-    run.next_motor = 1;
-    run.last_query_ms = clock_ms - CAR_RUN_QUERY_INTERVAL_MS;
+    run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     run_clear_rx();
     run_active = 1;
     text("[run route] ");
@@ -1060,18 +1031,11 @@ static int start_run_mode(uint8_t initial_node, uint8_t imu_mode)
     }
     text("; forward rpm=" CAR_STRING_VALUE(CAR_RUN_RPM) "; turn rpm=");
     number(run.turn_rpm);
-    if (imu_mode) {
-        text(initial_node == NODE_C ? "; zone=2 bottom_right; initial heading=-Y toward SCAN"
-                                   : "; zone=1 top_right; initial heading=+Y toward SCAN");
-        text("; start lateral rpm<=" CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; continuous forward/backward; no station action/dwell\r\n");
-    } else text("; initial heading=+Y; turn then forward; no station action/dwell\r\n");
+    text(initial_node == NODE_C ? "; zone=2 bottom_right; initial heading=-Y toward SCAN"
+                               : "; zone=1 top_right; initial heading=+Y toward SCAN");
+    text("; start lateral rpm<=" CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; continuous forward/backward; station_auto per configuration\r\n");
     run_status();
     return 1;
-}
-
-static int start_run(uint8_t initial_node)
-{
-    return start_run_mode(initial_node, 0);
 }
 
 /* 单独定角入口：正值左转、负值右转，相对接到命令时的真实航向。
@@ -1096,8 +1060,7 @@ static int start_heading_turn(int16_t relative_degrees, uint16_t rpm)
         return 0;
     run.state = RUN_PREFLIGHT;
     run.segment_ms = clock_ms;
-    run.next_motor = 1;
-    run.last_query_ms = clock_ms - CAR_RUN_QUERY_INTERVAL_MS;
+    run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     imu_uart_fault = 0;
     memset(motor_feedback, 0, sizeof(motor_feedback));
     invalid_can_replies = rejected_can_frames = 0;
@@ -1126,7 +1089,7 @@ static int start_heading_shift(int16_t mm, uint16_t rpm)
     if (!heading_control_start(&run.heading_control, sample, 0, clock_ms)) return 0;
     run.state = RUN_PREFLIGHT;
     run.segment_ms = clock_ms;
-    run.last_query_ms = clock_ms - CAR_RUN_QUERY_INTERVAL_MS;
+    run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     imu_uart_fault = 0;
     memset(motor_feedback, 0, sizeof(motor_feedback));
     invalid_can_replies = rejected_can_frames = 0;
@@ -1139,26 +1102,6 @@ static int start_heading_shift(int16_t mm, uint16_t rpm)
 /* 四轮到位后推进当前动作；此函数可能提交下一动作或结束全程。 */
 static void run_advance_segment(void);
 static void run_finish_node(void);
-
-static void run_complete_action(void)
-{
-    if (!motion_confirm(&drive, run.generation))
-    {
-        run_fault("completion state mismatch");
-        return;
-    }
-    if (run.turning)
-    {
-        run.heading = run.target_heading;
-        run.turning = 0;
-        if (run.finishing)
-            run_done();
-        else if (!run_segment())
-            run_fault("forward after turn failed");
-        return;
-    }
-    run_advance_segment();
-}
 
 static int run_station_heading(uint8_t node, RoadHeading *heading)
 {
@@ -1179,26 +1122,17 @@ static void run_advance_segment(void)
         if (!run_segment()) run_fault("next segment failed");
         return;
     }
-    if (run.imu_mode)
-        run.completed_roads |= (uint16_t)(1u << run.road.road);
+    run.completed_roads |= (uint16_t)(1u << run.road.road);
+    run.road_path_count = 0;
     run.edge++;
     node = full_route_nodes[run.plan][run.edge];
-    if (run.imu_mode && node == NODE_B && run.job == 0u
-        && node == full_route_jobs[run.plan][run.job]) {
-        /* B 点先转车头正对二维码板，转到并停稳后才进入等待任务码的工位状态。 */
-        run.scan_return_heading = run.heading;
-        run.scan_turn_stage = 1u;
-        run.target_heading = (RoadHeading)CAR_SCAN_HEADING;
-        run.remaining_mm = 0;
-        text("[scan station] rotate to QR target_heading_dec=");
-        number(run.target_heading);
-        text(" from_heading_dec=");
-        number(run.heading);
-        text("\r\n");
-        run_begin_alignment();
-        return;
+    if (run.station_enabled && node == NODE_B && run.job == 0u) {
+        run.scan_turn_stage=1;
+        run.target_heading=(RoadHeading)STN_SCAN_HEADING;run.remaining_mm=0;
+        text("[scan station] align rear scanner to QR before waiting for task\r\n");
+        run_begin_alignment();return;
     }
-    if (run.imu_mode && node == full_route_jobs[run.plan][run.job]
+    if (node == full_route_jobs[run.plan][run.job]
         && run_station_heading(node, &station_heading)) {
         run.station_align_pending = 1;
         run.target_heading = station_heading;
@@ -1221,29 +1155,15 @@ static void run_finish_node(void)
     };
     if (full_route_nodes[run.plan][run.edge] == full_route_jobs[run.plan][run.job])
     {
-        int started = station_start(full_route_nodes[run.plan][run.edge], run.job, clock_ms);
-        if (started < 0)
-        {
-            run_fault("station action refused");
-            return;
-        }
-        if (started > 0)
-        {
-            /* 到站停车，作业完成后由 resume_after_station() 再推进 job 和道路。 */
-            run_active = 0;
-            run.state = RUN_STATION;
-            run_clear_rx();
-            text("[run station] job=");
-            number(run.job);
-            text("/8 station=");
-            text(station_names[run.job]);
-            text("; vehicle held until station work completes\r\n");
-            return;
+        if (run.station_enabled && run.job < 7u) {
+            run_active=0;run.state=RUN_STATION;run.turning=0;run.transition_ready=0;run.station_phase=0;
+            text("[run station] waiting for fresh four-wheel stop; job=");number(run.job);text("\r\n");
+            arm_lock_begin();return;
         }
         run.job++;
         text("[run checkpoint] job=");
         number(run.job);
-        text("/8; no mechanism action at this job\r\n");
+        text("/8; station action skipped\r\n");
         text("[station estimate] node="); send_byte((uint8_t)('A' + full_route_nodes[run.plan][run.edge]));
         text(" station="); text(station_names[run.job - 1u]);
         text("; physical_pose=unconfirmed\r\n");
@@ -1251,15 +1171,9 @@ static void run_finish_node(void)
     if (run.edge == FULL_ROUTE_NODES - 1u)
     {
         run.finishing = 1;
-        if (run.imu_mode) {
-            run.target_heading = run.initial_heading;
-            run.remaining_mm = 0;
-            run_begin_alignment();
-        }
-        else if (run.heading == HEAD_Y_POS)
-            run_done();
-        else if (!run_turn_to(HEAD_Y_POS))
-            run_fault("return heading failed");
+        run.target_heading = run.initial_heading;
+        run.remaining_mm = 0;
+        run_begin_alignment();
         return;
     }
     if (!run_road())
@@ -1267,28 +1181,46 @@ static void run_finish_node(void)
     return;
 }
 
-/* 工位作业完成：先推进任务点，再从当前节点开下一段道路。 */
+
+/* 工位与行驶交接时重新采四轮反馈，不能复用作业前的CPOS/速度缓存。 */
+static void run_station_handoff(void)
+{
+    run_active=1;run.state=RUN_PREFLIGHT;run.segment_ms=clock_ms;
+    run.station_phase=0;run.pending=run.velocity_waiting=run.velocity_sent=0;
+    run.velocity_query_index=0;run.last_query_ms=clock_ms-CAR_VELOCITY_QUERY_MS;
+    run.transition_ready=0;run.zero_ms=run.stopped_ms=0;
+    run_clear_rx();memset(motor_feedback,0,sizeof(motor_feedback));
+}
 static void run_resume_after_station(void)
 {
-    uint8_t node = full_route_nodes[run.plan][run.edge];
-    if (node != full_route_jobs[run.plan][run.job])
-    {
-        run_fault("station node/job mismatch on resume");
-        return;
+    if (full_route_nodes[run.plan][run.edge] != full_route_jobs[run.plan][run.job] || !arm_ready() || !arm_parked()) {
+        run_fault("station completion/parked pose mismatch");return;
     }
-    run.job++;
-    text("[run station] job=");
-    number(run.job);
-    text("/8 complete; resume route from node=");
-    send_byte((uint8_t)('A' + node));
-    text("\r\n");
-    run_active = 1;
-    run.state = RUN_MOVING;
-    run_clear_rx();
-    if (!run_road())
-        run_fault("next road after station failed");
+    run.job++;text("[run station] complete; job=");number(run.job);text("/8; resume after fresh feedback\r\n");
+    run_station_handoff();
 }
-
+static void run_station_update(void)
+{
+    int started;
+    HeadingSample sample=heading_snapshot();
+    if (arm_lock.state==3 || arm_failed() || imu_uart_fault
+        || !heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
+        run_fault("station interlock/arm/IMU fault");return;
+    }
+    if (!run.station_phase) {
+        if (arm_lock.state!=2) return;
+        started=station_start(full_route_nodes[run.plan][run.edge],run.job,clock_ms);
+        if (started<0) {run_fault("station action refused");return;}
+        run.station_phase=1;
+    }
+    station_update(clock_ms);
+    if (station_failed()) {run_fault("station work failed");return;}
+    if (!station_active()) {
+        if (!arm_ready() || !arm_parked()) {run_fault("station ended without parked arm");return;}
+        /* 扫码完成也直接选择下一道路，不再恢复进站前航向后又转回B->E。 */
+        run_resume_after_station();
+    }
+}
 
 static int16_t run_heading_error(HeadingSample sample)
 {
@@ -1396,6 +1328,7 @@ static void arm_lock_fault(const char *reason)
     pose_set = nav.position_confirmed = 0;
     text("[arm interlock fault] "); text(reason);
     text("; chassis stopped; inspect then arm on to recheck\r\n");
+    if (run.station_enabled && run.state==RUN_STATION) run_fault("station chassis interlock failed");
 }
 
 static void arm_lock_begin(void)
@@ -1412,23 +1345,13 @@ static void arm_lock_begin(void)
     text("[arm interlock: waiting for fresh four-wheel zero-speed/status feedback]\r\n");
 }
 
-/* 手臂收在默认位且空闲时，底盘要能正常行驶：这时四轮当然不是零速。
- * 联锁只在手臂真的运动（或正在抢联锁）时才要求四轮静止。 */
-static int arm_lock_chassis_may_drive(void)
-{
-    return arm_lock.state == 2 && arm_parked() && !arm_busy();
-}
-
 /* 独占会话期间持续查询四轮；估时、旧反馈或单轮回复均不能放行。 */
 static void arm_lock_update(void)
 {
     RunCanFrame frame;
     uint8_t i, ready = 1;
     if (!arm_lock.state || arm_lock.state == 3 || stop_pending) return;
-    /* 行进中四轮反馈由 run_velocity_update 独占。两边都从同一个 run_rx
-     * 队列取帧，arm_lock 只认状态/转速帧，会把 7 字节位置应答当无用帧丢掉，
-     * 导致 run 的 CPOS 查询 150ms 超时（velocity feedback reply timeout）。
-     * 运行期间手臂固定在默认位，零速确认对底盘无意义，交给 run 自己判断。 */
+    /* 行驶闭环独占四轮接收队列；机构必须保持已声明的收拢姿态。 */
     if (run_active) return;
 #ifdef NAV_ENTRY_HOST_TEST
     if (entry_host_can_bus_off()) can_rx_fault |= CAN_BUS_OFF_FLAG;
@@ -1448,9 +1371,8 @@ static void arm_lock_update(void)
         arm_lock.seen[i] |= (uint8_t)(1u << kind);
         if ((!kind && (!(motor_feedback[i].status_flags & MOTOR_FLAG_ENABLED)
                          || (motor_feedback[i].status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))))
-            || (kind && motor_feedback[i].speed_rpm != 0 && !arm_lock_chassis_may_drive())) {
-            /* 刹停过程中允许速度下降；手臂在默认位时车辆正常行驶不算故障，
-             * 手臂一动就要求四轮零速。 */
+            || (kind && motor_feedback[i].speed_rpm != 0)) {
+            /* 刹停过程中允许速度下降，但启用后任何非零速度立即中止机构。 */
             if (arm_lock.state == 2 || !kind) {arm_lock_fault("wheel moving/disabled/stalled");return;}
             arm_lock.settling = 0;
         }
@@ -1473,7 +1395,7 @@ static void arm_lock_update(void)
         if (arm_lock.state == 1 && (uint32_t)(clock_ms - arm_lock.started_ms) > ARM_CHASSIS_LOCK_TIMEOUT_MS) {
             arm_lock_fault("four-wheel stop confirmation timeout");return;
         }
-    } else if (!ready && !arm_lock_chassis_may_drive()) {arm_lock_fault("four-wheel feedback stale");return;}
+    } else if (!ready) {arm_lock_fault("four-wheel feedback stale");return;}
     if (!stop_pending && (uint32_t)(clock_ms - arm_lock.poll_ms) >= ARM_POLL_MS) {
         uint8_t wheel = (uint8_t)(arm_lock.query / 2u), kind = arm_lock.query % 2u;
         arm_lock.query = (uint8_t)((arm_lock.query + 1u) % 8u);
@@ -1485,13 +1407,17 @@ static void arm_lock_update(void)
 
 static int arm_serial_command(const char *s)
 {
-    /* "@" 是 arm load3 的别名，必须在进入 arm 会话前就放行。 */
-    if (strcmp(s, "@") && strcmp(s, "arm") && strncmp(s, "arm ", 4) && strncmp(s, "claw ", 5)) return 0;
+    if (strcmp(s,"@") && strcmp(s, "arm") && strncmp(s, "arm ", 4) && strncmp(s, "claw ", 5)) return 0;
     if (!strcmp(s, "arm") || !strcmp(s, "arm status") || !strcmp(s, "claw status")) {
         arm_command(s, clock_ms);
         text("[arm interlock] state="); number(arm_lock.state); text("\r\n");return 1;
     }
-    if (!strcmp(s, "arm stop")) {arm_command(s, clock_ms);return 1;}
+    if (!strcmp(s, "arm stop")) {
+        arm_command(s,clock_ms);
+        if (run.station_enabled && (run_active || run.state==RUN_STATION)) run_fault("operator stopped station arm");
+        return 1;
+    }
+    if (run_active || run.state==RUN_STATION) {text("[arm rejected: route/station owns motion; use ! to stop]\r\n");return 1;}
     if (!strcmp(s, "arm off")) {
         if (arm_enabled() && !arm_parked()) {
             text("[arm rejected: park with arm home before arm off; ! remains emergency stop]\r\n");return 1;
@@ -1592,6 +1518,45 @@ static void run_velocity_query(void)
     Emm_V5_Read_Sys_Params(run.pending, parameters[kind]);
 }
 
+static void run_velocity_log(void);
+
+static int run_save_leg(uint16_t mm)
+{
+    RunLeg *leg;
+    if (!mm) return 1;
+    if (run.road_path_count >= ROAD_MAX_SEGMENTS) return 0;
+    leg = &run.road_path[run.road_path_count++];
+    leg->axis = run.travel_axis;leg->sign = run.travel_sign;
+    leg->heading = run.target_heading;leg->mm = mm;
+    return 1;
+}
+
+static int run_pass_straight(void)
+{
+    RoadPlan next_road = run.road;
+    uint8_t edge = run.edge, segment = run.segment;
+    uint16_t completed = run.completed_roads;
+    RunLeg current, next;
+    current.axis = run.travel_axis;current.sign = run.travel_sign;
+    current.heading = run.target_heading;current.mm = run.action_mm;
+    if (!run_next_straight(&next_road,&edge,&segment,&completed,current,&next)) return 0;
+    /* 先输出旧段的统计，避免同一窗口混入节点两侧的相对里程。 */
+    if (run.heading_window.samples) {run.log_ms = clock_ms - CAR_CONTROL_LOG_MS;run_velocity_log();}
+    if (edge == run.edge) {
+        if (!run_save_leg(run.action_mm)) return 0;
+    } else run.road_path_count = 0;
+    run.encoder_offset_mm += run.action_mm;
+    run.progress_mm -= run.action_mm;
+    run.road = next_road;run.edge = edge;run.segment = segment;run.completed_roads = completed;
+    run.remaining_mm = run.action_mm = next.mm;
+    run.continuation_mm = run_straight_remaining(next);
+    run.steps++;run.distance_mm += next.mm;
+    text("[route pass] node_est=");send_byte((uint8_t)('A' + run.road.from));
+    text("; no stop; physical_pose=unconfirmed\r\n");
+    run_segment_log(next.mm);
+    return 1;
+}
+
 static int run_velocity_distance(void)
 {
     int64_t sum = 0;
@@ -1607,14 +1572,78 @@ static int run_velocity_distance(void)
     }
     run.progress_mm = (int32_t)((float)sum * CAR_POSITION_PULSES_PER_REV
                          / (4.0f * CAR_ENCODER_COUNTS_PER_REV
-                            * (run.travel_axis == BODY_LEFT ? CALIBRATED_PPM_X : CALIBRATED_PPM_Y)));
+                            * (run.travel_axis == BODY_LEFT ? CALIBRATED_PPM_X : CALIBRATED_PPM_Y)))
+                        - run.encoder_offset_mm;
+    while (!run.obstacle_phase && run.continuation_mm && run.action_mm
+           && run.progress_mm >= run.action_mm) {
+        if (!run_pass_straight()) return 0;
+    }
     if (run.progress_mm < -CAR_DISTANCE_OVERRUN_MM
-        || run.progress_mm > run.action_mm + CAR_DISTANCE_OVERRUN_MM) return 0;
+        || (run.obstacle_phase != 1 && run.progress_mm > run.action_mm + CAR_DISTANCE_OVERRUN_MM)) return 0;
     return 1;
+}
+
+/* 以指令减速度和延迟预留计算可停车速度；不是对真实制动距离的测量。 */
+static int16_t run_forward_target(int32_t remaining)
+{
+    float mm_per_rpm_s, delay_rpm, braking_rpm;
+    int32_t speed = remaining * CAR_DISTANCE_KP_X100 / 100;
+    if (remaining <= CAR_DISTANCE_TOLERANCE_MM) return 0;
+    mm_per_rpm_s = CAR_POSITION_PULSES_PER_REV / (60.0f * CALIBRATED_PPM_Y);
+    delay_rpm = CAR_DRIVE_DECEL_RPM_PER_S * (CAR_DRIVE_BRAKE_LOOKAHEAD_MS / 1000.0f);
+    braking_rpm = sqrtf(delay_rpm * delay_rpm
+        + 2.0f * CAR_DRIVE_DECEL_RPM_PER_S * (remaining - CAR_DISTANCE_TOLERANCE_MM) / mm_per_rpm_s) - delay_rpm;
+    if (speed > (int32_t)braking_rpm) speed = (int32_t)braking_rpm;
+    if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
+    if (speed > (run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM))
+        speed = run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM;
+    return (int16_t)(speed * run.travel_sign);
+}
+
+static int16_t run_forward_slew(int16_t desired)
+{
+    uint32_t elapsed = clock_ms - run.forward_profile_ms;
+    int32_t target = (desired < 0 ? -(int32_t)desired : desired) * 1000;
+    uint32_t rate = target > run.forward_mrpm ? CAR_DRIVE_ACCEL_RPM_PER_S : CAR_DRIVE_DECEL_RPM_PER_S;
+    int32_t change;
+    /* 串口输出或ACK等待后不追补大步进；保持单次指令变化量有界。 */
+    if (elapsed > CAR_DRIVE_SLEW_MAX_DT_MS) elapsed = CAR_DRIVE_SLEW_MAX_DT_MS;
+    change = (int32_t)(rate * elapsed);
+    if (target > run.forward_mrpm) {
+        run.forward_mrpm += change;
+        if (run.forward_mrpm > target) run.forward_mrpm = target;
+    } else {
+        run.forward_mrpm -= change;
+        if (run.forward_mrpm < target) run.forward_mrpm = target;
+    }
+    run.forward_profile_ms = clock_ms;
+    return (int16_t)(run.forward_mrpm / 1000 * run.travel_sign);
+}
+
+/* 每个处理到的新IMU样本只记一次；打印窗口清零不重记同一序号。 */
+static void run_heading_window_sample(void)
+{
+    HeadingControl *h = &run.heading_control;
+    if (run.heading_window.seen && run.heading_window.sequence == h->sample_sequence) return;
+    run.heading_window.seen = 1;
+    run.heading_window.sequence = h->sample_sequence;
+    if (!run.heading_window.samples || h->error_cdeg < run.heading_window.min_cdeg) {
+        run.heading_window.min_cdeg = h->error_cdeg;
+        run.heading_window.min_mm = run.progress_mm;
+        run.heading_window.min_ms = h->sample_ms;
+    }
+    if (!run.heading_window.samples || h->error_cdeg > run.heading_window.max_cdeg) {
+        run.heading_window.max_cdeg = h->error_cdeg;
+        run.heading_window.max_mm = run.progress_mm;
+        run.heading_window.max_ms = h->sample_ms;
+    }
+    run.heading_window.samples++;
 }
 
 static void run_velocity_log(void)
 {
+    uint8_t i;
+    uint32_t age = 0;
     if ((uint32_t)(clock_ms - run.log_ms) < CAR_CONTROL_LOG_MS) return;
     run.log_ms = clock_ms;
     text("[control] phase="); number(run.velocity_phase);
@@ -1628,7 +1657,91 @@ static void run_velocity_log(void)
     else text(run.travel_sign < 0 ? " travel=BACKWARD" : " travel=FORWARD");
     text(" ack="); number(run.acks);
     text(" fresh_mask="); number(run.ready);
+    if (run.continuation_mm) {text(" continue_mm=");number(run.continuation_mm);}
+    if (run.travel_axis == BODY_FORWARD && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD)) {
+        text(" t_ms="); number(clock_ms);
+        text(" v_ref="); signed_number(run.forward_ref_rpm);
+        text(" v_cmd="); signed_number(run.forward_cmd_rpm);
+        text(" turn_ref="); signed_number(run.turn_ref_rpm);
+        text(" turn_cmd="); signed_number(run.turn_cmd_rpm);
+        text(" control_dt_ms="); number(run.control_dt_ms);
+        text(" wheel_cmd_rpm=");
+        for (i = 0; i < MOTOR_COUNT; i++) {if (i) text(",");signed_number(run.wheel_rpm[i]);}
+        text(" wheel_rpm_raw=");
+        for (i = 0; i < MOTOR_COUNT; i++) {
+            uint32_t elapsed = clock_ms - motor_feedback[i].speed_ms;
+            if (elapsed > age) age = elapsed;
+            if (i) text(",");
+            signed_number(motor_feedback[i].speed_rpm);
+        }
+        text(" speed_age_max_ms="); number(age);
+    }
+    if ((run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD)
+        && run.heading_window.samples) {
+        /* 紧凑字段减少阻塞串口开销：样本数,min角差/里程/时间,max角差/里程/时间。 */
+        text(" yaw_win="); number(run.heading_window.samples);
+        text(","); signed_number(run.heading_window.min_cdeg);
+        text(","); signed_number(run.heading_window.min_mm);
+        text(","); number(run.heading_window.min_ms);
+        text(","); signed_number(run.heading_window.max_cdeg);
+        text(","); signed_number(run.heading_window.max_mm);
+        text(","); number(run.heading_window.max_ms);
+        run.heading_window.samples = 0;
+    }
     text("\r\n");
+}
+
+static void run_return_wait(void)
+{
+    run_active = 0;run.state = RUN_WAIT_OBSTACLE;
+    run.obstacle_phase = 3;run.turning = 0;run.forward_mrpm = 0;
+    run.pending = 0;run.transition_ready = 0;pose_set = 0;nav.position_confirmed = 0;
+    text("[obstacle return stopped] node_est=");send_byte((uint8_t)('A' + run.obstacle_node));
+    text("; encoder-based; physical_pose=unconfirmed; waiting; no automatic resume\r\n");
+    run_status();
+}
+
+static void run_return_next(void)
+{
+    RunLeg leg;
+    if (!run.return_index) {run_return_wait();return;}
+    leg = run.road_path[--run.return_index];
+    run.travel_axis = leg.axis;run.travel_sign = (int8_t)-leg.sign;
+    run.target_heading = leg.heading;run.remaining_mm = leg.mm;run.continuation_mm = 0;
+    run.lateral_rpm = CAR_OBSTACLE_RETURN_RPM < CAR_LATERAL_MAX_RPM
+                      ? CAR_OBSTACLE_RETURN_RPM : CAR_LATERAL_MAX_RPM;
+    run.station_align_pending = run.finishing = run.transition_ready = 0;
+    run.obstacle_phase = 2;
+    text("[obstacle returning] node_est=");send_byte((uint8_t)('A' + run.obstacle_node));
+    text(" distance_mm=");number(leg.mm);text(" remaining_parts=");number(run.return_index);
+    text(" rpm_limit=" CAR_STRING_VALUE(CAR_OBSTACLE_RETURN_RPM) "; physical_pose=unconfirmed\r\n");
+    run_begin_alignment();
+}
+
+/* obstacle是外部触发入口；此工程没有自动检测障碍物的传感器。 */
+static int run_obstacle_request(void)
+{
+    if (!run_active || !run.imu_mode || run.turn_only || run.translation_only) return 0;
+    if (run.obstacle_phase) {run_fault("obstacle repeated during stop/return; hold position");return 1;}
+    run.obstacle_preflight = run.state == RUN_PREFLIGHT;
+    run.obstacle_leg_active = !run.turning
+        && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD);
+    run.obstacle_node = full_route_nodes[run.plan][run.edge];
+    if (!run.obstacle_preflight && run.road.count && !run.station_align_pending
+        && !run.finishing && run.edge + 1u < FULL_ROUTE_NODES) {
+        run.blocked_roads |= (uint16_t)(1u << run.road.road);
+        run.completed_roads &= (uint16_t)~(1u << run.road.road);
+    }
+    run.obstacle_phase = 1;run.state = RUN_OBSTACLE_STOP;run.phase_ms = clock_ms;
+    /* 障碍停车绕过正常斜坡和尚未收齐的速度ACK；之后以停车后的新反馈确认。 */
+    motion_stop(&drive);
+    if (stop_pending || run_rx_overflow || can_rx_fault) {run_fault("obstacle stop command failed");return 1;}
+    run.velocity_waiting = run.velocity_sent = run.pending = 0;
+    memset(run.wheel_rpm,0,sizeof(run.wheel_rpm));
+    run.zero_ms = clock_ms ? clock_ms : 1u;run.stopped_ms = 0;
+    text("[obstacle stopping] return_node_est=");send_byte((uint8_t)('A' + run.obstacle_node));
+    text("; reverse only after four-wheel stop and fresh feedback\r\n");
+    return 1;
 }
 
 static void run_velocity_update(void)
@@ -1636,6 +1749,7 @@ static void run_velocity_update(void)
     RunCanFrame frame;
     HeadingDecision decision;
     uint8_t i;
+    uint8_t drive_heading, control_due;
     int16_t forward = 0, left = 0, turn = 0;
     HeadingSample sample = heading_snapshot();
     if (imu_uart_fault || !heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS)) {
@@ -1669,10 +1783,26 @@ static void run_velocity_update(void)
         run_fault("missing motor velocity ACK");return;
     }
     if (!run_velocity_feedback_fresh()) {
-        if (run.state != RUN_PREFLIGHT || (uint32_t)(clock_ms - run.segment_ms) > CAR_VELOCITY_FEEDBACK_MS) {
+        if ((run.state != RUN_PREFLIGHT && !(run.obstacle_phase == 1 && run.obstacle_preflight))
+            || (uint32_t)(clock_ms - (run.obstacle_phase == 1 ? run.phase_ms : run.segment_ms)) > CAR_VELOCITY_FEEDBACK_MS) {
             run_fault("four-wheel velocity/position/status stale");return;
         }
         run_velocity_query();return;
+    }
+    if (run.obstacle_phase == 1) {
+        if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_HEADING_TIMEOUT_MS) {
+            run_fault("obstacle stop did not converge");return;
+        }
+        if (run.obstacle_leg_active && !run_velocity_distance()) {run_fault("obstacle stop encoder invalid");return;}
+        if (!run_velocity_stopped()) {run_velocity_query();return;}
+        for (i = 0;i < MOTOR_COUNT;i++)
+            if ((uint32_t)(motor_feedback[i].position_ms - run.stopped_ms) > 0x7fffffffu) {run_velocity_query();return;}
+        if (run.obstacle_leg_active) {
+            if (!run_velocity_distance() || run.progress_mm < 0 || run.progress_mm > 65535
+                || !run_save_leg((uint16_t)run.progress_mm)) {run_fault("obstacle return path invalid");return;}
+        }
+        run.return_index = run.road_path_count;
+        run_return_next();return;
     }
     if (run.state == RUN_PREFLIGHT) {
         for (i = 0; i < MOTOR_COUNT; i++)
@@ -1705,15 +1835,20 @@ static void run_velocity_update(void)
             if ((uint32_t)(motor_feedback[i].position_ms - run.baseline_after_ms) > 0x7fffffffu) {run_velocity_query();return;}
         for (i = 0; i < MOTOR_COUNT; i++) run.encoder_start[i] = motor_feedback[i].position;
         memset(run.encoder_sign, 0, sizeof(run.encoder_sign));
-        run.progress_mm = 0;run.action_mm = run.remaining_mm;
+        run.progress_mm = 0;run.action_mm = run.remaining_mm;run.encoder_offset_mm = 0;
+        run.forward_mrpm = 0;run.forward_profile_ms = clock_ms;
+        run.forward_ref_rpm = run.forward_cmd_rpm = run.turn_ref_rpm = run.turn_cmd_rpm = 0;
+        run.control_dt_ms = 0;
+        memset(&run.heading_window, 0, sizeof(run.heading_window));
         run.velocity_phase = VELOCITY_FORWARD;run.state = RUN_MOVING;
         run.phase_ms = clock_ms;run.steps++;run.distance_mm += run.action_mm;
         run_status();
     }
     if (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD) {
         if (!run_velocity_distance()) {run_fault("encoder distance overrun/reversed");return;}
+        run_heading_window_sample();
         if (run.velocity_phase == VELOCITY_FORWARD) {
-            int32_t remaining = (int32_t)run.action_mm - run.progress_mm;
+            int32_t remaining = (int32_t)run.action_mm - run.progress_mm + run.continuation_mm;
             if (run.heading_control.error_cdeg > CAR_HEADING_MAX_DRIFT_CDEG || run.heading_control.error_cdeg < -CAR_HEADING_MAX_DRIFT_CDEG) {
                 run_fault("IMU excessive translation heading error");return;
             }
@@ -1731,9 +1866,7 @@ static void run_velocity_update(void)
                 }
             } else if (remaining <= CAR_DISTANCE_TOLERANCE_MM) run.velocity_phase = VELOCITY_STOP_FORWARD;
             else {
-                int32_t speed = remaining * CAR_DISTANCE_KP_X100 / 100;
-                if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
-                forward = (int16_t)((speed > CAR_RUN_RPM ? CAR_RUN_RPM : speed) * run.travel_sign);
+                forward = run_forward_target(remaining);
             }
         } else if (run.travel_axis == BODY_LEFT
                    && ((int32_t)run.action_mm - run.progress_mm > CAR_DISTANCE_TOLERANCE_MM
@@ -1743,7 +1876,17 @@ static void run_velocity_update(void)
             run.stopped_ms = 0;
         }
     }
-    turn = heading_control_rpm(&run.heading_control, run.turn_rpm);
+    drive_heading = run.travel_axis == BODY_FORWARD
+        && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD);
+    control_due = (uint32_t)(clock_ms - run.control_ms) >= CAR_VELOCITY_CONTROL_MS && !run.velocity_waiting;
+    if (drive_heading) {
+        run.forward_ref_rpm = forward;
+        forward = control_due ? run_forward_slew(forward) : (int16_t)(run.forward_mrpm / 1000 * run.travel_sign);
+        /* 行驶时连续阻尼；前进指令归零后，沿用已验证的停车对齐/停稳判据。 */
+        turn = forward ? heading_control_drive_rpm(&run.heading_control, CAR_HEADING_DRIVE_TRIM_RPM)
+                       : heading_control_rpm(&run.heading_control, run.turn_rpm);
+    } else turn = heading_control_rpm(&run.heading_control, run.turn_rpm);
+    run.turn_ref_rpm = turn;
     if (forward || left) {
         int16_t primary = left ? left : forward;
         int16_t limit = (int16_t)((primary < 0 ? -primary : primary) - 1);
@@ -1758,9 +1901,11 @@ static void run_velocity_update(void)
                      / (1000.0f * CALIBRATED_PPM_X);
         forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
     }
-    if ((uint32_t)(clock_ms - run.control_ms) >= CAR_VELOCITY_CONTROL_MS) {
+    if (control_due) {
+        run.control_dt_ms = clock_ms - run.control_ms;
         run.control_ms = clock_ms;
         if (!run_velocity_send(forward, left, turn)) {run_fault("velocity batch submit failed");return;}
+        run.forward_cmd_rpm = forward;run.turn_cmd_rpm = turn;
     }
     if (!forward && !left && !turn && run_velocity_stopped() && run.heading_control.stable_samples >= CAR_HEADING_STABLE_SAMPLES
         && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS) {
@@ -1779,28 +1924,31 @@ static void run_velocity_update(void)
                 run_finish_node();
                 return;
             }
-            if (run.scan_turn_stage == 1u) {
-                run.scan_turn_stage = 0;
-                run.turning = 0;
-                text("[scan station] QR facing ready; vehicle held for task code\r\n");
-                run_finish_node();
-                return;
-            }
-            if (run.scan_turn_stage == 2u) {
-                run.scan_turn_stage = 0;
-                run.turning = 0;
-                text("[scan station] rotated back to route heading; resume route\r\n");
-                run_resume_after_station();
-                return;
+            if (run.scan_turn_stage==1u) {
+                run.scan_turn_stage=0;run.turning=0;run_finish_node();return;
             }
             if (run.turn_only || run.finishing) {run_done();return;}
             run_begin_baseline();
         } else if (run.velocity_phase == VELOCITY_STOP_FORWARD) {
+            /* 即使不足500ms，也在段末补齐尚未打印的样本。 */
+            if (run.heading_window.samples) {
+                run.log_ms = clock_ms - CAR_CONTROL_LOG_MS;
+                run_velocity_log();
+            }
             text("[control segment done] distance_mm=");signed_number(run.progress_mm);
             text(" error_cdeg=");signed_number(run.heading_control.error_cdeg);text("\r\n");
             run.remaining_mm = 0;
+            if (run.obstacle_phase == 2) {
+                if (run.progress_mm - (int32_t)run.action_mm > CAR_DISTANCE_TOLERANCE_MM) {
+                    run_fault("obstacle return distance outside tolerance");return;
+                }
+                run_return_next();return;
+            }
             if (run.translation_only) run_done();
-            else {run.transition_ready = 1;run_advance_segment();}
+            else {
+                if (!run_save_leg((uint16_t)run.progress_mm)) {run_fault("road return path full");return;}
+                run.transition_ready = 1;run_advance_segment();
+            }
             return;
         }
     }
@@ -1808,22 +1956,11 @@ static void run_velocity_update(void)
     run_velocity_query();
 }
 
-static int run_statuses_fresh(void)
-{
-    uint8_t i;
-    for (i = 0; i < MOTOR_COUNT; i++)
-        if ((uint32_t)(clock_ms - run.status_ms[i]) > CAR_RUN_STATUS_MAX_AGE_MS)
-            return 0;
-    return 1;
-}
-
 /* 每轮先检查故障，再处理CAN回复、等待条件和下一动作。
  * 这里不执行工位作业，也不把理论节点当作真实定位结果。
  */
 static void run_update(void)
 {
-    RunCanFrame frame;
-    MotionState motion_state;
     if (run_rx_overflow)
     {
         run_fault("CAN reply queue overflow");
@@ -1847,102 +1984,7 @@ static void run_update(void)
                                     : "CAN hardware FIFO overrun; feedback lost");
         return;
     }
-    if (run.imu_mode) {run_velocity_update();return;}
-    while (run_read_frame(&frame))
-    {
-        uint8_t motor_address = (uint8_t)(frame.id >> CAN_MOTOR_ADDRESS_SHIFT);
-        uint8_t motor_bit = (uint8_t)(1u << (motor_address - 1u));
-        MotorFeedback *feedback = &motor_feedback[motor_address - 1u];
-        if (!run_record_frame(&frame) || frame.length != CAN_REPLY_BYTES) continue;
-        if (frame.data[0] == MOTOR_POSITION_COMMAND && run.state == RUN_MOVING)
-        {
-            if (frame.data[1] == MOTOR_POSITION_ACK
-                && (uint32_t)(frame.received_ms - run.segment_ms) < CAR_RUN_POSITION_ACK_TIMEOUT_MS)
-                run.acks |= motor_bit;
-            else if (frame.data[1] != MOTOR_ARRIVAL_NOTICE && frame.data[1] != MOTOR_POSITION_ACK)
-            {
-                run_fault("position command rejected");
-                return;
-            }
-        }
-        else if (frame.data[0] == MOTOR_STATUS_COMMAND && motor_address == run.pending
-                 && (uint32_t)(frame.received_ms - run.query_ms) < CAR_RUN_STATUS_TIMEOUT_MS
-                 && (run.state != RUN_MOVING
-                     || (uint32_t)(frame.received_ms - drive.started_ms) < drive.timeout_ms))
-        {
-            uint8_t status_flags = frame.data[1];
-            if (!(status_flags & MOTOR_FLAG_ENABLED)
-                || (status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED)))
-            {
-                run_fault("motor disabled or stalled");
-                return;
-            }
-            if (run.state == RUN_PREFLIGHT || (status_flags & MOTOR_FLAG_ARRIVED))
-                run.ready |= motor_bit;
-            else
-                run.ready &=(uint8_t) ~motor_bit;
-            run.status_ms[motor_address - 1u] = frame.received_ms;
-            feedback->action_status_replies++;
-            run.pending = 0;
-            run.next_motor = (uint8_t)(motor_address % MOTOR_COUNT + 1u);
-        }
-    }
-    if (run.pending && (uint32_t)(clock_ms - run.query_ms) >= CAR_RUN_STATUS_TIMEOUT_MS)
-    {
-        run_fault("motor status reply timeout");
-        return;
-    }
-    if (run.state == RUN_PREFLIGHT && run.ready == ALL_MOTORS_MASK)
-    {
-        if (!run_road())
-            run_fault("invalid road/start failure");
-        return;
-    }
-    if (run.state == RUN_MOVING)
-    {
-        if (drive.generation != run.generation)
-        {
-            run_fault("motion generation changed");
-            return;
-        }
-        if (run.acks != ALL_MOTORS_MASK)
-        {
-            if ((uint32_t)(clock_ms - run.segment_ms) >= CAR_RUN_POSITION_ACK_TIMEOUT_MS)
-                run_fault("missing motor position ACK");
-            return;
-        }
-        /* 估时仅限制首次查询时机；四轮新状态回复才允许推进。 */
-        if ((uint32_t)(clock_ms - drive.started_ms) < drive.estimate_ms)
-            return;
-        if (run.ready == ALL_MOTORS_MASK && !run.pending && run_statuses_fresh())
-        {
-            run_complete_action();
-            return;
-        }
-    }
-    /* 先消费已收到的到位回复，再判断动作时限；不让主循环排队延迟抢先抹掉反馈。 */
-    motion_state = run.state == RUN_MOVING ? motion_update(&drive, clock_ms) : drive.state;
-    if (motion_state == MOTION_FAULT) {
-        run_fault("motion timeout/failure");
-        return;
-    }
-    /* 未到位期间低频读取误差和转速，不等待诊断回复，不写驱动器参数。 */
-    if (run.state == RUN_MOVING && !run.pending && run.ready != ALL_MOTORS_MASK
-        && (uint32_t)(clock_ms - run.diagnostic_ms) >= CAR_RUN_DIAGNOSTIC_INTERVAL_MS) {
-        uint8_t address;
-        for (address = 1; address <= MOTOR_COUNT; address++)
-            if (!(run.ready & (1u << (address - 1u)))) break;
-        run.diagnostic_ms = clock_ms;
-        Emm_V5_Read_Sys_Params(address, run.diagnostic_speed ? S_VEL : S_PERR);
-        run.diagnostic_speed = !run.diagnostic_speed;
-        if (can_rx_fault) {run_fault("CAN diagnostic transmit failed");return;}
-    }
-    if (!run.pending && (uint32_t)(clock_ms - run.last_query_ms) >= CAR_RUN_QUERY_INTERVAL_MS)
-    {
-        run.pending = run.next_motor;
-        run.query_ms = run.last_query_ms = clock_ms;
-        Emm_V5_Read_Sys_Params(run.pending, S_FLAG);
-    }
+    run_velocity_update();
 }
 
 /* ===== 6. 串口命令：状态显示、参数解析、模式选择 ===== */
@@ -1972,11 +2014,7 @@ static void status(void)
         text(names[drive.state]);
         if (test_mode == MODE_ROTATION_TEST)
         {
-            text(" pulses="); number(turn_pulses);
             text(" rpm="); number(turn_rpm);
-            text(" ccw90="); number(turn_ccw90);
-            text(" cw90="); number(turn_cw90);
-            text(" model90_initial="); number(CAR_TURN_MODEL_90_PULSES);
             text(" imu_turn=continuous_velocity");
             text("; RAM only; physical_angle=unconfirmed\r\n");
             return;
@@ -2043,16 +2081,15 @@ static void help(void)
 {
     text("ARM: arm on (wait four-wheel stop) | arm status | arm pose SLIDE LIFT YAW CLAW\r\n");
     text("ARM: arm slide/lift/yaw N | arm open/close | arm pick/place/cycle | arm home\r\n");
-    text("ARM: arm load3 (or @) = home -> slot 1 -> (pick -> place) x3 -> home -> slot 1\r\n");
     text("ARM: arm platform pose DEG | arm platform 1/2/3 | arm stop | arm off (park first)\r\n");
-    text("STATION: task 134+123+314+231 | station (status) | vision pick N | vision status\r\n");
-    text("STATION: full run stops at each work area; raw area waits for vision PICK, then arm load1\r\n");
+    text("ARM: arm load1 | arm load3 (or @) = calibrated loading sequences\r\n");
+    text("STATION: task 134+123+314+231 | station | station auto on/off (default on)\r\n");
+    text("VISION: vision status/ping/range/pick N/clear; UART5 AA55+CRC8\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
-    text("turn = rotation calibration | pulses 1..20000 | rpm 20..300 | tl/tr = ONE raw pulse turn\r\n");
-    text("TURN: ccw90 N / cw90 N = measured 90-degree pulses (0 disables run; RAM only)\r\n");
+    text("turn = IMU closed-loop rotation test | rpm 20..300\r\n");
     text("TURN: left90 / right90 / left180 / right180 = IMU relative angle closed-loop\r\n");
-    text("run A / run C = full route-only test from actual start zone; heading +Y, rpm " CAR_STRING_VALUE(CAR_RUN_RPM) "\r\n");
+    text("runimu obstacle = stop, return by encoder to last tracked node, then wait; no automatic detector\r\n");
     text("test = single-segment calibration | nav = return to navigation (stops)\r\n");
     text("TEST: dist 50..2000 mm | rpm 20..300 | f/b/l/r (body directions)\r\n");
     text("TEST l/r: IMU heading + encoder distance, lateral rpm limited to " CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; fresh IMU required\r\n");
@@ -2060,19 +2097,8 @@ static void help(void)
     text("pose A | heading 0..3 (+Y,-X,-Y,+X) | go H | rpm 20..300 (0=road table)\r\n");
     text("confirm (segment) | node B (actual arrival) | obstacle | return A\r\n");
     text("block 0..11 | unblock 0..11 | progress measured_mm | info | help\r\n");
-    text("! = immediate stop request (no Enter); s/z also stop with an empty line\r\n");
+    text("! = immediate stop request (no Enter); s/z stop after Enter\r\n");
     text("MANUAL TEST: estimates never confirm arrival. No automatic return.\r\n");
-}
-
-/* 标定命令不自动续段；每次先由操作者检查真实停车和角度。 */
-static int start_turn_test(uint8_t clockwise, uint32_t pulses, uint16_t degrees)
-{
-    if (!pulses || stop_pending || drive.state == MOTION_RUNNING)
-        return 0;
-    motion_stop(&drive);
-    run.turn_only = 0;
-    run.state = RUN_IDLE;
-    return port_turn(clockwise, pulses, turn_rpm, degrees);
 }
 
 /* f/b/l/r 只启动一个车身方向的标定段。 */
@@ -2116,32 +2142,12 @@ static int command_turn_test(const char *command_text)
     int accepted = 0;
     if (drive.state == MOTION_RUNNING || stop_pending)
         return 0;
-    if (!strncmp(command_text, "pulses ", 7) && parse_uint(command_text + 7, &value)
-        && value && value <= CAR_TURN_MAX_TEST_PULSES)
-    {
-        turn_pulses = value;
-        accepted = 1;
-    }
-    else if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value)
+    if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value)
         && value >= 20 && value <= 300)
     {
         turn_rpm = value;
         accepted = 1;
     }
-    else if (!strncmp(command_text, "ccw90 ", 6) && parse_uint(command_text + 6, &value)
-        && value <= CAR_TURN_MAX_TEST_PULSES)
-    {
-        turn_ccw90 = value;
-        accepted = 1;
-    }
-    else if (!strncmp(command_text, "cw90 ", 5) && parse_uint(command_text + 5, &value)
-        && value <= CAR_TURN_MAX_TEST_PULSES)
-    {
-        turn_cw90 = value;
-        accepted = 1;
-    }
-    else if (!strcmp(command_text, "tl") || !strcmp(command_text, "tr"))
-        accepted = start_turn_test(command_text[1] == 'r', turn_pulses, 0);
     else if (!strcmp(command_text, "left90") || !strcmp(command_text, "right90"))
         accepted = start_heading_turn(command_text[0] == 'r' ? -90 : 90, turn_rpm);
     else if (!strcmp(command_text, "left180") || !strcmp(command_text, "right180"))
@@ -2210,35 +2216,45 @@ static void command(char *command_text)
     if (!strcmp(command_text, "qr baud 9600") || !strcmp(command_text, "qr baud 115200")) {
         scanner_init(!strcmp(command_text + 8, "9600") ? 9600u : 115200u);return;
     }
-    if (vision_command(command_text, clock_ms))
+    if (!strcmp(command_text,"s") || !strcmp(command_text,"z") || !strcmp(command_text,"S") || !strcmp(command_text,"Z")) {stop_pending=1;return;}
+    if (!strncmp(command_text,"vision",6)) {
+        if ((run_active || run.state==RUN_STATION) && strcmp(command_text,"vision") && strcmp(command_text,"vision status"))
+            text("[vision rejected: route/station owns request]\r\n");
+        else (void)vision_command(command_text,clock_ms);
         return;
-    if (station_command(command_text))
+    }
+    if (!strncmp(command_text,"task ",5) || !strncmp(command_text,"station",7)
+        || (command_text[0]>='1' && command_text[0]<='5')) {
+        if ((run_active || run.state==RUN_STATION) && strcmp(command_text,"station")
+            && !(run.state==RUN_STATION && !run.job && strncmp(command_text,"station auto ",13)))
+            text("[task rejected: route/station active]\r\n");
+        else (void)station_command(command_text);
         return;
+    }
+    if (!strcmp(command_text,"obstacle") && run.state==RUN_STATION) {run_fault("obstacle during station work; no automatic reverse");return;}
     if (arm_serial_command(command_text)) return;
     if (arm_lock.state || arm_enabled()) {
-        /* 手臂使能且停在默认位时允许发车；工位作业会直接驱动已声明的姿态。 */
-        int run_allowed = (!strncmp(command_text, "runimu ", 7) || !strncmp(command_text, "run ", 4))
-            && arm_lock.state == 2 && arm_ready() && arm_parked();
-        if (!run_allowed) {
-            if (!strcmp(command_text, "help")) help();
-            else text("[rejected: arm session owns motion; park arm at home and keep pose declared before a run]\r\n");
+        int allow_run=station_auto_enabled() && arm_lock.state==2 && arm_ready() && arm_parked()
+            && (!strcmp(command_text,"runimu A") || !strcmp(command_text,"runimu C"));
+        int allow_obstacle=!strcmp(command_text,"obstacle") && run_active;
+        if (!allow_run && !allow_obstacle) {
+            if (!strcmp(command_text,"help")) help();
+            else text("[rejected: arm session owns motion; park/declare arm for auto run, or arm off for manual chassis]\r\n");
             return;
         }
     }
+    if (!strcmp(command_text,"obstacle") && run.imu_mode && (run_active || run.state == RUN_WAIT_OBSTACLE)) {
+        accepted = run_obstacle_request();
+        text(accepted ? "[accepted]\r\n" : "[rejected: obstacle return inactive]\r\n");return;
+    }
     if (!strcmp(command_text, "runimu A") || !strcmp(command_text, "runimu C")) {
-        accepted = start_run_mode(command_text[7] == 'C' ? NODE_C : NODE_A, 1);
+        accepted = start_run(command_text[7] == 'C' ? NODE_C : NODE_A);
         text(accepted ? "[accepted]\r\n" : "[rejected: runimu busy/stop pending/heading unavailable]\r\n");
         return;
     }
     if (!strcmp(command_text, "help"))
     {
         help();
-        return;
-    }
-    if (!strcmp(command_text, "run A") || !strcmp(command_text, "run C"))
-    {
-        accepted = start_run(command_text[4] == 'C' ? NODE_C : NODE_A);
-        text(accepted ? "[accepted]\r\n" : "[rejected: run busy/stop pending/turn calibration]\r\n");
         return;
     }
     if (!strcmp(command_text, "test") || !strcmp(command_text, "nav") || !strcmp(command_text, "turn"))
@@ -2258,7 +2274,7 @@ static void command(char *command_text)
         text("[accepted]\r\n");
         status();
         if (test_mode == MODE_ROTATION_TEST)
-            text("tl/tr start ONE raw pulse turn; calibrate physical direction and angle.\r\n");
+            text("left90/right90/left180/right180 start ONE IMU closed-loop turn; fresh IMU required.\r\n");
         else if (test_mode)
             text("f/b/l/r start ONE segment; inspect actual stop before repeating.\r\n");
         else
@@ -2348,7 +2364,7 @@ static void firmware_step(void)
             arm_stop();
             arm_lock.state = 3;
         }
-        station_abort();
+        station_abort();vision_cancel_pick();
         if (run.state != RUN_IDLE)
         {
             run_active = 0;
@@ -2369,12 +2385,11 @@ static void firmware_step(void)
     }
     start_button_update();
     scanner_update();
+    vision_update(clock_ms);
     arm_lock_update();
     if (read_byte(&value))
     {
-        if ((value == 's' || value == 'z' || value == 'S' || value == 'Z') && !line_length)
-            stop_pending = 1;
-        else if (value == '\r' || value == '\n')
+        if (value == '\r' || value == '\n')
         {
             if (line_length)
             {
@@ -2393,35 +2408,12 @@ static void firmware_step(void)
     }
     if (!stop_pending)
     {
-        vision_update(clock_ms);
-        /* 手臂使能后仍要继续推进全程：工位作业需要它，路上它只是保持默认位。 */
-        if (arm_lock.state == 2)
-            arm_update(clock_ms);
-        if (station_active()) {
-            station_update(clock_ms);
-            if (station_failed()) {
-                run_active = 0;
-                run.state = RUN_FAULT;
-                text("[run fault] station work failed; vehicle held; fix cause then restart run\r\n");
-                return;
-            }
-            if (!station_active() && run.state == RUN_STATION) {
-                if (run.job == 0u && run.imu_mode) {
-                    /* 扫码完成：先转回进 B 前的路线航向，再让路线状态机继续。 */
-                    run.scan_turn_stage = 2u;
-                    run.target_heading = run.scan_return_heading;
-                    run.remaining_mm = 0;
-                    run_active = 1;
-                    run_clear_rx();
-                    text("[scan station] task accepted; rotate back to heading_dec=");
-                    number(run.target_heading);
-                    text("\r\n");
-                    run_begin_alignment();
-                } else
-                    run_resume_after_station();
-            }
-            return;
+        if (arm_lock.state==2) arm_update(clock_ms);
+        if (run.state==RUN_STATION) {run_station_update();return;}
+        if (run_active && run.station_enabled && (!arm_ready() || !arm_parked())) {
+            run_fault("arm left parked pose during route");return;
         }
+        if ((arm_lock.state || arm_enabled()) && !run_active) return;
         if (run_active)
             run_update();
         else if (test_mode)
@@ -2429,15 +2421,14 @@ static void firmware_step(void)
             MotionState previous = drive.state;
             MotionState state = motion_update(&drive, clock_ms);
             if (state == MOTION_WAIT_CONFIRM && state != previous)
-                text(test_mode == MODE_ROTATION_TEST ? "[turn estimate elapsed; measure ACTUAL angle; NOT arrival]\r\n"
-                                   : "[test estimate elapsed; measure actual distance; NOT arrival]\r\n");
+                text("[test estimate elapsed; measure actual distance; NOT arrival]\r\n");
             if (state == MOTION_FAULT)
             {
                 motion_stop(&drive);
                 text("[test timeout/failure: stop requested; inspect vehicle before next key]\r\n");
             }
         }
-        else if (!arm_lock.state && !arm_enabled())
+        else
             nav_update(&nav, clock_ms);
     }
     if (test_mode || run.state != RUN_IDLE)
@@ -2480,8 +2471,7 @@ int main(void)
     uart_init();
     clock_init_ms();
     arm_init();
-    vision_init();
-    station_init();
+    vision_init();station_init();
     start_button_init();
     scanner_init(CAR_SCANNER_UART_BAUD);
     heading_sensor_reset(&heading_sensor);
@@ -2502,8 +2492,9 @@ int main(void)
         Emm_V5_En_Control(i, true, false);
         delay_ms(1);
     }
-    text("== table navigation + pulse turn calibration + turn/forward full route ==\r\n");
+    text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+    text("[drive] version=20261018-merge2-r3; direct scan departure + raw preparation timing\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

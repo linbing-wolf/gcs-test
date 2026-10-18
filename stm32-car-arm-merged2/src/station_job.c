@@ -3,6 +3,7 @@
 #include "arm_control.h"
 #include "arm_config.h"
 #include "vision_link.h"
+#include "road_map.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -33,6 +34,7 @@ static StationStep program[STN_STEP_MAX];
 static uint8_t task_colors[2][3]; /* 第一批、第二批的颜色，按抓取顺序。 */
 static uint8_t task_rings[2][3];  /* 粗加工区目标环号，按车上第 1/2/3 块。 */
 static uint8_t task_ready;
+static uint8_t automatic = 1;
 
 static void stn_text(const char *s) { arm_output(s); }
 
@@ -41,6 +43,7 @@ static void stn_fault(const char *reason)
     strncpy(stn.reason, reason, sizeof(stn.reason) - 1u);
     stn.reason[sizeof(stn.reason) - 1u] = 0;
     stn.phase = ST_FAULT;
+    arm_stop();vision_cancel_pick();
     stn_text("[station fault] ");
     stn_text(stn.reason);
     stn_text("; vehicle held, inspect before retry\r\n");
@@ -48,23 +51,19 @@ static void stn_fault(const char *reason)
 
 static int push(uint8_t kind, int value)
 {
-    if (stn.count >= STN_STEP_MAX) return 0;
+    if (stn.count >= STN_STEP_MAX) {stn_fault("station program too large");return 0;}
     program[stn.count].kind = kind;
     program[stn.count].value = (int16_t)value;
     stn.count++;
     return 1;
 }
 
+/* 编排时的实际姿态只代表第一步，不能据此省掉后续步骤的目标。 */
 static void push_move_to(int slide, int lift, float yaw_tenths)
 {
-    int now_slide, now_lift;
-    float now_yaw, now_claw;
-    arm_pose_now(&now_slide, &now_lift, &now_yaw, &now_claw);
-    /* 顺序固定：先转向，再伸齿条，最后下降，避免扫到台面。 */
-    if ((int)(now_yaw * 10.0f + (now_yaw < 0 ? -0.5f : 0.5f)) != (int)yaw_tenths)
-        push(SS_YAW, (int)yaw_tenths);
-    if (now_slide != slide) push(SS_SLIDE, slide);
-    if (now_lift != lift) push(SS_LIFT, lift);
+    push(SS_YAW,(int)yaw_tenths);
+    push(SS_SLIDE,slide);
+    push(SS_LIFT,lift);
 }
 /* 把“十分之一度”的整数格式化成可再被串口解析的角度。
  * 不能直接用 value/10：负数会被截断成 0 并丢掉符号。 */
@@ -118,6 +117,17 @@ static void push_grip_at(const StationPose *pose)
 static int build_raw(void)
 {
     uint8_t i;
+    int slide, lift;
+    float claw;
+    arm_pose_now(&slide, &lift, NULL, &claw);
+    /* 仅首块预定位可以按此刻已声明的姿态省略无变化目标；
+     * 不能用这份起始姿态省略后续load1或离站收拢中的动作。 */
+    if (lift != ARM_LIFT_HOME_MM) push(SS_LIFT, ARM_LIFT_HOME_MM);
+    if (slide != ARM_SLIDE_HOME_MM) push(SS_SLIDE, ARM_SLIDE_HOME_MM);
+    /* 云台步骤始终保留双轴新反馈预检及完整插值，完成后才允许视觉请求。
+     * 后续load1结束也会等云台回抓取角、载物台换位完成，才请求下一块。 */
+    push(SS_YAW, (int)(ARM_PICK_YAW_DEG * 10.0f));
+    if (claw != ARM_CLAW_OPEN_DEG) push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
     for (i = 0; i < 3u; i++) {
         if (!task_colors[stn.batch][i]) {
             stn_fault("task colors incomplete; send task 123 or task 134123314231");
@@ -131,7 +141,7 @@ static int build_raw(void)
 static int build_rough(void)
 {
     uint8_t i;
-    if (!STN_ROUGH_PLACE_READY) {
+    if (!STN_ROUGH_PLACE_READY || !STN_PLATFORM_TAKE_READY) {
         stn_fault("rough-process poses not calibrated (station_config.h)");
         return 0;
     }
@@ -142,8 +152,8 @@ static int build_rough(void)
     /* 车上第 1/2/3 块分别放到任务码指定的环位。 */
     for (i = 0; i < 3u; i++) {
         uint8_t ring = task_rings[stn.batch][i];
-        if (ring < 1u || ring > 3u) {
-            stn_fault("rough ring in task code must be 1..3");
+        if (ring < 1u || ring > 5u) {
+            stn_fault("rough ring in task code must be 1..5");
             return 0;
         }
         push_take_from_platform();
@@ -159,7 +169,7 @@ static int build_rough(void)
 static int build_storage(void)
 {
     uint8_t i;
-    if (!STN_STORAGE_PLACE_READY) {
+    if (!STN_STORAGE_PLACE_READY || !STN_PLATFORM_TAKE_READY) {
         stn_fault("storage poses not calibrated (station_config.h)");
         return 0;
     }
@@ -182,8 +192,9 @@ static uint8_t batch_of_job(uint8_t job)
 
 int station_start(uint8_t node, uint8_t job, uint32_t now)
 {
-    (void)node;
+    static const uint8_t nodes[8] = {NODE_B,NODE_F,NODE_D,NODE_H,NODE_F,NODE_D,NODE_H,255};
     if (stn.phase == ST_RUN) return -1;
+    if (job > 7u || (job < 7u && node != nodes[job])) {stn_fault("station node/job mismatch");return -1;}
     stn.phase = ST_RUN;
     stn.job = job;
     stn.batch = batch_of_job(job);
@@ -210,7 +221,7 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
         stn_fault("task code not set; raw/rough work needs colors and ring numbers");
         return -1;
     }
-    if (!arm_ready()) {
+    if (!arm_ready() || !arm_platform_slot()) {
         stn_fault("arm on + arm pose + arm platform pose 20 must be done before run");
         return -1;
     }
@@ -223,6 +234,20 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
     } else {
         stn_fault("unknown station job");
         return -1;
+    }
+    push_retreat_home();
+    if (stn.phase == ST_FAULT) return -1;
+    {
+        unsigned i;
+        for (i=0;i<stn.count;i++) {
+            int value=program[i].value;
+            if ((program[i].kind==SS_SLIDE && (value<ARM_SLIDE_MIN_MM || value>ARM_SLIDE_MAX_MM))
+                || (program[i].kind==SS_LIFT && (value<ARM_LIFT_MIN_MM || value>ARM_LIFT_MAX_MM))
+                || (program[i].kind==SS_YAW && (value<ARM_YAW_MIN_DEG*10 || value>ARM_YAW_MAX_DEG*10))
+                || (program[i].kind==SS_CLAW && (value<ARM_CLAW_MIN_DEG*10 || value>ARM_CLAW_MAX_DEG*10))) {
+                stn_fault("station pose outside configured travel");return -1;
+            }
+        }
     }
     stn.step_ms = now;
     stn_text("[station] program built; steps=");
@@ -259,7 +284,7 @@ static int issue_step(uint32_t now)
     case SS_YAW:
         format_tenths(line, sizeof(line), (int)s->value);
         {
-            char command[32];
+            char command[64];
             snprintf(command, sizeof(command), "arm yaw %s", line);
             ok = arm_command(command, now);
         }
@@ -267,7 +292,7 @@ static int issue_step(uint32_t now)
     case SS_CLAW:
         format_tenths(line, sizeof(line), (int)s->value);
         {
-            char command[32];
+            char command[64];
             snprintf(command, sizeof(command), "claw angle %s", line);
             ok = arm_command(command, now);
         }
@@ -282,7 +307,8 @@ static int issue_step(uint32_t now)
         ok = 0;
         break;
     }
-    if (!ok) {
+    /* arm_command返回已处理，并不保证接受动作；每个工位动作都应进入busy。 */
+    if (!ok || !arm_busy() || arm_failed()) {
         stn_fault("arm rejected a station step; check pose/platform declaration");
         return 0;
     }
@@ -305,7 +331,7 @@ void station_update(uint32_t now)
     const StationStep *s;
     if (stn.phase != ST_RUN) return;
     if (stn.count == 0u) {
-        /* 扫码工位没有机构步骤，只等任务码；收到后由主程序转回路线航向。 */
+        /* 扫码工位没有机构步骤；收到任务码后重新采四轮反馈并衔接下一道路。 */
         if (!task_ready) {
             if ((uint32_t)(now - stn.step_ms) >= 5000u) {
                 stn.step_ms = now;
@@ -317,7 +343,7 @@ void station_update(uint32_t now)
         stn_text("[scan station] task accepted; no mechanism action\r\n");
         return;
     }
-    if (arm_failed()) {
+    if (arm_failed() || !arm_enabled() || !arm_pose_known()) {
         stn_fault("arm reported a fault during station work");
         return;
     }
@@ -337,6 +363,7 @@ void station_update(uint32_t now)
             step_finished();
             return;
         }
+        if (state == VISION_PICK_FAULT) {stn_fault("vision UART/frame transport fault");return;}
         if (state == VISION_PICK_TIMEOUT) {
             if (stn.retries < STN_RETRY_MAX) {
                 stn.retries++;
@@ -364,74 +391,47 @@ void station_update(uint32_t now)
 
 int station_active(void) { return stn.phase == ST_RUN; }
 int station_failed(void) { return stn.phase == ST_FAULT; }
-void station_abort(void) { stn.phase = ST_IDLE; stn.cursor = stn.count = 0; }
+void station_abort(void) { if(stn.phase!=ST_FAULT)stn.phase = ST_IDLE; stn.cursor = stn.count = 0;vision_cancel_pick(); }
 
 void station_init(void)
 {
     memset(&stn, 0, sizeof(stn));
     memset(task_colors, 0, sizeof(task_colors));
-    task_ready = 0;
+    memset(task_rings, 0, sizeof(task_rings));
+    task_ready = 0;automatic = 1;
 }
 
 static int parse_task(const char *s)
 {
-    uint8_t digits[12], n = 0, groups = 0, position = 0, separators = 0, i;
+    uint8_t digits[12], colors[2][3]={{0}}, rings[2][3]={{1,2,3},{1,2,3}};
+    uint8_t n=0, separators=0, i;
     while (*s) {
-        if (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') {
-            s++;
-            continue;
+        if (*s==' ' || *s=='\t' || *s=='\r' || *s=='\n') {s++;continue;}
+        if (*s=='+') {
+            if (n != (uint8_t)((separators+1u)*3u) || separators>=3u) return 0;
+            separators++;s++;continue;
         }
-        if (*s == '+') {
-            if (position != 3u || groups >= 3u || n >= 12u) return 0;
-            groups++;
-            position = 0;
-            separators++;
-            s++;
-            continue;
-        }
-        if (*s < '1' || *s > '4' || n >= 12u || position >= 3u) return 0;
-        digits[n++] = (uint8_t)(*s - '0');
-        position++;
-        /* 没有加号时按每三位自动分组；有加号时由上面的分支切组。 */
-        if (position == 3u && separators == 0u && n < 12u) position = 0;
-        s++;
+        if (*s<'1' || *s>'5' || n>=12u) return 0;
+        digits[n++]=(uint8_t)(*s++-'0');
     }
-    if (n == 3u && separators == 0u) { /* task 123：只给第一批三个颜色。 */
-        for (i = 0; i < 3u; i++)
-            if (digits[i] < 1u || digits[i] > 4u) return 0;
-        for (i = 0; i < 3u; i++) task_colors[0][i] = digits[i];
-        task_colors[1][0] = task_colors[1][1] = task_colors[1][2] = 0;
-        for (i = 0; i < 3u; i++) {
-            task_rings[0][i] = (uint8_t)(i + 1u);
-            task_rings[1][i] = (uint8_t)(i + 1u);
-        }
-        task_ready = 1;
-        return 1;
+    if (n!=3u && n!=12u) return 0;
+    if (separators && (n!=12u || separators!=3u)) return 0;
+    for (i=0;i<3u;i++) {
+        if (digits[i]>4u || (n==12u && digits[6u+i]>4u)) return 0;
+        colors[0][i]=digits[i];
+        if (n==12u) {colors[1][i]=digits[6u+i];rings[0][i]=digits[3u+i];rings[1][i]=digits[9u+i];}
     }
-    /* 比赛任务码是四组三位数：G1 第一批颜色，G2 第一批粗加工环号，
-     * G3 第二批颜色，G4 第二批粗加工环号。允许加号或直接连写。 */
-    if (n != 12u || (separators != 0u && separators != 3u)) return 0;
-    for (i = 0; i < 3u; i++) {
-        if (digits[i] < 1u || digits[i] > 4u || digits[6 + i] < 1u || digits[6 + i] > 4u)
-            return 0;
-        task_colors[0][i] = digits[i];
-        task_colors[1][i] = digits[6 + i];
-        task_rings[0][i] = digits[3 + i];
-        task_rings[1][i] = digits[9 + i];
-        /* 粗加工/暂存区各有 1~5 环；任务码里的 4、5 必须合法。 */
-        if (task_rings[0][i] < 1u || task_rings[0][i] > 5u
-            || task_rings[1][i] < 1u || task_rings[1][i] > 5u)
-            return 0;
-    }
-    task_ready = 1;
-    return 1;
+    /* 全部字段验证后才提交，坏任务码不能局部覆盖已存任务。 */
+    memcpy(task_colors,colors,sizeof(colors));memcpy(task_rings,rings,sizeof(rings));
+    task_ready=1;return 1;
 }
+int station_auto_enabled(void) {return automatic;}
 
 void station_status(void)
 {
     char line[160];
-    snprintf(line, sizeof(line), "[station] phase=%u job=%u batch=%u step=%u/%u\r\n",
-             (unsigned)stn.phase, (unsigned)stn.job, (unsigned)stn.batch,
+    snprintf(line, sizeof(line), "[station] auto=%u phase=%u job=%u batch=%u step=%u/%u\r\n",
+             (unsigned)automatic, (unsigned)stn.phase, (unsigned)stn.job, (unsigned)stn.batch,
              (unsigned)stn.cursor, (unsigned)stn.count);
     stn_text(line);
     snprintf(line, sizeof(line), "[station] batch1 colors=%u%u%u rings=%u%u%u\r\n",
@@ -448,12 +448,18 @@ int station_command(const char *s)
 {
     const char *task;
     if (!strcmp(s, "station")) { station_status(); return 1; }
+    if (!strcmp(s,"station auto on") || !strcmp(s,"station auto off")) {
+        if (station_active()) {stn_text("[station rejected: active]\r\n");return 1;}
+        automatic=(uint8_t)!strcmp(s,"station auto on");
+        stn_text(automatic ? "[station auto enabled]\r\n" : "[station auto disabled: route only]\r\n");return 1;
+    }
     if (!strncmp(s, "task ", 5)) {
         task = s + 5;
     } else if (s[0] >= '1' && s[0] <= '5') {
         /* 串口手输允许省略 task 前缀；扫码仍会拼成 task <内容>。 */
         task = s;
     } else return 0;
+    if (station_active() && stn.count) {stn_text("[task rejected: station work active]\r\n");return 1;}
     if (!parse_task(task)) {
         stn_text("[task rejected: need task 123 or four 3-digit groups; colors 1-4, rings 1-5]\r\n");
         return 1;

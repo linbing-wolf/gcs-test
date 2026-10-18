@@ -940,6 +940,11 @@
               <FilePath>..\src\station_job.c</FilePath>
             </File>
             <File>
+              <FileName>vision_link.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\src\vision_link.c</FilePath>
+            </File>
+            <File>
               <FileName>station_job.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\src\station_job.h</FilePath>
@@ -948,11 +953,6 @@
               <FileName>station_config.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\src\station_config.h</FilePath>
-            </File>
-            <File>
-              <FileName>vision_link.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\src\vision_link.c</FilePath>
             </File>
             <File>
               <FileName>vision_link.h</FileName>

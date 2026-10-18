@@ -1,5 +1,7 @@
 #ifndef STATION_CONFIG_H
 #define STATION_CONFIG_H
+/* B点二维码板位于+X；扫码模块在车尾，车头须朝-X，让车尾朝+X。 */
+#define STN_SCAN_HEADING 1u
 /* 粗加工区 / 暂存区的取放姿态标定表。
  *
  * 这三张表没填之前，自动流程走到对应工位会报
@@ -20,7 +22,9 @@ typedef struct {
 /* ===== 粗加工区 ===== 数组下标 0~4 对应 1~5 号环位。
  * 任务码 G2（第一批）和 G4（第二批）决定车上第 1/2/3 块各放到哪个环位；
  * 放完三块后程序按 1、2、3 号环位顺序抓回车上。 */
+#ifndef STN_ROUGH_PLACE_READY
 #define STN_ROUGH_PLACE_READY   0
+#endif
 static const StationPose stn_rough_place[5] = {
     {0, 0, 0.0f},
     {0, 0, 0.0f},
@@ -30,7 +34,9 @@ static const StationPose stn_rough_place[5] = {
 };
 
 /* ===== 暂存区 ===== 数组下标 0~4 对应 1~5 号环位。 */
+#ifndef STN_STORAGE_PLACE_READY
 #define STN_STORAGE_PLACE_READY 0
+#endif
 static const StationPose stn_storage_place[5] = {
     {0, 0, 0.0f},
     {0, 0, 0.0f},
@@ -41,7 +47,9 @@ static const StationPose stn_storage_place[5] = {
 
 /* 从车上载物台把物块夹起来的姿态，沿用已标定的载物台放置参数即可；
  * 若实测发现爪子下不到杯里，只改这三项。 */
+#ifndef STN_PLATFORM_TAKE_READY
 #define STN_PLATFORM_TAKE_READY 0
+#endif
 #define STN_PLATFORM_TAKE_SLIDE 30
 #define STN_PLATFORM_TAKE_LIFT 110
 #define STN_PLATFORM_TAKE_YAW  254.0f

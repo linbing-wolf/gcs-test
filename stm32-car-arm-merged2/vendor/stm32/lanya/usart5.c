@@ -6,10 +6,6 @@
 #include "LED.h"
 #include "delay.h"
 
-static u8 RxCounter1=0;
-static u8 RxBuffer1[10];
-static u8 RxState1 = 0;	
-static u8 RxFlag1 = 0;
 u16 USART5_RX_STA=0;
 int i;
 char test[10];
@@ -57,9 +53,27 @@ void uart5_init(u32 bound)
 	USART_Cmd(UART5, ENABLE);                     
 }
 
-/* UART5 的接收中断改由 src/vision_link.c 接管（上位机 AA55+CRC8 帧）。
- * 原蓝牙/串口屏 9 字节协议（0x04...0x06）在本合并工程里不再使用，
- * 否则同一中断向量会被两个文件重复定义。 */
+/**
+  ******************************************************************************
+  * @brief  UART5中断服务程序（接收帧格式数据处理）
+  * @note   接收帧格式为：0x04（起始字节1）+ 0x05（起始字节2）+ 数据（6字节）+ 0x06（结束字节）
+  *         共9个字节，其中第1、2字节为帧头，第9字节为帧尾。
+  *         当接收完整帧后，设置RxFlag1为1，用户可在主程序中读取RxBuffer1处理数据。
+  * @param  无
+  * @retval 无
+  ******************************************************************************
+  */
+/* UART5 belongs to the vision protocol; IRQ only queues bytes. */
+extern void vision_receive_byte(uint8_t byte, uint8_t uart_error);
+void UART5_IRQHandler(void)
+{
+    uint32_t status = UART5->SR;
+    if (status & (USART_FLAG_RXNE | USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE | USART_FLAG_PE)) {
+        uint8_t byte = (uint8_t)UART5->DR;
+        vision_receive_byte(byte,(uint8_t)((status & (USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE | USART_FLAG_PE)) != 0));
+    }
+}
+
 void UART5_SendString(char *str) 
 {
 	while (*str != '\0') {

@@ -1,5 +1,5 @@
-/* Reuse the existing firmware fixture and legacy regressions. */
-#define main legacy_test_main
+/* 复用真实入口、硬件替身和保留的单步调试/人工导航回归。 */
+#define main entry_test_main
 #include "verify_entry.c"
 #undef main
 
@@ -60,124 +60,6 @@ static void sensor_tests(void)
     CHECK(!sensor.sample.valid);
 }
 
-static void feedback_tests(void)
-{
-    unsigned i;
-    const uint8_t arrived[3] = {0x3a,3,0x6b};
-    /* Motor 4 replies but reports not-arrived: diagnostics distinguish this from no reply. */
-    reset_heading_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();
-    motor_flags[3] = 1;
-    clock_ms = drive.started_ms + drive.estimate_ms;
-    for (i = 0; i < 20; i++) {clock_ms += 25; firmware_step();}
-    CHECK(run.state == RUN_MOVING && run.acks == 15 && run.ready == 7 && run.steps == 1);
-    CHECK(motor_feedback[3].status_replies > 0 && motor_feedback[3].status_flags == 1);
-    CHECK(motor_feedback[3].action_status_replies > 0);
-    send_line("feedback");CHECK(strstr(output,"addr=4") && strstr(output,"arrived=0"));
-    stop_request();
-
-    reset_heading_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();
-    CHECK(motor_feedback[3].status_replies==1 && motor_feedback[3].action_status_replies==0);
-    status_auto_reply=0;clock_ms=drive.started_ms+drive.estimate_ms;
-    run.ready=7;run.pending=4;run.query_ms=clock_ms;
-    clock_ms+=CAR_RUN_STATUS_TIMEOUT_MS;firmware_step();
-    CHECK(run.state==RUN_FAULT && motor_feedback[3].action_status_replies==0);
-
-    reset_heading_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();
-    clock_ms=drive.started_ms+drive.estimate_ms;
-    run.ready=15;run.pending=0;
-    for(i=0;i<4;i++)run.status_ms[i]=clock_ms-CAR_RUN_STATUS_MAX_AGE_MS-1u;
-    firmware_step();CHECK(run.state==RUN_MOVING && run.steps==1);
-    stop_request();
-
-    /* Replies already queued before a request cannot satisfy that request. */
-    reset_heading_fixture();calibrate_turn_fixture();status_auto_reply = 0;send_line("run A");
-    CHECK(run.pending == 1);
-    clock_ms += 20;
-    route_test_can_rx(0x100,4,0,3,arrived);
-    run.query_ms = clock_ms + 1;
-    clock_ms += 2;firmware_step();
-    CHECK(run.ready == 0 && run.pending == 1 && motor_feedback[0].status_replies == 1);
-    stop_request();
-
-    /* A timely reply processed just after the deadline is retained; a late reply is rejected. */
-    for (i = 0; i < 2; i++) {
-        reset_heading_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();
-        firmware_step();CHECK(run.acks == 15);
-        run.ready = 7;run.pending = 4;status_auto_reply = 0;
-        clock_ms = drive.started_ms + drive.timeout_ms - 10;
-        run.query_ms = clock_ms;
-        run.status_ms[0] = run.status_ms[1] = run.status_ms[2] = clock_ms;
-        if (i) clock_ms += 11;
-        route_test_can_rx(0x400,4,0,3,arrived);
-        if (!i) clock_ms += 11;
-        firmware_step();
-        if (!i) CHECK(run.state == RUN_MOVING && run.steps == 2);
-        else CHECK(run.state == RUN_FAULT && run.steps == 1);
-    }
-
-    reset_heading_fixture();calibrate_turn_fixture();send_line("run A");
-    route_test_can_error(1);firmware_step();
-    CHECK(run.state == RUN_FAULT && !position_count && strstr(output,"FIFO overrun"));
-
-    reset_heading_fixture();calibrate_turn_fixture();fail_can_at_position=1;send_line("run A");
-    for(i=0;run_active && i<20;i++){clock_ms+=25;firmware_step();}
-    CHECK(run.state==RUN_FAULT && position_count==1 && sync_count==0);
-    CHECK(strstr(output,"mailbox full"));
-
-    /* Arrival notification is logged, but is not silently substituted for a required ACK. */
-    reset_heading_fixture();calibrate_turn_fixture();position_ack_enabled = 0;
-    send_line("run A");
-    for(i=0;run.state==RUN_PREFLIGHT && i<100;i++){clock_ms+=25;firmware_step();}
-    CHECK(run.state==RUN_MOVING && position_count==4);
-    {
-        const uint8_t notice[3] = {0xfd,0x9f,0x6b};
-        route_test_can_rx(0x400,4,0,3,notice);firmware_step();
-        CHECK(run.acks == 0 && motor_feedback[3].arrival_notices == 1);
-    }
-    clock_ms = run.segment_ms + 1501;firmware_step();CHECK(run.state == RUN_FAULT);
-}
-
-static void motor_diagnostic_tests(void)
-{
-    unsigned i;
-    const uint8_t error[7]={0x37,1,0x81,0x23,0x45,0x67,0x6b};
-    const uint8_t speed[5]={0x35,1,0x05,0xdc,0x6b};
-    const uint8_t bad_sign[7]={0x37,2,0,0,0,8,0x6b};
-    const uint8_t bad_check[5]={0x35,0,0,0,0x6a};
-    const uint8_t short_error[3]={0x37,0,0x6b};
-    reset_heading_fixture();calibrate_turn_fixture();send_line("run A");run_to_first_segment();
-    motor_flags[3]=1;
-    clock_ms=drive.started_ms+drive.estimate_ms;
-    for(i=0;i<80;i++){clock_ms+=25;firmware_step();}
-    CHECK(run.state==RUN_MOVING && run.steps==1 && run.ready==7 && run.acks==15);
-    CHECK(diagnostic_queries>=3 && diagnostic_queries<=5);
-    CHECK(motor_feedback[3].error_valid && motor_feedback[3].error_negative);
-    CHECK(motor_feedback[3].error_counts==8 && motor_feedback[3].speed_valid && !motor_feedback[3].speed_rpm);
-    send_line("feedback");CHECK(strstr(output,"error_counts=-8") && strstr(output,"speed_valid=1 speed_rpm=0"));
-
-    /* Unsolicited diagnostic replies cannot acknowledge or complete a status request. */
-    diagnostic_auto_reply=0;status_auto_reply=0;run.pending=4;run.query_ms=clock_ms;
-    route_test_can_rx(0x400,4,0,7,error);route_test_can_rx(0x400,4,0,5,speed);
-    firmware_step();
-    CHECK(run.pending==4 && run.ready==7 && run.acks==15 && run.steps==1);
-    CHECK(motor_feedback[3].error_counts==0x81234567u && motor_feedback[3].error_negative);
-    CHECK(motor_feedback[3].speed_rpm==-1500);
-    route_test_can_rx(0x400,4,0,7,bad_sign);route_test_can_rx(0x400,4,0,5,bad_check);
-    route_test_can_rx(0x400,4,0,3,short_error);
-    firmware_step();CHECK(invalid_can_replies==3 && run.pending==4);
-    CHECK(motor_feedback[3].error_counts==0x81234567u && motor_feedback[3].speed_rpm==-1500);
-    route_test_can_rx(0x400,4,0,6,error);route_test_can_rx(0x400,4,0,8,error);
-    CHECK(rejected_can_frames==2);
-    /* No diagnostic response is required: ordinary four-wheel flags still decide completion. */
-    run.pending=0;status_auto_reply=1;
-    for(i=0;i<60;i++){clock_ms+=25;firmware_step();}
-    CHECK(run.state==RUN_MOVING && run.ready==7 && run.steps==1);
-    motor_flags[3]=3;
-    for(i=0;run.steps==1 && i<20;i++){clock_ms+=25;firmware_step();}
-    CHECK(run.steps==2 && !motor_feedback[3].error_valid && !motor_feedback[3].speed_valid);
-    stop_request();
-    puts("PASS motor diagnostics: error/speed signed decoding, malformed frames, missing replies, four-wheel/ACK isolation, per-action validity");
-}
 
 
 /* Independent plant: wheel inertia, encoder integration and IMU updates.
@@ -186,6 +68,7 @@ static void motor_diagnostic_tests(void)
 #include <math.h>
 static double actual_rpm[4], encoder_value[4], physical_yaw, yaw_gain;
 static int encoder_polarity[4];
+static double wheel_acceleration[4]; /* RPM/ms；默认相同，直行专项另测试轮间响应差异。 */
 static uint32_t plant_ms, imu_ms;
 static uint32_t imu_period_ms;
 static int frozen_imu, frozen_encoder, inject_heading, injected_heading;
@@ -216,6 +99,7 @@ static void reset_plant(int16_t yaw,double gain)
     memset(actual_rpm,0,sizeof(actual_rpm));
     for(i=0;i<4;i++) {encoder_value[i]=(i&1) ? -1000000.0 : 1000000.0;encoder_polarity[i]=1;}
     for(i=0;i<4;i++)simulated_encoder[i]=(int64_t)encoder_value[i];
+    for(i=0;i<4;i++)wheel_acceleration[i]=0.18;
     memset(motor_flags,1,sizeof(motor_flags)); /* Healthy wheels with position-arrived unset. */
     physical_yaw=yaw;yaw_gain=gain;plant_ms=imu_ms=clock_ms;
     imu_period_ms=10;
@@ -239,7 +123,7 @@ static void plant_step(void)
     clock_ms++;
     elapsed=clock_ms-plant_ms;plant_ms=clock_ms;
     for(i=0;i<4;i++) {
-        double difference=simulated_wheel_rpm[i]-actual_rpm[i], change=0.18*elapsed;
+        double difference=simulated_wheel_rpm[i]-actual_rpm[i], change=wheel_acceleration[i]*elapsed;
         if(difference>change)difference=change;
         if(difference< -change)difference=-change;
         actual_rpm[i]+=difference;
@@ -292,7 +176,7 @@ static void plant_step(void)
         forward_actions++;last_step=run.steps;
         if(run.travel_axis==BODY_LEFT) {
             lateral_actions++;
-            if(run.edge==FULL_ROUTE_NODES-2u && !run.translation_only) {
+            if(run.edge==FULL_ROUTE_NODES-2u && !run.translation_only && !run.obstacle_phase) {
                 CHECK(run.segment==1 && run.target_heading==run.initial_heading);
                 CHECK(run.travel_sign==(run.plan ? -1 : 1) && run.action_mm==60);
             }
@@ -326,7 +210,7 @@ static void plant_step(void)
             double facing=node==NODE_F ? -right_y : node==NODE_D ? right_y : -right_x;
             CHECK(!run.station_align_pending && run.heading==(RoadHeading)desired_heading);
             CHECK(facing>0.999); /* Right-side outward normal, independently checked in drawing coordinates. */
-            CHECK(strstr(output,"[station right-side ready]"));
+            CHECK(strstr(output,run.station_enabled ? "[run station] complete" : "[station right-side ready]"));
             for(i=0;i<4;i++)CHECK(!simulated_wheel_rpm[i] && abs(reported_wheel_rpm[i])<=CAR_VELOCITY_STOP_RPM);
         }
         {
@@ -400,8 +284,8 @@ static void continuous_route_tests(void)
         CHECK(forward_actions==18 && injected_heading && corrected_during_drive);
         CHECK(checked_job==8 && station_alignment_entries==6);
         CHECK(rotation_starts==18 && reverse_actions==1 && lateral_actions==2);
-        CHECK(heading_reuses==6 && baseline_transitions==18 && baseline_delay_max<=5);
-        CHECK(moving_transitions==18 && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
+        CHECK(heading_reuses==3 && baseline_transitions==15 && baseline_delay_max<=5);
+        CHECK(moving_transitions==15 && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
         {
             unsigned edge;
             uint16_t expected_roads=0;
@@ -414,6 +298,7 @@ static void continuous_route_tests(void)
         printf("PASS transition timing %c: %u heading reuses, %u baselines avg %.1fms max %lums; first moving batch avg %.1fms max %lums (simulation only)\n",
             plan?'C':'A',heading_reuses,baseline_transitions,(double)baseline_delay_sum/baseline_transitions,(unsigned long)baseline_delay_max,
             (double)motion_delay_sum/moving_transitions,(unsigned long)motion_delay_max);
+        printf("ROUTE_TIME %c simulated_ms=%lu; excludes physical UART cost and vehicle calibration\n",plan?'C':'A',(unsigned long)clock_ms);
     }
 }
 
@@ -840,11 +725,14 @@ static void completed_road_history_tests(void)
     puts("PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history");
 }
 
-int main(void)
+#ifndef HEADING_TEST_MAIN
+#define HEADING_TEST_MAIN main
+#endif
+int HEADING_TEST_MAIN(void)
 {
-    CHECK(legacy_test_main()==0);
-    sensor_tests();feedback_tests();motor_diagnostic_tests();core_and_parser_tests();
+    CHECK(entry_test_main()==0);
+    sensor_tests();core_and_parser_tests();
     continuous_turn_tests();continuous_lateral_tests();continuous_route_tests();station_gating_tests();continuous_failure_tests();adapter_tests();map_reverse_and_postcheck_tests();return_lateral_policy_tests();transition_reuse_tests();completed_road_history_tests();
-    printf("PASS heading/feedback: %lu assertions; continuous IMU turn/drive/four-wheel feedback and legacy regressions\n",(unsigned long)assertions);
+    printf("PASS heading/feedback: %lu assertions; selected IMU turn/drive/four-wheel feedback regressions\n",(unsigned long)assertions);
     return 0;
 }

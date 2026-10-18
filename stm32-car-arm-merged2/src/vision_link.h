@@ -11,11 +11,14 @@ enum {
     VISION_PICK_IDLE = 0,
     VISION_PICK_WAITING = 1,
     VISION_PICK_READY = 2,
-    VISION_PICK_TIMEOUT = 3
+    VISION_PICK_TIMEOUT = 3,
+    VISION_PICK_FAULT = 4
 };
 
 void vision_init(void);
 void vision_update(uint32_t now);
+/* UART5中断只提交字节；uart_error非零时丢弃本轮请求，主循环处理故障。 */
+void vision_receive_byte(uint8_t byte, uint8_t uart_error);
 int vision_command(const char *s, uint32_t now);
 
 /* 发 C,<color> 并进入等待；重复调用会重新起算 20 秒超时。 */
