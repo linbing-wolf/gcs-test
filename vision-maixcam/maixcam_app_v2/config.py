@@ -61,6 +61,12 @@ COLOR_CONFIDENCE = 0.7    # 颜色置信度阈值
 # ============================== 识别阈值 ==============================
 MIN_PIXELS       = 300      # 色块最小像素数
 STACK_COLOR_VOTE = False    # F 码垛时是否也做颜色投票（False=只判中心稳定，更快更稳）
+# 码垛选底座：同色多个时取离 ROI 中心最近的；没有同色就回"空环中心"
+STACK_PICK_NEAREST = True
+STACK_RING_R_MIN   = 20     # 找空环时的半径范围（px，640x480 口径）
+STACK_RING_R_MAX   = 140
+STACK_RING_THRESHOLD = 1200 # 霍夫圆累加阈值（比圆盘低，因为环线很细）
+STACK_RING_FALLBACK = True  # 连环都没找到时，退回 ROI 中心（False=回 NONE,F）
 MIN_PIXELS_START = 5000     # 启停区是大面积蓝，用大阈值避免和蓝色物料混淆
 QR_REPEAT        = 3        # 二维码连续 N 次一致才确认
 QR_REGEX         = r"^\d{3}\+\d{3}\+\d{3}\+\d{3}$"   # 15 字符任务码

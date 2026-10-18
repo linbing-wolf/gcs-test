@@ -127,7 +127,12 @@ def dispatch(cmd, arg):
         reply(tasks.task_disc(cam, disp, config.ROI_DISC_TEMP, "E", p=pline, ctl=ctl))
 
     elif cmd == protocol.CMD_STACK:
-        reply(tasks.task_stack(cam, clf, disp, p=pline, ctl=ctl))
+        if arg and not protocol.is_color_code(arg):
+            log("[F] 颜色码非法: %r（只接受 1/2/3/4）" % arg)
+            reply(pack_none("F"))
+        else:
+            reply(tasks.task_stack(cam, clf, disp, p=pline, ctl=ctl,
+                                   color_code=(arg or None)))
 
     elif cmd == protocol.CMD_FORWARD:
         reply(tasks.task_forward(cam, disp, p=pline, ctl=ctl))

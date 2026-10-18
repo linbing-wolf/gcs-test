@@ -61,18 +61,25 @@ class FakeImage:
     road=True 时右侧 ROI（x>=300）返回铺满 ROI 的块，用来模拟「有灰色道路」。
     """
 
-    def __init__(self, blob_code=1, road=False, circle_x=640):
+    def __init__(self, blob_code=1, road=False, circle_x=640, blobs=None,
+                 circles=None):
         self.blob_code = blob_code
         self.road = road
         self.circle_x = circle_x
+        self.blobs = blobs          # [(code,x,y,w,h), ...] 指定多目标
+        self.circles = circles      # [(x,y,r), ...] 指定多个圆
 
     def find_blobs(self, *a, **kw):
         roi = kw.get('roi') or (a[1] if len(a) > 1 else None)
         if self.road and roi and roi[0] >= 300:
             return [FakeBlob(0, roi[0], roi[1], roi[2], roi[3])]
+        if self.blobs:
+            return [FakeBlob(*b) for b in self.blobs]
         return [FakeBlob(self.blob_code, 600, 400, 100, 80)]
 
     def find_circles(self, *a, **kw):
+        if self.circles:
+            return [FakeCircle(*c) for c in self.circles]
         return [FakeCircle(self.circle_x, 480, 100)]
 
     def width(self): return 1280
@@ -87,12 +94,17 @@ class FakeImage:
 
 
 class FakeCam:
-    def __init__(self, code=1, blob_code=None, road=False, circle_x=640):
+    def __init__(self, code=1, blob_code=None, road=False, circle_x=640,
+                 blobs=None, circles=None):
         self.code = blob_code or code
         self.road = road
         self.circle_x = circle_x
+        self.blobs = blobs
+        self.circles = circles
 
-    def read(self): return FakeImage(self.code, self.road, self.circle_x)
+    def read(self):
+        return FakeImage(self.code, self.road, self.circle_x,
+                         self.blobs, self.circles)
     def skip_frames(self, n): pass
 
 
@@ -277,6 +289,21 @@ def main():
     out = frame_str(tasks.task_stack(_FlipCam(1), vision.ColorClassifier(ai=None),
                                      None, p=P_ID))
     check('颜色每帧跳变也能完成', out.startswith('STACK,'), out)
+
+    print('\n== F 码垛：按颜色选底座 ==')
+    clf0 = vision.ColorClassifier(ai=None)
+    out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID, color_code='1'))
+    check('F,1 命中同色底座', out == 'STACK,650,440', out)
+    out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID, color_code='2'))
+    check('F,2 无同色 → 回空环中心', out == 'STACK,640,480', out)
+    out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID))
+    check('F 不带参数 → 兼容旧行为', out.startswith('STACK,'), out)
+
+    # 同色多个：取离 ROI 中心最近的。ROI 中心 (320,240)
+    cam_multi = FakeCam(1, blobs=[(1, 150, 180, 40, 40),   # 中心 (170,200) 距离 ~153
+                                  (1, 460, 280, 40, 40)])  # 中心 (480,300) 距离 ~173
+    out = frame_str(tasks.task_stack(cam_multi, clf0, None, p=P_ID, color_code='1'))
+    check('同色多个 → 取最近', out == 'STACK,170,200', out)
 
     print('\n== 圆盘对齐（MOVE 闭环）==')
     old_settle = config.ALIGN_SETTLE_MS

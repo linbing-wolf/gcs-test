@@ -379,32 +379,52 @@ def task_disc(cam, disp, roi, tag, timeout_ms=config.TASK_TIMEOUT_MS, p=None, ct
 # ======================================================================
 # 任务 F：码垛目标中心 + 固定物料高度
 # ======================================================================
-def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None, ctl=None):
+def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
+               ctl=None, color_code=None):
+    """任务 F：码垛
+
+    F,<颜色码>：找**同色**的底座；同色多个取离 ROI 中心最近的；
+                没有同色底座 → 回"空环中心"（连环都没有则退 ROI 中心）。
+    F（不带参数）：兼容旧行为，取 ROI 内最靠上的色块。
+
+    回复：STACK,x,y（视觉不测高度，高度由下位机按物料/层数自行计算）
+    """
     P = _pipeline(p)
     roi = P.roi(config.ROI_STACK)
-    log("[F] 码垛目标定位")
+    ai = getattr(clf, "ai", None)
+    log("[F] 码垛底座定位（颜色=%s）" % (color_code or "任意"))
     tracker = StabilityTracker(config.STABLE_FRAMES)
     t0 = ticks_ms()
+    src = None
     while not app.need_exit():
         if ctl is not None and not ctl.tick():
             return pack_ready()
         img = cam.read()
         draw_roi(img, roi)
-        it = vision.find_stack_top(clf, img, roi, P.area(config.MIN_PIXELS))
+
+        if color_code:
+            it = vision.find_stack_base(clf, img, roi, color_code, ai)
+            src = it["src"] if it else None
+        else:
+            it = vision.find_stack_top(clf, img, roi, P.area(config.MIN_PIXELS))
+            src = "base" if it else None
+
         vote = bool(getattr(config, "STACK_COLOR_VOTE", False))
         if it:
-            draw_item(img, it, "STACK")
+            draw_item(img, it, "STACK:" + (src or "?"))
             track_item = it if vote else {"cx": it["cx"], "cy": it["cy"]}
         else:
             track_item = None
+
         ok, _, _ = tracker.update(track_item)
         if ok:
             it = it or track_item
             cx, cy = P.smooth("F", *P.point(it["cx"], it["cy"]))
-            log("[F] 码垛中心 (%d,%d)（高度由下位机自算）" % (cx, cy))
+            log("[F] 码垛 %s (%d,%d)" % (src or "?", cx, cy))
             if disp:
                 disp.show(img)
             return pack_stack(cx, cy)
+
         if disp:
             disp.show(img)
         if ticks_ms() - t0 > timeout_ms:

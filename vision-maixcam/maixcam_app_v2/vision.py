@@ -201,6 +201,64 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
     return c.x(), c.y(), c.r()
 
 
+def find_ring_center(img, roi=None,
+                     r_min=config.STACK_RING_R_MIN, r_max=config.STACK_RING_R_MAX,
+                     threshold=config.STACK_RING_THRESHOLD):
+    """找圆环中心（码垛时没有底座，用来回"空环中心"）
+
+    取离 ROI 中心最近的圆。返回 (cx, cy, r) 或 None。
+    """
+    roi = roi if roi else config.ROI_STACK
+    if not roi:
+        return None
+    x, y, w, h = roi
+    cx0, cy0 = x + w / 2.0, y + h / 2.0
+    circles = img.find_circles(roi=roi, threshold=threshold,
+                               x_margin=10, y_margin=10, r_margin=10,
+                               r_min=r_min, r_max=r_max)
+    if not circles:
+        return None
+    c = min(circles, key=lambda c: (c.x() - cx0) ** 2 + (c.y() - cy0) ** 2)
+    return c.x(), c.y(), c.r()
+
+
+def find_stack_base(clf, img, roi=None, color_code=None, ai=None):
+    """码垛底座：按颜色找物料；同色多个取离 ROI 中心最近的；没有就回空环中心
+
+    返回 dict：{"cx","cy","src","code"}
+        src = "base"（找到同色物料）/ "ring"（空环）/ "roi"（兜底 ROI 中心）
+    返回 None 只在"没有底座、也没找到环、且不允许兜底"时出现。
+    """
+    roi = roi if roi else config.ROI_STACK
+    cx0, cy0 = (roi[0] + roi[2] / 2.0, roi[1] + roi[3] / 2.0) if roi else (0, 0)
+
+    if color_code:
+        best = None
+        for it in clf.detect(img, roi, config.MIN_PIXELS):
+            code = clf.resolve_code(img, it, ai)          # 阈值 + AI 判色
+            if code != color_code:
+                continue
+            d = (it["cx"] - cx0) ** 2 + (it["cy"] - cy0) ** 2
+            if best is None or d < best[0]:
+                best = (d, it)
+        if best is not None:
+            it = best[1]
+            return {"cx": it["cx"], "cy": it["cy"], "x": it["x"], "y": it["y"],
+                    "w": it["w"], "h": it["h"], "src": "base", "code": color_code}
+
+    c = find_ring_center(img, roi)
+    if c:
+        cx, cy = int(c[0]), int(c[1])
+        return {"cx": cx, "cy": cy, "x": max(0, cx - 10), "y": max(0, cy - 10),
+                "w": 20, "h": 20, "src": "ring", "code": None}
+
+    if getattr(config, "STACK_RING_FALLBACK", True) and roi:
+        return {"cx": int(cx0), "cy": int(cy0),
+                "x": max(0, int(cx0) - 10), "y": max(0, int(cy0) - 10),
+                "w": 20, "h": 20, "src": "roi", "code": None}
+    return None
+
+
 def find_stack_top(clf, img, roi=None, pixels_threshold=config.MIN_PIXELS):
     """定位码垛目标：暂存区里最上面（y 最小）的那个物料
 
