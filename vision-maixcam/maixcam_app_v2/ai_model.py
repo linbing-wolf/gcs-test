@@ -55,6 +55,12 @@ class AI:
                   % (config.AI_MODEL, self.kind, self.labels))
         except Exception as e:
             print("[AI] 加载失败，退回经典 CV: %s" % e)
+            print("[AI] 需要这三个文件在同一目录，且 .mud 里的文件名与之一致：")
+            print("     %s" % getattr(config, "AI_MODEL", "?"))
+            print("     %s_npu.axmodel / %s_vnpu.axmodel" % (
+                str(getattr(config, "AI_MODEL", "")).rsplit(".", 1)[0],
+                str(getattr(config, "AI_MODEL", "")).rsplit(".", 1)[0]))
+            print("     上传： scp cls11n*.axmodel cls11n.mud root@<板子IP>:/root/models/")
             self.net = None
             self._ready = False
 

@@ -154,6 +154,14 @@ class FrameParser:
         return out
 
 
+def _pin_now(pin):
+    """读取引脚当前的复用功能名（读不到返回空串）"""
+    try:
+        return str(pinmap.get_pin_function(pin))
+    except Exception:
+        return ""
+
+
 class VisionLink:
     """与 STM32 的串口链路：发变长帧 + 收命令帧"""
 
@@ -164,9 +172,18 @@ class VisionLink:
                     ret = pinmap.set_pin_function(pin, func)
                     code = ret if isinstance(ret, bool) else getattr(ret, "code", lambda: -1)()
                     ok = (code == 0) if not isinstance(ret, bool) else ret
-                    print("[自检] pinmap %s -> %s %s" % (pin, func, "OK" if ok else "返回非0(继续)"))
+                    after = _pin_now(pin)
+                    # 判据：设置后引脚"当前功能"是不是目标功能。
+                    # 很多板子对已配置过的引脚会返回非 0，但功能其实已生效。
+                    if after and after == func:
+                        print("[自检] pinmap %s -> %s OK（当前=%s%s）"
+                              % (pin, func, after,
+                                 "" if ok else "，返回码%s 但已生效" % code))
+                    else:
+                        print("[!] pinmap %s -> %s 失败！返回码=%s，当前=%s（UART 可能不通）"
+                              % (pin, func, code, after if after else "读不到"))
                 except Exception as e:
-                    print("[自检] pinmap %s -> %s 异常: %s（继续）" % (pin, func, e))
+                    print("[!] pinmap %s -> %s 异常: %s（继续，但 UART 可能不通）" % (pin, func, e))
         try:
             self.ser = uart.UART(dev, baud)
         except Exception as e:
@@ -264,7 +281,13 @@ def preflight():
         from maix import pinmap as _p
         for pin, func in ((PIN_TX, UART_FUNC_TX), (PIN_RX, UART_FUNC_RX)):
             try:
-                print("[自检] %s 支持: %s" % (pin, _p.get_pin_functions(pin)))
+                now = ""
+                try:
+                    now = _p.get_pin_function(pin)
+                except Exception:
+                    pass
+                print("[自检] %s 支持: %s | 当前: %s"
+                      % (pin, _p.get_pin_functions(pin), now or "?"))
             except Exception as e:
                 print("[自检] 查询 %s 失败: %s" % (pin, e))
     except Exception as e:
