@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "unchangedFunctions": [
+    "static int build_raw(void)",
+    "static int build_storage(void)",
+    "static int parse_task(",
+    "void station_clear_task(",
+    "void station_abort(",
+    "static void push_take_from_platform(",
+    "static void push_place_on_platform(",
+    "static int run_velocity_distance(void)",
+    "static void arm_lock_update(void)",
+    "static int run_velocity_stopped(void)",
+    "static void run_velocity_update(void)",
+    "static int16_t run_forward_slew(",
+    "static int start_heading_shift("
+  ],
+  "storageAndPlatformTakeConfigUnchanged": true,
+  "hardwareAccessed": false
+}

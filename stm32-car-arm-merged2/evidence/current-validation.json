@@ -1,12 +1,12 @@
 {
   "status": "LOCAL_HOST_AND_ARM_BUILD_PASSED_NOT_HARDWARE_VERIFIED",
-  "date": "2026-10-18",
+  "date": "2026-10-19",
   "project": "keil/TableNavigation.uvprojx",
   "chassisBaselineCommit": "9d11dcc1777234704418172646a93b20d696c9ab",
   "upstreamRepository": "https://github.com/linbing-wolf/gcs-test",
   "upstreamCommit": "4b3b5a7bcf2152254744db9649224f958c6a07eb",
   "upstreamSource": "stm32-car-arm-merged2",
-  "scope": "Fix only B scan redundant return turn and unnecessary raw preparation waits; retain rear scan alignment, fresh four-wheel/axis feedback, full servo interpolation, vision behavior and all chassis tuning.",
+  "scope": "仅合入粗加工D：150mm逐环索引、任务码同序放下及抓回、回2号基准；复用当前底盘闭环。原料/暂存/机械参数/任务生命周期保留，未标定保护保持。",
   "originalChassisSourceUnchanged": true,
   "originalChassisArtifacts": "An AXF binary difference was observed during final inspection; original HEX/MAP were unchanged in Git. No artifact was reverted or replaced.",
   "inheritedBytesUnchanged": [
@@ -19,48 +19,51 @@
   ],
   "hostHeading": {
     "passed": true,
-    "report": "evidence/heading-native-20261018T092835952Z/result.json",
+    "report": "evidence/heading-native-20261019T011954061Z/result.json",
     "imuVariants": [
       0,
       1
     ],
     "assertions": [
-      1374109,
-      1376492
+      1542198,
+      1544581
     ],
     "legacyRunRemoved": true,
-    "scope": "Route-only fixtures explicitly use station auto off; all retained chassis/debug/navigation/scanner/CAN and heading/fault suites included"
+    "scope": "host mocks and simulated heading, not physical vehicle"
   },
   "hostArm": {
     "passed": true,
-    "report": "evidence/arm-native-20261018T092835849Z/result.json",
-    "assertions": 74490,
-    "hardwareAccuracyVerified": false
+    "report": "evidence/arm-native-20261019T011954113Z/result.json",
+    "assertions": [
+      83204
+    ],
+    "hardwareAccuracyVerified": false,
+    "scope": "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime"
   },
   "build": {
     "passed": true,
     "compiler": "ARM Compiler 5.06 update 5 build 528",
-    "log": "evidence/merged-keil-20261018T092844859Z/build.log",
     "units": 70,
     "successfulToolExits": 72,
     "errors": 0,
-    "warnings": 32,
-    "warningsScope": "30 inherited vendor warnings; 2 station unreachable statements from READY=0 guards",
-    "verification": "evidence/merged-keil-20261018T092844859Z/build-verification.json"
+    "warnings": 31,
+    "warningsScope": "30 inherited vendor warnings; 1 uncalibrated storage branch unreachable warning",
+    "log": "evidence/merged-keil-20261019T012021348Z/build.log",
+    "verification": "evidence/rough-r10-verification.json"
   },
   "firmware": {
     "passed": true,
-    "loadBytes": 442744,
+    "loadBytes": 444456,
     "start": "0x8000000",
-    "endExclusive": "0x806c178",
+    "endExclusive": "0x806c828",
     "artifacts": {
-      "keil/OBJ/table_navigation.axf": "5f30d01cd81e312206f38ad42a7431e6ecfee9312ce77716e24190800abad691",
-      "keil/OBJ/table_navigation.hex": "546a08bae433d8ff66ee846e87ce3d4ef9d1c8b0b498df66edd8c84af330b3dc",
-      "keil/OBJ/table_navigation.map": "84599a580ebea73024c5c4d02b2b421e3ff4901c19d2d8484d426aff7288dd64"
+      "keil/OBJ/table_navigation.axf": "b0bba24bb7721a54f99692fc052fab767e9bfeb01f087e0e5ee60801c98d2d40",
+      "keil/OBJ/table_navigation.hex": "004eb38d0dbda4ee325265fce94acfd5ab810e16a09e5f56256d6c091a4d4fe7",
+      "keil/OBJ/table_navigation.map": "b69ffabef5413119cc744a8d0b77a7dbc8e43b812e8b10ef9669ddc974ddeaf8"
     }
   },
   "staticStack": {
-    "reportedMaximumBytes": 544,
+    "reportedMaximumBytes": 552,
     "configuredBytes": 1024,
     "includesUnknownIndirectCalls": true,
     "physicalWorstCaseNotMeasured": true
@@ -70,7 +73,7 @@
   "flashed": false,
   "physicalMotionVerified": false,
   "sourceHashes": {
-    "src/station_job.h": "a0c43b148fbcf7794708c07fb606f5b2dd0396387c32f195132bc0f0fc037226",
+    "src/station_job.h": "90439e8ee867a5b59be2c9840462b38b83a19366d8fcf6e2ec17dc12f69b3e19",
     "vendor/stm32/can_ZDT/circle_pid.h": "617a7d21b916279c070d1b453357e6eeb5659219ab2cd6e82b3e300fb6543ca4",
     "vendor/stm32/FWLIB/src/stm32f4xx_crc.c": "bad4ccc4b3d7d4f6a9b357d3730a323db680bc103be6c8211e39fa6c11df2b51",
     "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
@@ -91,7 +94,7 @@
     "lookup/route_table.h": "6e921114a83b36e32e0c91f2d77353bca6ce910069484a4aa0b781af48a63e7c",
     "vendor/stm32/FWLIB/src/stm32f4xx_rcc.c": "9cea47e4c6cc64326af0f11ffd7d94b157a6beaf1b2ac73f9c44914cfa25af0e",
     "vendor/stm32/FWLIB/src/stm32f4xx_cryp.c": "ce191815a97e0d0d301fdbdd7f6ff79d203278cd6dd48622cb5791afd35ff4fc",
-    "src/station_config.h": "4a80975a3c3f3963640d66f153209569e5bd49c43652b6b4bcd96e40323b3704",
+    "src/station_config.h": "9ee48b72f0e1091ced196c92271f4f14591f0e6adf6673ea3caf9c3509acac05",
     "src/motion.h": "6e38de39aea2b96d955f1abbe7999bd3c5425f3346ae6f71dd778817e1f763dc",
     "vendor/stm32/FWLIB/src/stm32f4xx_cryp_des.c": "bf8622262d8671d89a102688f720d269a50e12ed6cf94d411ff15b1409f7e03d",
     "vendor/stm32/FWLIB/inc/stm32f4xx_hash.h": "ea35fb5a09c0c18b553ee8b7274980b644dbb5aaf8f187d262b409c7594a4c59",
@@ -110,7 +113,7 @@
     "src/heading_control.h": "320ed13dbab443778d3a5046259bf1bec874911571cc66545d873b0bc07022b6",
     "vendor/stm32/FWLIB/inc/stm32f4xx_fmc.h": "c2eea75d68629324b264c92743f62265bdb3bc44a5f0b7d680ca59ba3a8f1d01",
     "vendor/stm32/OLED/OLED.h": "846c0f5d3c8a8ef175ffc867653442c6e90869f1f7ea38025e6bdfe78839c2ee",
-    "tools/verify-station-vision.ps1": "05ac8b44243b4cbb9ca68ed2237771f996887ff67c3281be520f906563f53bc4",
+    "tools/verify-station-vision.ps1": "e0304fe5edd54e33ef05e8b18cd26c3e2027048330f085e91ad89769fbc132e9",
     "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
     "vendor/stm32/SYSTEM/Serial.c": "4ce4e8b43dee20b4c545287f6dc61c07f85888629fab97fad61f911c1d186d4a",
     "vendor/stm32/USER/exti.c": "456677943f7938cf81588c56dbabeee83ae4b696484ada53c3506c6302cae41c",
@@ -135,7 +138,7 @@
     "tools/verify-arm-integration.ps1": "42d9a7812852538bcf298599f6b332d712f7164a38085e79ab5753c2f479bd61",
     "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
     "vendor/stm32/FWLIB/inc/stm32f4xx_gpio.h": "c314415c416636b7279e404c83072b91df6c54aa43eca75f6b98b293c79591f1",
-    "src/arm_config.h": "eccc79e5d3a87e35d5a53cbc2e561cb92e907dcc791b4a5b90d1959eb46e6643",
+    "src/arm_config.h": "902cc835902d02a83e38659bf2ebb2a611344c82b2be11f1b4c87052c0f7ad33",
     "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
     "tools/verify-drive.ps1": "558a5312b8b4e9c114ba200748dec8fd34483298316e35b17d0c846232c8c7db",
     "vendor/stm32/USER/system_stm32f4xx.c": "8f9c5fa3cbd601aff50d15134863d052fcaabbd070025c9adf536c4b67d984e0",
@@ -145,7 +148,7 @@
     "vendor/stm32/CORE/core_cmFunc.h": "857d233a67ff1fa6b6c84348e381fe19016a3dda9b4baeb34c411d6d4d5646ce",
     "tools/verify-entry.ps1": "1ee70ff0a8a48db89e5fca2a2f86c7cf697974393847108b7ea8ebb79cf3d500",
     "vendor/stm32/FWLIB/inc/stm32f4xx_dma2d.h": "33c6591f707a25883625784f57d1d66ffda2bd61343fe54d805ed4e0ee25ef17",
-    "src/main_table_nav.c": "6337ce570a7092a4d3909103758abda3b57449f5b9b6b6e1580ce6cce9fab326",
+    "src/main_table_nav.c": "0ede85612627f161060f5df229c8d418d697c78152bce97527c85feb6fff1d00",
     "vendor/stm32/FWLIB/src/stm32f4xx_flash_ramfunc.c": "6a34d9106d45eed148ab735a670f4ccc5a2b248e4aa23d1e3fc95e5368a96642",
     "vendor/stm32/Hardware/servo.h": "a05eb7aa649e1c5c9c551101df9e4cd30c937559fc2cff2b5c8586f063232abb",
     "vendor/stm32/SYSTEM/delay/delay.c": "43f7412735e1584eb46d1256ef5ef537242fa1945f85faea5ac61a7be2417a94",
@@ -160,17 +163,17 @@
     "vendor/stm32/FWLIB/inc/stm32f4xx_dbgmcu.h": "dff7212aa07945e5e2f6d88f629dd5412c05c94ecb3e1d6a9d88dba0bb67fa53",
     "vendor/stm32/FWLIB/src/stm32f4xx_cryp_tdes.c": "45c1bce089ff0b605925eaa1e5dd3c21ef254f962019a2d1c80bebad1628b034",
     "tests/vision_host_io.h": "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
-    "src/car_config.h": "c7fde38a442ec41e84a11ee5b2a8254b745ae670cdebe21dfc2af4c3b22e9ceb",
-    "tests/verify_continuous.c": "184a152382f7c3c80ec2b5d5a5e772b94e07602cadb2196e8c843609855ef53f",
+    "src/car_config.h": "3a9dff6a3e0f57da8529ff688d6f48bf52fbfd4f2c602cb58a3c0aeeea51f9f8",
+    "tests/verify_continuous.c": "ed46a963a6b67095823a4c5f32a15c53cb4618b4d377fc65efd20cf8f8af2da8",
     "vendor/stm32/SYSTEM/sys/sys.c": "ed59cf79fd2f23faa18251b2cd1c7affe11396b7679060fe00c06921cf7c6190",
-    "src/station_job.c": "8f402acc4b3183c6c5af2258c087923b84c24a69ee6f7b17b1edab9e3de1d2c9",
+    "src/station_job.c": "630d06c9f8a76d97cb4a714abb34ecbcfa83a97a087e1b8d65068a4824309715",
     "vendor/stm32/FWLIB/inc/stm32f4xx_rng.h": "86bd80c143bf1c3da3099d70a51f6af669a5cbe03d10443a35a20c5eee695bba",
     "vendor/stm32/can_ZDT/delay.c": "1559ad463e0e060e7dcecc3a48f1fb712bdf1077c7c250db5733c0110bd877ae",
     "vendor/stm32/FWLIB/src/stm32f4xx_wwdg.c": "a38f3d7b1aea679b5b603467c8bedee089d921ba9310d62de1b8a2dfad51f798",
     "vendor/stm32/Hardware/PWM.h": "64061a020ed3cc9f99db524d2846ff8b4a8ab39829ff2c9dd21a35f8ca2f2ac9",
     "vendor/stm32/LED/LED.c": "2cc21f53edbb71d95df7061b45c260f8252f7f1010bc8888a459d1c4d107cf79",
     "vendor/stm32/FWLIB/src/stm32f4xx_iwdg.c": "f9dd7079e0cc9235bc912707f14406ec659991a626b50840c4f27d50ed86104f",
-    "src/vision_link.c": "0b96e534d95ae3be8362d5f58ced6dacc593800c62abfbd309520e1832174d3e",
+    "src/vision_link.c": "3ec1fdabf0a6982ab32c5aaca4728fc76d19d0e01ccaff2f5b1df86950e58db6",
     "vendor/stm32/FWLIB/inc/stm32f4xx_flash.h": "973e8e9bdf4c21598b4af603e3550bd0c08e43cc2c5d52dcd64dae167aaeff1b",
     "vendor/stm32/can_ZDT/board.c": "b1438a7351ce926413dac92a91599e9aba5598f94c96f9b7833370dea504d0eb",
     "vendor/stm32/FWLIB/src/stm32f4xx_hash_sha1.c": "a5617d45582df400c5704e1d31bd1096fc934292d3efadfcf97d522d2cee10a1",
@@ -194,7 +197,7 @@
     "vendor/stm32/lanya/usart5.c": "ad7e8ebdfd41a4f7f2cce7de56376df36d39c472b45043664eba986d27b0a31d",
     "vendor/stm32/CORE/startup_stm32f40_41xxx.s": "5af18ddf41e32e0ceb1fb74888b5233735f7231c1e3f7e2803a2f1c7dc7f3b9b",
     "vendor/stm32/FWLIB/inc/stm32f4xx_exti.h": "1f6912205dadae8102141f8c78e5b853415d7d386aa3da3b74b0b4132cb59222",
-    "src/arm_control.c": "b057fa664ade5cc0d494a5b69af57c457291abc39cd24733f2937f839af4d914",
+    "src/arm_control.c": "d4568534067fa345f44b92866e4d40b270611f5daf91a51c81030e0020886217",
     "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
     "vendor/stm32/FWLIB/inc/stm32f4xx_usart.h": "674acfd48d1d1ed90699b9b06d70dc587d18b5c8e348733aa78c568802431c7b",
     "vendor/stm32/OLED/time_OLED.c": "5c52aeefef574bddbaa8ec083278e2613ad43e56fde24b60d8cac13895d51063",
@@ -206,7 +209,7 @@
     "vendor/stm32/USER/stm32f4xx_it.c": "d0145e11838f611676b7165b3bc3c7cdfdaf8db15f1efe16254e3d7d4576b49e",
     "vendor/stm32/FWLIB/src/stm32f4xx_spi.c": "812d783b2a79cb8b73115525fcf1e145dc3ece63b883d4a6deed11a17a9ecbdb",
     "vendor/stm32/FWLIB/inc/stm32f4xx_crc.h": "d106ad19d7f601dbe8ab8b5243509853794b30ec1fa475bd0468ca6e4b4fc0fd",
-    "tests/verify_heading.c": "ae05235c86f86b971d8f72a6bb3cd0e839fe68c30fc45c74ddbe24a465d95467",
+    "tests/verify_heading.c": "5b6dd387bde5bfd156117df747c4261732c2c8cfe661e6fda8cf14edbff03ae4",
     "vendor/stm32/SYSTEM/usart/usart.h": "b059072afe4067812bd4458a28d7052f5bb33fe6533dbe3aad609e39d5047843",
     "vendor/stm32/FWLIB/src/stm32f4xx_gpio.c": "4079b14a27a65a4aca20d61ea27c3a970cc65c63cbc5ad1049d73f0a565f553e",
     "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
@@ -220,7 +223,7 @@
     "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
     "tools/build-isolated.ps1": "ed49511cadcc123ac43aeb33066e460f66f1fbcc9c47933c77f995d6bcc0f8ad",
     "vendor/stm32/FWLIB/src/stm32f4xx_sdio.c": "bbb503a63b96b920d4dfaed4f028d9c8bd7b1a6ea22b2c4f307ca446233786b7",
-    "tests/verify_station_vision.c": "fddea50463d6d033f77af011adb7c9fd4a2d410b2c75d4078da78803da347c96",
+    "tests/verify_station_vision.c": "baaeba622301df76abde9d7f41656d23f53ecb77814d7af6a42c5ce828a38cf2",
     "vendor/stm32/LED/LED.h": "24c97d4823306c046341e380ee120278447989137956a4f7bc93b5eedf68cd97",
     "vendor/stm32/FWLIB/src/stm32f4xx_dma.c": "a846329f8284019bcaf35fe0bfdbda4e7009d0686810a1120e03bc4455701aae",
     "src/heading_control.c": "0669ef497011638e388744d2cd7040bb3ad7555c268ce65b926b2e58ea0a12ad",
@@ -234,7 +237,7 @@
     "vendor/stm32/FWLIB/src/stm32f4xx_dma2d.c": "0feeb2d0bd1c70f46a2585f2c3c5b9a30cf85e2b03ea8dd50e90497ed5f10197",
     "vendor/stm32/FWLIB/src/stm32f4xx_pwr.c": "0854c84d96615b0d75b7023536b070909e32a85a56381ed5329838b7305216e5",
     "vendor/stm32/Hardware/swith.h": "fce4067b8e21e3bd7c42d97095bbf70512a20f56f0dae84e76b22bacf0a26791",
-    "tests/verify_arm_integration.c": "be8e14b56ea39f997181f2c6680ad60b2aeba5814b65a4d5ba71e2b9cf6a561a",
+    "tests/verify_arm_integration.c": "59bea2ce066377a25573f16bf371d0b3cb356de23f2e2fe8a298123b80258a94",
     "vendor/stm32/FWLIB/inc/misc.h": "e0ba35f92ccefa365b48d5e3aa2ebe9333b6dda3f4c2978f77891d31f202865d",
     "vendor/stm32/FWLIB/inc/stm32f4xx_dma.h": "649bfaf7bd827f570ba516c14d4e5b3ff0972afb8eacd8798a84ded32c32cca6",
     "vendor/stm32/FWLIB/src/stm32f4xx_usart.c": "bb4d18869bd51d4a404425f8e5299cf6c08583add28d2231d2ce1b1d3cbab601",
@@ -255,41 +258,43 @@
     "vendor/stm32/FWLIB/src/stm32f4xx_can.c": "28d3eab6165f153d8da29f0bd68d5a7a057fb85db37c690b70477cedd412d2cd",
     "vendor/stm32/imu/timer.c": "7d2a5bf5945ff4703a6509097854c9ffbe7046d868df8e4946bd4b8f08e38573"
   },
-  "version": "20261018-merge2-r3",
-  "preChangeSnapshot": "evidence/station-handoff-before-20261018T092500839908Z",
-  "priorFirmwareSaved": "evidence/station-handoff-before-20261018T092500839908Z/keil/OBJ",
+  "version": "20261019-merge2-r10",
+  "preChangeSnapshot": "evidence/rough-merge-before-20261019T011210293Z",
+  "priorFirmwareSaved": true,
   "keilUserSettingsPreserved": true,
   "keilUserSettingHashes": {
     "keil/navigation.sct": "22809650d8a4292f6fd68c80126b0f92dbd9e39d49295423097f9441eda7d97a",
     "keil/TableNavigation.uvguix.blue": "9f2f3594e9cfaee00f940f34e47f9efb4b5297d8e3e59c4ac5de498526cfe95c",
     "keil/TableNavigation.uvoptx": "1600618ce9f7c73419d13d1d9de4c9f813384f13153518cb47b337498327f3b1"
   },
-  "uploadedThisRevision": true,
+  "uploadedThisRevision": false,
   "remainingLimitations": [
     "Actual rough/storage/platform-take poses are uncalibrated; default automatic run deliberately stops before D work.",
     "Vision UART5 must match the peer protocol; old UART5 9-byte RX is no longer active. Protocol has no request sequence to identify a delayed same-color reply.",
-    "Rough pickup order remains upstream 1/2/3 and must be physically/rule-checked before enabling calibrated routines.",
     "Physical heading difference of 5-10 degrees, ground-track drift, grip reliability, collision clearances, braking/return accuracy and worst-case stack remain unverified.",
     "CAR_RUN_RPM=3000 retained; actual wheel commands capped at 300 and further limited by slew/braking.",
     "No automatic obstacle sensor; obstacle is external serial trigger. Station-time obstacle stops without automatic reverse.",
     "s/z now require newline so station commands can be parsed; ! remains immediate global stop.",
     "Host READY overrides with placeholder poses only validate state flow and are never used in this ARM firmware.",
-    "Blocking debug UART output can lose unprocessed IMU samples; yaw extrema cover processed samples only."
+    "Blocking debug UART output can lose unprocessed IMU samples; yaw extrema cover processed samples only.",
+    "Rough routine uses task ring order; physical D-to-ring2 baseline, index sign/spacing and grasp pose/platform take still require calibration. No storage stacking merged."
   ],
   "configuredRunRpm": 3000,
   "obstacleReturnRpm": 60,
   "automaticObstacleInputConnected": false,
   "hostContinuous": {
     "passed": true,
-    "report": "evidence/continuous-native-20261018T092835881Z/result.json",
-    "assertions": 2135271,
+    "report": "evidence/continuous-native-20261019T011954128Z/result.json",
+    "assertions": [
+      2154054
+    ],
     "configuredRunRpm": 3000,
     "routeCases": 4,
     "obstacleReturnCases": 16,
-    "scope": "Actual 3000 RPM configuration in explicit drive-only mode; all continuous node passing, return and fault cases retained",
+    "scope": "actual configured RPM; simulated nonstop node passing and obstacle return; no hardware accessed",
     "hardwareAccuracyVerified": false
   },
-  "previousValidation": "evidence/station-handoff-before-20261018T092500839908Z/evidence/current-validation.json",
+  "previousValidation": "evidence/rough-merge-before-20261019T011210293Z/evidence/current-validation.json",
   "legacyRunRemoved": true,
   "rawPulseTurnRemoved": true,
   "removedCommands": [
@@ -307,17 +312,15 @@
   ],
   "hostDrive": {
     "passed": true,
-    "report": "evidence/drive-native-20261018T092835952Z/result.json",
-    "assertions": 609567,
+    "report": "evidence/drive-native-20261019T011954203Z/result.json",
+    "assertions": [
+      614949
+    ],
     "configuredRunRpm": 3000,
-    "hardwareAccuracyVerified": false
+    "hardwareAccuracyVerified": false,
+    "scope": "host drive heading/ramp/stop/log checks and asymmetric-wheel simulation; not physical accuracy"
   },
-  "preExistingManifestDifferences": [
-    "keil/OBJ/table_navigation.axf",
-    "keil/OBJ/table_navigation.map",
-    "keil/TableNavigation.uvoptx",
-    "keil/TableNavigation.uvprojx"
-  ],
+  "preExistingManifestDifferences": {},
   "defaultStationAutoEnabled": true,
   "upstreamModuleHashes": {
     "src/arm_control.c": "e5e3bf65bd5246b486cf1a094532d1218c611322576be0fa6562d1e70cbd28f1",
@@ -369,14 +372,16 @@
   ],
   "hostStationVision": {
     "passed": true,
-    "report": "evidence/station-native-20261018T092835849Z/result.json",
+    "report": "evidence/station-native-20261019T011954203Z/result.json",
     "assertions": [
-      406822,
-      974360
+      374902,
+      2239146,
+      374902,
+      374902
     ],
     "actualConfiguration": "READY flags 0/0/0: B/task/vision/F loading/handoff plus rejection before D work",
-    "mockFlowOnly": "Test-only READY overrides 1/1/1 with placeholder poses: A/C eight-job state flow, distance13960 and three uninterrupted E passes; NOT calibration or hardware acceptance",
-    "scope": "A/C preloaded/live task: direct B-E heading without return-to-entry turn; missing fresh wheel-4 feedback prevents departure. Raw preparation skips unchanged lift/slide/claw only; changed targets execute in safe order; full yaw interpolation/fresh axis checks retained. Previous station, three slots/colors, emergency and obstacle tests pass.",
+    "mockFlowOnly": "Test-only calibrated rough pose/READY overrides; both batches and six ring permutations, full A/C flows and task expiry. Not physical calibration.",
+    "scope": "actual READY=0 guards plus test-only READY overrides for full mock job flow; placeholder poses are NOT calibration; no hardware accessed",
     "hardwareAccuracyVerified": false
   },
   "stationCalibration": {
@@ -384,12 +389,13 @@
     "storagePlaceReady": false,
     "platformTakeReady": false,
     "actualAutomaticRunCannotCompleteAllJobs": true,
-    "roughPickupOrder": [
-      1,
-      2,
-      3
-    ],
-    "physicalPickupOrderNeedsConfirmation": true
+    "roughPickupOrder": "same as current batch task ring order G2/G4",
+    "physicalPickupOrderNeedsConfirmation": true,
+    "roughRingCount": 3,
+    "roughIndexMm": 150,
+    "roughIndexSign": 1,
+    "roughIndexRpm": 60,
+    "roughReturnBaselineRing": 2
   },
   "keilProjectAdaptation": {
     "file": "keil/TableNavigation.uvprojx",
@@ -409,15 +415,15 @@
     "rawPreparation": [
       "lift home 135mm only if different",
       "slide home 0mm only if different",
-      "yaw ARM_PICK_YAW_DEG 126deg with fresh dual-axis preflight and full 2000ms interpolation",
+      "yaw ARM_PICK_YAW_DEG 131deg with fresh dual-axis preflight and full 2000ms interpolation",
       "claw open 45deg only if different"
     ],
     "visionAfterPreparation": true,
     "loadsPerBatch": 3,
-    "placeYawDeg": 254,
-    "returnYawBeforeNextVisionDeg": 126,
+    "placeYawDeg": 256,
+    "returnYawBeforeNextVisionDeg": 131,
     "yawBeforeDrivingDeg": 0,
-    "servoCompletion": "2000ms timed interpolation, no physical arrival sensor",
+    "servoCompletion": "Yaw/platform 2000ms, claw 500ms timed interpolation; axes feedback gated with no servo floor; no physical servo arrival sensor",
     "scanReturnToEntryHeading": false,
     "scanDeparture": "Normal parked station handoff with fresh four-wheel feedback directly into next road B-E at -X",
     "rawPreparationSkipsUnchangedLiftSlideClaw": true,
@@ -428,12 +434,189 @@
       "scope": "simulation from station action start; initial declared 0/135/0/45; excludes chassis turn and four-wheel lock acquisition"
     }
   },
-  "publication": {
-    "sourceProject": "stm32-car-arm-merged",
-    "targetDirectory": "stm32-car-arm-merged2",
-    "branch": "main",
-    "baseCommit": "7b07462a32e2152b5c36172042286979f35afd33",
-    "version": "20261018-merge2-r3",
-    "scope": "Current release package plus referenced host/build reports; other repository directories unchanged; no vehicle access or flash"
+  "serialConsole": {
+    "language": "English",
+    "encoding": "ASCII",
+    "sourceEncoding": "UTF-8 BOM",
+    "rawProtocolEchoUntranslated": true,
+    "commandsUnchanged": true,
+    "englishLogLabelsRestored": true,
+    "verification": "evidence/arm-speed-r7-verification.json"
+  },
+  "retainedChassisFunctionsScope": "本轮除显示字面量外，四个应用源文件词法一致；运动参数、配置、扫码及互锁控制逻辑均保持。",
+  "armParameters": {
+    "source": "operator supplied 2026-10-18",
+    "values": {
+      "ARM_PICK_YAW_DEG": 131.0,
+      "ARM_PLACE_YAW_DEG": 256.0,
+      "ARM_PICK_SLIDE_MM": 55.0,
+      "ARM_PLACE_SLIDE_MM": 35.0,
+      "ARM_PICK_LIFT_MM": 105.0,
+      "ARM_PLACE_LIFT_MM": 110.0,
+      "ARM_CLAW_CLOSE_DEG": 15.0,
+      "ARM_CLAW_OPEN_DEG": 45.0
+    },
+    "pickYawPwmUs": 1247,
+    "placeYawPwmUs": 553,
+    "clawClosedPwmUs": 604,
+    "clawOpenPwmUs": 826,
+    "automaticSequencePhysicallyVerified": false,
+    "platformTakeParametersUnchangedAndDisabled": true
+  },
+  "armSpeed": {
+    "axisRpm": 300,
+    "axisAcceleration": 150,
+    "clawInterpolationMs": 500,
+    "yawPlatformInterpolationMs": 2000,
+    "axisStepServoFloorMs": 0,
+    "freshFeedbackGatesRetained": true,
+    "stepOrderUnchanged": true,
+    "benchmark": {
+      "before": [
+        {
+          "uartCost": 0,
+          "block": 1,
+          "softwareMs": 24623
+        },
+        {
+          "uartCost": 0,
+          "block": 2,
+          "softwareMs": 24623
+        },
+        {
+          "uartCost": 0,
+          "block": 3,
+          "softwareMs": 24623
+        },
+        {
+          "uartCost": 1,
+          "block": 1,
+          "softwareMs": 24756
+        },
+        {
+          "uartCost": 1,
+          "block": 2,
+          "softwareMs": 24756
+        },
+        {
+          "uartCost": 1,
+          "block": 3,
+          "softwareMs": 24756
+        }
+      ],
+      "after": [
+        {
+          "uartCost": 0,
+          "block": 1,
+          "softwareMs": 6103
+        },
+        {
+          "uartCost": 0,
+          "block": 2,
+          "softwareMs": 6103
+        },
+        {
+          "uartCost": 0,
+          "block": 3,
+          "softwareMs": 6103
+        },
+        {
+          "uartCost": 1,
+          "block": 1,
+          "softwareMs": 6236
+        },
+        {
+          "uartCost": 1,
+          "block": 2,
+          "softwareMs": 6236
+        },
+        {
+          "uartCost": 1,
+          "block": 3,
+          "softwareMs": 6236
+        }
+      ]
+    },
+    "benchmarkScope": "Software state machine with instantaneous mocked axis position; not physical timing. UART-cost variant included.",
+    "hardwareVerified": false,
+    "verification": "evidence/arm-speed-r7-verification.json"
+  },
+  "encoderDirectionFix": {
+    "learnNetMm": 2,
+    "learnSamples": 2,
+    "requireNewTimestampAndIncreasingDisplacement": true,
+    "startupTranslationRpmLimit": 20,
+    "learnTimeoutMs": 1500,
+    "conflictStopsBeforeAveraging": true,
+    "continuousPassPreservesBaselineAndSigns": true,
+    "rawToRoughDistanceMm": 1670,
+    "distanceScaleUnchanged": true,
+    "regression": "Old source fails the new startup regression; new source passes forward/backward/left/right and full A/C routes with opposite initial samples.",
+    "fieldOvershootCauseConfirmed": false,
+    "armInterlockUnchanged": true,
+    "armPlusMinus1RpmFaultReproduced": true,
+    "verification": "evidence/encoder-r8-verification.json"
+  },
+  "taskLifetime": {
+    "scope": "one full runimu A/C run containing both work batches and the return to start",
+    "expireOn": [
+      "full route done",
+      "emergency stop",
+      "route fault cancellation"
+    ],
+    "preservedAcrossStationsAndBothBatches": true,
+    "returnPassBRequiresScan": false,
+    "scannerTaskAcceptance": "first B station wait only",
+    "idleScanStorage": false,
+    "freshManualPreloadAllowed": true,
+    "statusField": "task_ready",
+    "samePowerSessionSecondRunWaitsForNewTaskTested": true,
+    "verification": "evidence/task-expiry-r9-verification.json",
+    "hardwareVerified": false
+  },
+  "roughMerge": {
+    "sourceRepository": "linbing-wolf/gcs-test",
+    "sourceRef": "codex/merged2-station-rings",
+    "sourceCommit": "7fed0f62821a3c2680dbd1c3ce16e88f9009d5b5",
+    "sourceDirectory": "stm32-car-arm-merged2",
+    "upstreamFiles": {
+      "stm32-car-arm-merged2/README.md": "4f59cd17b9b560eb2d4939f219d4b72453ebce473d54af8a963cd5bedfd7620f",
+      "stm32-car-arm-merged2/docs/合并与串口操作.md": "af0a63ae81c2a58daa0f4a63265c4a4c67d2f0e3fa9b8f5870e64b9e98aa064c",
+      "stm32-car-arm-merged2/src/arm_config.h": "f1f174a598c8118a538cae61d07c2a65a2c66fb09bf6d59d31df4b4bf69d8ef7",
+      "stm32-car-arm-merged2/src/arm_control.c": "2175ef680e5ffc45ce5d7715b9e3fda4d8eddbf5fa6bbb74e2bdb68599d37125",
+      "stm32-car-arm-merged2/src/arm_control.h": "e6377d0ba33eab2b80107abd4c5feccce691949a2dfcda07abca053b6e2b6ba0",
+      "stm32-car-arm-merged2/src/main_table_nav.c": "8a1c3f653c723a494c343fc7d24184d2ad6e4b7425599b61e973807bd3b46928",
+      "stm32-car-arm-merged2/src/station_config.h": "9b87fdebe69869f8f546cf1b506cc307c3703a7f76cd69c6b59fe27c9997e829",
+      "stm32-car-arm-merged2/src/station_job.c": "5676edb3fffd3231e7a1e6b986bda2bc651c166726c557185031edd2854f4c60",
+      "stm32-car-arm-merged2/src/station_job.h": "955fbdd1e80db7c823935adca01782ff686c37114ca4f6327fdc55f49322558c"
+    },
+    "scope": "rough station only plus current-controller adapter",
+    "preservedFunctions": {
+      "src/station_job.c": [
+        "static int build_raw(void)",
+        "static int build_storage(void)",
+        "static int parse_task(",
+        "void station_clear_task(",
+        "void station_abort(",
+        "static void push_take_from_platform(",
+        "static void push_place_on_platform("
+      ],
+      "src/main_table_nav.c": [
+        "static int run_velocity_distance(void)",
+        "static void arm_lock_update(void)",
+        "static int run_velocity_stopped(void)",
+        "static void run_velocity_update(void)",
+        "static int16_t run_forward_slew(",
+        "static int start_heading_shift("
+      ]
+    },
+    "storageAndPlatformTakeConfigUnchanged": true,
+    "rawArmAndChassisConfigHashesUnchanged": true,
+    "taskLifecycleUnchanged": true,
+    "indexStepMm": 150,
+    "indexRpmLimit": 60,
+    "reacquireStrictZeroAfterEveryIndex": true,
+    "oldArtifactsSaved": "evidence/rough-merge-before-20261019T011210293Z",
+    "verification": "evidence/rough-r10-verification.json"
   }
 }

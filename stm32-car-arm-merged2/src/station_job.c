@@ -1,4 +1,4 @@
-#include "station_job.h"
+﻿#include "station_job.h"
 #include "station_config.h"
 #include "arm_control.h"
 #include "arm_config.h"
@@ -7,10 +7,11 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM, SS_VISION, SS_LOAD1 };
+enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM, SS_VISION, SS_LOAD1, SS_CHASSIS };
 typedef struct {
     uint8_t kind;
     int16_t value;
+    uint8_t ring; /* 仅SS_CHASSIS：此步完成后对准的环号。 */
 } StationStep;
 
 enum {
@@ -28,7 +29,7 @@ enum {
 static struct {
     uint8_t phase, job, batch, cursor, count, issued, retries;
     uint32_t step_ms;
-    char reason[48];
+    char reason[192]; /* 中文UTF-8故障原因。 */
 } stn;
 static StationStep program[STN_STEP_MAX];
 static uint8_t task_colors[2][3]; /* 第一批、第二批的颜色，按抓取顺序。 */
@@ -54,6 +55,7 @@ static int push(uint8_t kind, int value)
     if (stn.count >= STN_STEP_MAX) {stn_fault("station program too large");return 0;}
     program[stn.count].kind = kind;
     program[stn.count].value = (int16_t)value;
+    program[stn.count].ring = 0;
     stn.count++;
     return 1;
 }
@@ -138,10 +140,40 @@ static int build_raw(void)
     }
     return 1;
 }
+/* 粗加工取车上物块复用当前载物台放置几何，不改变暂存区原取料表。 */
+static void push_rough_take_from_platform(void)
+{
+    push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+    push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
+    push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+    push(SS_LIFT, ARM_PLACE_LIFT_MM);
+    push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+    push_retreat_home();
+    push(SS_PLATFORM, 0);
+}
+
+static int push_rough_index_step(int delta, uint8_t target, uint8_t *ring)
+{
+    if (!push(SS_CHASSIS, delta * STN_ROUGH_INDEX_SIGN * STN_ROUGH_INDEX_MM)) return 0;
+    program[stn.count - 1u].ring = target;
+    *ring = target;
+    return 1;
+}
+
+static int push_rough_index(uint8_t target, uint8_t *ring)
+{
+    if (*ring != 2u && *ring != target)
+        if (!push_rough_index_step(2 - (int)*ring, 2u, ring)) return 0;
+    if (*ring != target)
+        if (!push_rough_index_step((int)target - (int)*ring, target, ring)) return 0;
+    return 1;
+}
+
 static int build_rough(void)
 {
-    uint8_t i;
-    if (!STN_ROUGH_PLACE_READY || !STN_PLATFORM_TAKE_READY) {
+    uint8_t i, ring = 2u, seen = 0;
+    if (!STN_ROUGH_PLACE_READY || !STN_PLATFORM_TAKE_READY || (stn_rough_place.slide_mm == 0
+        && stn_rough_place.lift_mm == 0 && stn_rough_place.yaw_deg == 0.0f)) {
         stn_fault("rough-process poses not calibrated (station_config.h)");
         return 0;
     }
@@ -149,21 +181,27 @@ static int build_rough(void)
         stn_fault("platform must start at slot 1 before unloading");
         return 0;
     }
-    /* 车上第 1/2/3 块分别放到任务码指定的环位。 */
+    /* 先完整验证本批环位，禁止同环重复导致覆盖物块；不改变原任务码解析契约。 */
     for (i = 0; i < 3u; i++) {
-        uint8_t ring = task_rings[stn.batch][i];
-        if (ring < 1u || ring > 5u) {
-            stn_fault("rough ring in task code must be 1..5");
+        uint8_t target = task_rings[stn.batch][i];
+        if (target < 1u || target > 3u || (seen & (1u << (target - 1u)))) {
+            stn_fault("rough targets must be a permutation of 1,2,3");
             return 0;
         }
-        push_take_from_platform();
-        push_release_at(&stn_rough_place[ring - 1u]);
+        seen |= (uint8_t)(1u << (target - 1u));
     }
-    /* 三块全部放完后立即按环位 1、2、3 抓回车上载物台。 */
     for (i = 0; i < 3u; i++) {
-        push_grip_at(&stn_rough_place[i]);
+        if (!push_rough_index(task_rings[stn.batch][i], &ring)) return 0;
+        push_rough_take_from_platform();
+        push_release_at(&stn_rough_place);
+    }
+    /* 按原物块顺序抓回，保持载物台杯位与颜色的对应关系。 */
+    for (i = 0; i < 3u; i++) {
+        if (!push_rough_index(task_rings[stn.batch][i], &ring)) return 0;
+        push_grip_at(&stn_rough_place);
         push_place_on_platform();
     }
+    if (!push_rough_index(2u, &ring)) return 0;
     return 1;
 }
 static int build_storage(void)
@@ -252,7 +290,7 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
     stn.step_ms = now;
     stn_text("[station] program built; steps=");
     {
-        char line[40];
+        char line[80];
         snprintf(line, sizeof(line), "%u; waiting for vision/arm\r\n", (unsigned)stn.count);
         stn_text(line);
     }
@@ -302,6 +340,17 @@ static int issue_step(uint32_t now)
         snprintf(line, sizeof(line), "arm platform %d", slot);
         ok = arm_command(line, now);
         break;
+    }
+    case SS_CHASSIS: {
+        char index_line[64];
+        if (!station_chassis_start(s->value)) {
+            stn_fault("rough index refused: parked arm/fresh wheel stop/IMU required");
+            return 0;
+        }
+        snprintf(index_line, sizeof(index_line), "[station index] ring=%u move_mm=%d\r\n",
+                 (unsigned)s->ring, (int)s->value);
+        stn_text(index_line);
+        return 1;
     }
     default:
         ok = 0;
@@ -379,6 +428,13 @@ void station_update(uint32_t now)
         }
         return;
     }
+    if (s->kind == SS_CHASSIS) {
+        if (station_chassis_failed()) stn_fault("rough chassis index failed; vehicle held");
+        else if (!station_chassis_busy()) step_finished();
+        else if ((uint32_t)(now - stn.step_ms) > STN_STEP_TIMEOUT_MS)
+            stn_fault("rough chassis index timeout; vehicle held");
+        return;
+    }
     if (!arm_busy()) {
         step_finished();
         return;
@@ -391,14 +447,19 @@ void station_update(uint32_t now)
 
 int station_active(void) { return stn.phase == ST_RUN; }
 int station_failed(void) { return stn.phase == ST_FAULT; }
-void station_abort(void) { if(stn.phase!=ST_FAULT)stn.phase = ST_IDLE; stn.cursor = stn.count = 0;vision_cancel_pick(); }
+void station_clear_task(void)
+{
+    task_ready = 0;
+    memset(task_colors, 0, sizeof(task_colors));
+    memset(task_rings, 0, sizeof(task_rings));
+}
+
+void station_abort(void) { if(stn.phase!=ST_FAULT)stn.phase = ST_IDLE; stn.cursor = stn.count = 0;vision_cancel_pick();station_clear_task(); }
 
 void station_init(void)
 {
     memset(&stn, 0, sizeof(stn));
-    memset(task_colors, 0, sizeof(task_colors));
-    memset(task_rings, 0, sizeof(task_rings));
-    task_ready = 0;automatic = 1;
+    station_clear_task();automatic = 1;
 }
 
 static int parse_task(const char *s)
@@ -430,9 +491,9 @@ int station_auto_enabled(void) {return automatic;}
 void station_status(void)
 {
     char line[160];
-    snprintf(line, sizeof(line), "[station] auto=%u phase=%u job=%u batch=%u step=%u/%u\r\n",
+    snprintf(line, sizeof(line), "[station] auto=%u phase=%u job=%u batch=%u step=%u/%u task_ready=%u\r\n",
              (unsigned)automatic, (unsigned)stn.phase, (unsigned)stn.job, (unsigned)stn.batch,
-             (unsigned)stn.cursor, (unsigned)stn.count);
+             (unsigned)stn.cursor, (unsigned)stn.count, (unsigned)task_ready);
     stn_text(line);
     snprintf(line, sizeof(line), "[station] batch1 colors=%u%u%u rings=%u%u%u\r\n",
              (unsigned)task_colors[0][0], (unsigned)task_colors[0][1], (unsigned)task_colors[0][2],
@@ -464,7 +525,7 @@ int station_command(const char *s)
         stn_text("[task rejected: need task 123 or four 3-digit groups; colors 1-4, rings 1-5]\r\n");
         return 1;
     }
-    stn_text("[task accepted; stored only; run starts with runimu A/C, scan station resumes itself]\r\n");
+    stn_text("[task accepted for one full run, both batches; scan station resumes itself]\r\n");
     station_status();
     return 1;
 }

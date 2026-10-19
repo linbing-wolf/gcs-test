@@ -16,19 +16,34 @@ static void continuous_pass_tests(void)
     unsigned variant;
     for(variant=0;variant<4;variant++) {
         uint32_t deadline;
-        unsigned passes=0;
+        unsigned passes=0,injections=0;
         begin_route(variant&1,variant/2);deadline=clock_ms+300000;
         while(run_active && clock_ms<deadline) {
             int64_t baseline[4];
+            int8_t signs[4];
             uint8_t edge=run.edge;
             RoadHeading heading=run.target_heading;
             memcpy(baseline,run.encoder_start,sizeof(baseline));
+            memcpy(signs,run.encoder_sign,sizeof(signs));
             plant_step();
+            if (((run.edge==3 && injections==0) || (run.edge==9 && injections==1)) && run.velocity_phase==VELOCITY_FORWARD
+                && run.encoder_ready==0 && run.progress_mm==0 && !run.encoder_previous_delta[0]) {
+                unsigned wheel;
+                clock_ms++;
+                for(wheel=0;wheel<4;wheel++) {
+                    int sign=(wheel==0 || wheel==3) ? -1 : 1;
+                    motor_feedback[wheel].position=run.encoder_start[wheel]+sign*(wheel==variant ? -128 : 128);
+                    motor_feedback[wheel].position_ms=clock_ms;
+                }
+                CHECK(run_velocity_distance() && !run.encoder_ready);
+                injections++;
+            }
             if(strstr(output,"[route pass]")) {
                 CHECK(edge==3 || edge==9 || edge==13);
                 CHECK(run.edge==edge+1 && run.velocity_phase==VELOCITY_FORWARD);
                 CHECK(run.target_heading==heading && run.forward_mrpm>0 && run.forward_cmd_rpm>0);
                 CHECK(!memcmp(baseline,run.encoder_start,sizeof(baseline)));
+                CHECK(!memcmp(signs,run.encoder_sign,sizeof(signs)) && run.encoder_ready==15u);
                 CHECK(run.encoder_offset_mm>0 && run.road.from==NODE_E);
                 passes++;
             }
@@ -36,7 +51,7 @@ static void continuous_pass_tests(void)
                 CHECK(run.edge!=3 && run.edge!=9 && run.edge!=13);
         }
         if(run.state!=RUN_DONE)fprintf(stderr,"Route fault: %s\n",output);
-        CHECK(run.state==RUN_DONE && run.job==8 && passes==3);
+        CHECK(run.state==RUN_DONE && run.job==8 && passes==3 && injections==2);
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && baseline_transitions==15);
         printf("PASS nonstop route %c uart_cost=%u: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=%u\n",
                (variant&1)?'C':'A',variant/2,(unsigned)CAR_RUN_RPM);

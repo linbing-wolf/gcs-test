@@ -44,11 +44,11 @@ static void manual_and_recipe_tests(void)
     send_line("arm yaw -94.5");advance_arm(2400);CHECK(arm_yaw_us==2500);
     send_line("arm yaw 265.5");advance_arm(2400);CHECK(arm_yaw_us==500);
     send_line("arm home");advance_arm(7000);
-    send_line("arm pick");advance_arm(12000);expect_pose(65,110,126,0);
-    CHECK(arm_yaw_us==1275 && arm_claw_us==493);
+    send_line("arm pick");advance_arm(12000);expect_pose(55,105,131,15);
+    CHECK(arm_yaw_us==1247 && arm_claw_us==604);
     send_line("arm place");CHECK(strstr(output,"declare actual platform") && !arm_stops);
     send_line("arm platform pose 20");CHECK(arm_platform_us==648);
-    send_line("arm place");advance_arm(14500);expect_pose(30,110,254,45);CHECK(arm_yaw_us==564);
+    send_line("arm place");advance_arm(14500);expect_pose(35,110,256,45);CHECK(arm_yaw_us==553);
     send_line("arm off");CHECK(arm_enabled() && strstr(output,"park with arm home"));
     send_line("arm home");advance_arm(7000);expect_pose(0,135,0,45);
     for(i=1;i<=3;i++){
@@ -57,7 +57,7 @@ static void manual_and_recipe_tests(void)
         CHECK(arm_platform_us==(i==1?648:i==2?1530:2396));
         CHECK(!position_count && !sync_count);
     }
-    send_line("arm cycle");advance_arm(33000);expect_pose(30,110,254,45);
+    send_line("arm cycle");advance_arm(33000);expect_pose(35,110,256,45);
     send_line("arm home");advance_arm(7000);send_line("arm off");
     CHECK(!arm_enabled() && !arm_lock.state && !arm_claw_us && !arm_yaw_us && !arm_platform_us);
     CHECK(!position_count && !sync_count);
@@ -120,6 +120,13 @@ static void wheel_lock_failures(void)
         advance_arm(1);CHECK(arm_lock.state==3 && arm_stops==2);
     }
     reset_fixture();clock_ms=UINT32_MAX-100;declare_pose();CHECK(arm_lock.state==2);
+    /* 复现现场的1RPM停机条件；这次不放宽底盘静止互锁。 */
+    for(mode=0;mode<2;mode++) {
+        reset_fixture();declare_pose();send_line("arm yaw 131");advance_arm(200);
+        run.imu_mode=1;reported_wheel_rpm[1]=mode ? -1 : 1;
+        advance_arm(100);
+        CHECK(arm_lock.state==3 && arm_stops==2 && strstr(output,"wheel moving/disabled/stalled"));
+    }
     puts("PASS four-wheel interlock: missing status/speed, disabled/stalled wheel 4, moving wheel 4, bus off, queue overflow, active-session watchdog and timestamp wrap");
 }
 static void arm_faults_and_stop_tests(void)
@@ -169,10 +176,58 @@ static void bounds_and_shared_service_tests(void)
     }
     puts("PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation");
 }
+static void english_console_tests(void)
+{
+    reset_fixture();declare_pose();
+    send_line("arm lift 120");advance_arm(2400);
+    CHECK(strstr(output,"[arm step: waiting for fresh axis feedback]\r\n"));
+    CHECK(strstr(output,"[arm step complete: axes feedback verified; servo motion estimated]\r\n"));
+    CHECK(strstr(output,"[arm done: inspect actual grip; no grip sensor]\r\n"));
+    CHECK(!arm_busy() && !arm_failed() && arm_pose_known() && arm_trace_address[0]==5 && arm_trace_pulses[0]==1200);
+    send_line("arm status");
+    CHECK(strstr(output,"lift_mm=120") && strstr(output,"; servo positions are commanded estimates\r\n"));
+    CHECK(strstr(output,"; no position sensor\r\n") && strstr(output,"[arm]"));
+    {size_t i;for(i=0;i<output_size;i++)CHECK((unsigned char)output[i]<128u);}
+    puts("PASS English console: lift 120 retains axis command and all three messages; complete arm/platform status is ASCII");
+}
+static void speed_and_feedback_gates_tests(void)
+{
+    unsigned missing;
+    uint32_t started;
+    reset_fixture();declare_pose();
+    started=clock_ms;send_line("arm slide 55");advance_arm(350);
+    CHECK(!arm_busy() && !arm_failed() && arm_positions==1);
+    CHECK(arm_trace_address[0]==7 && arm_trace_pulses[0]==1401 && clock_ms-started<1000u);
+    send_line("arm lift 105");advance_arm(350);
+    CHECK(!arm_busy() && !arm_failed() && arm_trace_address[1]==5 && arm_trace_pulses[1]==2400);
+    started=clock_ms;send_line("arm close");advance_arm(250);CHECK(arm_busy());
+    advance_arm(500);CHECK(!arm_busy() && !arm_failed() && arm_claw_us==604);
+    CHECK(clock_ms-started>=ARM_CLAW_TIME_MS);
+    send_line("arm yaw 256");advance_arm(1000);CHECK(arm_busy() && arm_yaw_us>553);
+    advance_arm(1400);CHECK(!arm_busy() && arm_yaw_us==553);
+
+    /* 即使已取消2秒下限，迟到的位置反馈、缺失ACK和非零轴速也不能放行。 */
+    reset_fixture();declare_pose();arm_freeze=1;
+    send_line("arm slide 55");advance_arm(700);CHECK(arm_busy());
+    arm_encoder[0]-=(int64_t)1401*65536u/3200u;
+    advance_arm(350);CHECK(!arm_busy() && !arm_failed());
+    for(missing=0;missing<3;missing++) {
+        reset_fixture();declare_pose();
+        if(missing==0)arm_ack=0;
+        if(missing==1)arm_missing_motor=5;
+        if(missing==2)arm_missing_motor=7;
+        send_line("arm slide 55");advance_arm(2000);
+        CHECK(arm_failed() && !arm_pose_known() && !strstr(output,"[arm done"));
+    }
+    reset_fixture();declare_pose();arm_moving_motor=7;
+    send_line("arm slide 55");advance_arm(350);
+    CHECK(arm_failed() && !arm_positions);
+    puts("PASS arm speed: axes finish on fresh verified feedback without 2s floor; claw keeps 500ms interpolation, yaw keeps 2s; delayed position/missing ACK/either axis/nonzero axis speed cannot complete early");
+}
 int main(void)
 {
     manual_and_recipe_tests();mutual_exclusion_tests();wheel_lock_failures();
-    arm_faults_and_stop_tests();bounds_and_shared_service_tests();
+    arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();
     printf("PASS arm integration: %u assertions; host simulation only, no hardware accessed\n",assertions);
     return 0;
 }

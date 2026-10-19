@@ -1,4 +1,4 @@
-/* 小车控制入口：硬件初始化、串口命令、单段标定、完整路线调度。
+﻿/* 小车控制入口：硬件初始化、串口命令、单段标定、完整路线调度。
  * 日常调参：car_config.h；道路动作：structure.h；全程顺序：full_route.h。
  * 主循环入口：firmware_step()；全程状态推进：run_update()。
  * runimu发车短段横移，其余按航向行驶；估时不确认实际到位或车身角度。
@@ -136,6 +136,7 @@ typedef struct
     uint8_t imu_mode;         /* 已建立闭环会话，供诊断和中断采样故障检查。 */
     uint8_t turn_only, translation_only;
     uint8_t station_enabled, station_phase, scan_turn_stage;
+    uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
     uint8_t transition_ready; /* 仅本段通过距离/航向/四轮停稳后，可向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
     uint16_t lateral_rpm;
@@ -153,6 +154,9 @@ typedef struct
     int16_t wheel_rpm[4];
     int64_t encoder_start[4];
     int8_t encoder_sign[4];
+    int64_t encoder_previous_delta[4];
+    uint32_t encoder_sample_ms[4];
+    uint8_t encoder_ready;    /* 四轮方向确认掩码；同一直行串连续通过节点时保留。 */
     int32_t progress_mm;
     int32_t encoder_offset_mm; /* 同一直行串内已通过的段长；不中断编码器基线。 */
     uint16_t continuation_mm, blocked_roads;
@@ -170,6 +174,7 @@ typedef struct
     RoadPlan road;            /* structure.h 中取出的当前有向道路参数。 */
 } FullRouteState;
 static FullRouteState run;
+static FullRouteState station_parent; /* 索引子动作完成后恢复原路线现场，不推进节点/任务。 */
 static HeadingSensor heading_sensor;
 static volatile uint8_t can_rx_fault, imu_uart_fault;
 typedef struct {
@@ -521,7 +526,8 @@ static void scanner_update(void)
                     scanner.result[--scanner.length] = 0;
                     if (scanner.length) {
                         text("[scan] "); text(scanner.result); text("\r\n"); scanner.results++;
-                        if (!run_active && (run.state != RUN_STATION || run.job == 0u)) {
+                        /* 只在本轮首次B点等待时接收任务；闲置/结束后的连续扫码不能重装旧码。 */
+                        if (!run_active && run.state == RUN_STATION && run.job == 0u) {
                             char task_line[sizeof(scanner.result) + 6u];
                             snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
                             (void)station_command(task_line);
@@ -851,6 +857,7 @@ static void run_fault(const char *reason)
     else if (can_rx_fault & 1u) reason = "CAN hardware FIFO overrun; feedback lost";
     run_active = 0;
     if (run.station_enabled) {station_abort();vision_cancel_pick();if (arm_enabled()) {arm_stop();arm_lock.state=3;}}
+    else if (!run.turn_only && !run.translation_only) station_clear_task();
     run.state = RUN_FAULT;
     nav_stop(&nav);
     pose_set = 0;
@@ -954,6 +961,14 @@ static int run_segment(void)
 static void run_done(void)
 {
     run_active = 0;
+    if (run.station_shift) {
+        run = station_parent;
+        run.state = RUN_STATION;
+        run.station_relock = 1;
+        arm_lock_begin();
+        text("[station index done] encoder+IMU stopped; reacquiring four-wheel zero-speed interlock\r\n");
+        return;
+    }
     run.state = RUN_DONE;
     nav_stop(&nav);
     nav.position_confirmed = 0;
@@ -972,6 +987,8 @@ static void run_done(void)
         run_status();
         return;
     }
+    station_clear_task();
+    text("[task expired] full run ended; scan or enter a new task for next run\r\n");
     text("[run done by motor feedback + IMU heading; inspect actual return position]\r\n");
     run_status();
 }
@@ -1099,6 +1116,36 @@ static int start_heading_shift(int16_t mm, uint16_t rpm)
     return 1;
 }
 
+/* 仅增加工位调用接口；复用当前速度/编码器/IMU状态机，不引入远程底盘实现。 */
+int station_chassis_start(int16_t mm)
+{
+    uint8_t i;
+    if (run_active || stop_pending || run.state != RUN_STATION || !run.station_phase
+        || (run.job != 2u && run.job != 5u) || arm_lock.state != 2
+        || !arm_ready() || !arm_parked()
+        || (mm != STN_ROUGH_INDEX_MM && mm != -STN_ROUGH_INDEX_MM)) return 0;
+    for (i = 0; i < MOTOR_COUNT; i++) {
+        MotorFeedback *f = &motor_feedback[i];
+        if (!f->speed_valid || f->speed_rpm != 0 || !(f->status_flags & MOTOR_FLAG_ENABLED)
+            || (f->status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))
+            || (uint32_t)(clock_ms - f->speed_ms) > ARM_FEEDBACK_TIMEOUT_MS
+            || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
+    }
+    station_parent = run;
+    if (!start_heading_shift(mm, STN_ROUGH_INDEX_RPM)) {run = station_parent;return 0;}
+    run.station_shift = run.station_enabled = 1;
+    run.travel_axis = BODY_FORWARD;
+    run.plan = station_parent.plan;run.edge = station_parent.edge;run.job = station_parent.job;
+    run.heading = run.target_heading = station_parent.heading;
+    return 1;
+}
+
+int station_chassis_busy(void) { return (run.station_shift && run_active) || run.station_relock; }
+int station_chassis_failed(void)
+{
+    return run.station_shift && (run.state == RUN_FAULT || run.state == RUN_STOPPED);
+}
+
 /* 四轮到位后推进当前动作；此函数可能提交下一动作或结束全程。 */
 static void run_advance_segment(void);
 static void run_finish_node(void);
@@ -1206,6 +1253,10 @@ static void run_station_update(void)
     if (arm_lock.state==3 || arm_failed() || imu_uart_fault
         || !heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
         run_fault("station interlock/arm/IMU fault");return;
+    }
+    if (run.station_relock) {
+        if (arm_lock.state != 2) return;
+        run.station_relock = 0;
     }
     if (!run.station_phase) {
         if (arm_lock.state!=2) return;
@@ -1560,19 +1611,49 @@ static int run_pass_straight(void)
 static int run_velocity_distance(void)
 {
     int64_t sum = 0;
+    float ppm = run.travel_axis == BODY_LEFT ? CALIBRATED_PPM_X : CALIBRATED_PPM_Y;
+    int64_t learn_counts = (int64_t)(CAR_ENCODER_LEARN_MM * ppm * CAR_ENCODER_COUNTS_PER_REV
+                                    / CAR_POSITION_PULSES_PER_REV) + 1;
     uint8_t i;
     for (i = 0; i < MOTOR_COUNT; i++) {
         int64_t delta = motor_feedback[i].position - run.encoder_start[i];
-        /* 仅在四轮均沿选定前进/后退方向转动的起步阶段建立编码器符号。
-         * 不假定驱动器CPOS符号与安装dir位的对应关系；之后固定符号，旋转项相消。
-         */
-        if (!run.encoder_sign[i] && (delta > 64 || delta < -64)) run.encoder_sign[i] = delta > 0 ? 1 : -1;
-        if (!run.encoder_sign[i]) return 1;
+        /* 不用第一次微小位移锁定极性。两份不同采样时刻的CPOS均超过净位移门槛，
+         * 且继续同向增长才确认；重复处理同一缓存不算第二份样本。 */
+        if (!run.encoder_sign[i] && motor_feedback[i].position_ms != run.encoder_sample_ms[i]) {
+            int64_t previous = run.encoder_previous_delta[i];
+            if ((delta >= learn_counts && previous >= learn_counts && delta > previous)
+                || (delta <= -learn_counts && previous <= -learn_counts && delta < previous)) {
+                run.encoder_sign[i] = delta > 0 ? 1 : -1;
+                run.encoder_ready |= (uint8_t)(1u << i);
+                if (run.encoder_ready == 15u) {
+                    uint8_t wheel;
+                    text("[encoder directions confirmed] signs=");
+                    for (wheel = 0; wheel < MOTOR_COUNT; wheel++) {
+                        if (wheel) send_byte(',');
+                        signed_number(run.encoder_sign[wheel]);
+                    }
+                    text("\r\n");
+                }
+            }
+            run.encoder_previous_delta[i] = delta;
+            run.encoder_sample_ms[i] = motor_feedback[i].position_ms;
+        }
+        /* 单轮明显反向不能与其他三轮平均后冒充正常里程。末端微量纠角保留容差。 */
+        if (run.encoder_sign[i] && delta * run.encoder_sign[i] < -learn_counts) {
+            text("[encoder direction conflict] wheel=");number(i + 1u);text("\r\n");
+            return 0;
+        }
         sum += delta * run.encoder_sign[i];
     }
+    if (run.encoder_ready != 15u) {
+        if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_ENCODER_LEARN_TIMEOUT_MS) {
+            text("[encoder directions unconfirmed] mask=");number(run.encoder_ready);text("\r\n");
+            return 0;
+        }
+        return 1;
+    }
     run.progress_mm = (int32_t)((float)sum * CAR_POSITION_PULSES_PER_REV
-                         / (4.0f * CAR_ENCODER_COUNTS_PER_REV
-                            * (run.travel_axis == BODY_LEFT ? CALIBRATED_PPM_X : CALIBRATED_PPM_Y)))
+                          / (4.0f * CAR_ENCODER_COUNTS_PER_REV * ppm))
                         - run.encoder_offset_mm;
     while (!run.obstacle_phase && run.continuation_mm && run.action_mm
            && run.progress_mm >= run.action_mm) {
@@ -1597,6 +1678,8 @@ static int16_t run_forward_target(int32_t remaining)
     if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
     if (speed > (run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM))
         speed = run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM;
+    if (run.station_shift && speed > STN_ROUGH_INDEX_RPM) speed = STN_ROUGH_INDEX_RPM;
+    if (run.encoder_ready != 15u && speed > CAR_ENCODER_LEARN_RPM) speed = CAR_ENCODER_LEARN_RPM;
     return (int16_t)(speed * run.travel_sign);
 }
 
@@ -1835,6 +1918,9 @@ static void run_velocity_update(void)
             if ((uint32_t)(motor_feedback[i].position_ms - run.baseline_after_ms) > 0x7fffffffu) {run_velocity_query();return;}
         for (i = 0; i < MOTOR_COUNT; i++) run.encoder_start[i] = motor_feedback[i].position;
         memset(run.encoder_sign, 0, sizeof(run.encoder_sign));
+        memset(run.encoder_previous_delta, 0, sizeof(run.encoder_previous_delta));
+        for (i = 0; i < MOTOR_COUNT; i++) run.encoder_sample_ms[i] = motor_feedback[i].position_ms;
+        run.encoder_ready = 0;
         run.progress_mm = 0;run.action_mm = run.remaining_mm;run.encoder_offset_mm = 0;
         run.forward_mrpm = 0;run.forward_profile_ms = clock_ms;
         run.forward_ref_rpm = run.forward_cmd_rpm = run.turn_ref_rpm = run.turn_cmd_rpm = 0;
@@ -1855,6 +1941,7 @@ static void run_velocity_update(void)
             if (run.travel_axis == BODY_LEFT) {
                 int32_t speed = remaining * CAR_DISTANCE_KP_X100 / 100;
                 int32_t max_rpm = run.lateral_rpm ? run.lateral_rpm : CAR_LATERAL_MAX_RPM;
+                if (run.encoder_ready != 15u && max_rpm > CAR_ENCODER_LEARN_RPM) max_rpm = CAR_ENCODER_LEARN_RPM;
                 if (remaining <= CAR_DISTANCE_TOLERANCE_MM && remaining >= -CAR_DISTANCE_TOLERANCE_MM)
                     run.velocity_phase = VELOCITY_STOP_FORWARD;
                 else {
@@ -2231,7 +2318,7 @@ static void command(char *command_text)
         else (void)station_command(command_text);
         return;
     }
-    if (!strcmp(command_text,"obstacle") && run.state==RUN_STATION) {run_fault("obstacle during station work; no automatic reverse");return;}
+    if (!strcmp(command_text,"obstacle") && (run.state==RUN_STATION || run.station_shift)) {run_fault("obstacle during station work; no automatic reverse");return;}
     if (arm_serial_command(command_text)) return;
     if (arm_lock.state || arm_enabled()) {
         int allow_run=station_auto_enabled() && arm_lock.state==2 && arm_ready() && arm_parked()
@@ -2494,7 +2581,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261018-merge2-r3; direct scan departure + raw preparation timing\r\n");
+    text("[drive] version=20261019-merge2-r10; rough station ring indexing; English console\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

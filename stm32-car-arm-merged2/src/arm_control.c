@@ -1,4 +1,4 @@
-#include "arm_control.h"
+﻿#include "arm_control.h"
 #include "arm_config.h"
 #include <string.h>
 #include <stdio.h>
@@ -407,7 +407,11 @@ static void begin_step(uint32_t now)
     }
     memset(arm.axis,0,sizeof(arm.axis)); clear_arm_rx(0);
     arm.state=ARM_PREFLIGHT;arm.phase_ms=now;arm.poll_ms=now-ARM_POLL_MS;
-    arm.servo_ms=ARM_SERVO_TIME_MS;
+    /* 两轴到位由ACK、位置、速度和状态反馈确认，不附加无关的舵机等待。
+     * 云台与载物台同时动作时仍等完整插值；夹爪使用独立的短行程时间。 */
+    arm.servo_ms=0;
+    if(s->mask&(YAW|PLATFORM)) arm.servo_ms=ARM_SERVO_TIME_MS;
+    else if(s->mask&CLAW) arm.servo_ms=ARM_CLAW_TIME_MS;
     arm.waiting=arm.poll=arm.submit=0;
     arm_output("[arm step: waiting for fresh axis feedback]\r\n");
 }
@@ -418,7 +422,7 @@ static void start_single(ArmStep s,uint32_t now)
 static void arm_status(void)
 {
     /* 仅主循环调用；固定缓冲避免浮点格式化占满启动文件的1KiB栈。 */
-    static char message[260];
+    static char message[384];
     snprintf(message,sizeof(message),"[arm] enabled=%u referenced=%u state=%u step=%u/%u slide_mm=%d lift_mm=%d yaw_deg=%.1f claw_deg=%.1f rpm=%u claw_us=%u yaw_us=%u; servo positions are commanded estimates\r\n",
         arm.enabled,arm.referenced,arm.state,arm.step,arm.count,arm.slide,arm.lift,(double)arm.yaw,(double)arm.claw,
         (unsigned)ARM_AXIS_RPM,(unsigned)arm.claw_us,(unsigned)arm.yaw_us);

@@ -170,7 +170,7 @@ static void plant_step(void)
     if(run.station_align_pending && last_station_edge!=run.edge) {
         station_alignment_entries++;last_station_edge=run.edge;
     }
-    if(run_active && run.velocity_phase==VELOCITY_FORWARD && run.steps!=last_step) {
+    if(run_active && !run.station_shift && run.velocity_phase==VELOCITY_FORWARD && run.steps!=last_step) {
         int mm=run.action_mm*run.travel_sign;
         RoadHeading travel=(RoadHeading)(((unsigned)run.target_heading+(run.travel_axis==BODY_LEFT ? 3u : 0u))%4u);
         forward_actions++;last_step=run.steps;
@@ -517,7 +517,7 @@ static void continuous_failure_tests(void)
     while(run_active && !(run.velocity_phase==VELOCITY_FORWARD && run.progress_mm>100))plant_step();
     {unsigned i;for(i=0;i<4;i++)encoder_value[i]+=run.encoder_sign[i]*500000.0;}
     while(run_active)plant_step();
-    CHECK(run.state==RUN_FAULT && strstr(output,"overrun"));
+    CHECK(run.state==RUN_FAULT && strstr(output,"encoder distance overrun/reversed"));
     puts("PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed");
 }
 
@@ -725,13 +725,77 @@ static void completed_road_history_tests(void)
     puts("PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history");
 }
 
+/* 起步微小反向样本不能决定整段里程的符号；随后仍使用独立车辆模型。 */
+static void encoder_learning_tests(void)
+{
+    unsigned axis,reverse,variant,i;
+    for(axis=0;axis<2;axis++)for(reverse=0;reverse<2;reverse++)for(variant=0;variant<5;variant++) {
+        uint32_t deadline;
+        double distance;
+        reset_plant(0,1.15);
+        CHECK(start_heading_shift(reverse ? -1670 : 1670,60));
+        run.travel_axis=axis ? BODY_LEFT : BODY_FORWARD;
+        deadline=clock_ms+90000;
+        while(run_active && run.velocity_phase!=VELOCITY_FORWARD && clock_ms<deadline)plant_step();
+        CHECK(run_active && run.velocity_phase==VELOCITY_FORWARD);
+        if(variant) {
+            /* 一个车轮反向约0.6mm，其余同向；模拟已解析的新CPOS反馈。 */
+            clock_ms++;
+            for(i=0;i<4;i++) {
+                int sign=axis ? (i<2 ? -1 : 1) : ((i==0 || i==3) ? -1 : 1);
+                if(reverse)sign=-sign;
+                motor_feedback[i].position=run.encoder_start[i]+sign*(i==variant-1u ? -128 : 128);
+                motor_feedback[i].position_ms=clock_ms;
+            }
+            CHECK(run_velocity_distance());
+            for(i=0;i<4;i++)CHECK(!run.encoder_sign[i]);
+        }
+        finish_plant(90000);
+        distance=(axis ? field_x : field_y)*(reverse ? -1 : 1);
+        CHECK(fabs(distance-1670.0)<40);
+        CHECK(abs(run.progress_mm-1670)<=CAR_DISTANCE_TOLERANCE_MM);
+    }
+    /* 一轮已建立的符号与后续明显位移矛盾时，禁止平均抵消后继续走。 */
+    for(variant=0;variant<4;variant++) {
+        uint32_t deadline;
+        reset_plant(0,1.15);CHECK(start_heading_shift(1670,60));run.travel_axis=BODY_FORWARD;
+        deadline=clock_ms+15000;
+        while(run_active && run.progress_mm<100 && clock_ms<deadline)plant_step();
+        CHECK(run_active && run.encoder_sign[variant]);
+        encoder_value[variant]=run.encoder_start[variant]-run.encoder_sign[variant]*5.0*CALIBRATED_PPM_Y*65536.0/3200.0;
+        frozen_encoder=1; /* 保留异常CPOS直到下一次真实轮询，避免被下一步模型积分覆盖。 */
+        deadline=clock_ms+250;
+        while(run_active && clock_ms<deadline)plant_step();
+        CHECK(run.state==RUN_FAULT && clock_ms<deadline);
+        CHECK(strstr(output,"encoder") && field_y<200);
+    }
+    /* 确认门槛以上的缓存重复读取不能伪装成两份新样本。 */
+    reset_plant(0,1.15);run.phase_ms=clock_ms;
+    for(i=0;i<4;i++) {
+        run.encoder_start[i]=motor_feedback[i].position;
+        motor_feedback[i].position+=1000;
+        motor_feedback[i].position_ms=clock_ms+1u;
+    }
+    clock_ms++;
+    CHECK(run_velocity_distance() && !run.encoder_ready);
+    for(i=0;i<4;i++)motor_feedback[i].position+=100;
+    CHECK(run_velocity_distance() && !run.encoder_ready);
+    clock_ms++;
+    for(i=0;i<4;i++)motor_feedback[i].position_ms=clock_ms;
+    CHECK(run_velocity_distance() && run.encoder_ready==15u);
+    reset_plant(0,1.15);run.phase_ms=clock_ms;
+    clock_ms+=CAR_ENCODER_LEARN_TIMEOUT_MS;
+    CHECK(!run_velocity_distance() && strstr(output,"directions unconfirmed"));
+    puts("PASS encoder startup: forward/backward/left/right 1670mm with every single-wheel 0.6mm opposite initial sample; all complete near model target; established sign contradiction faults without averaging cancellation");
+}
+
 #ifndef HEADING_TEST_MAIN
 #define HEADING_TEST_MAIN main
 #endif
 int HEADING_TEST_MAIN(void)
 {
     CHECK(entry_test_main()==0);
-    sensor_tests();core_and_parser_tests();
+    sensor_tests();core_and_parser_tests();encoder_learning_tests();
     continuous_turn_tests();continuous_lateral_tests();continuous_route_tests();station_gating_tests();continuous_failure_tests();adapter_tests();map_reverse_and_postcheck_tests();return_lateral_policy_tests();transition_reuse_tests();completed_road_history_tests();
     printf("PASS heading/feedback: %lu assertions; selected IMU turn/drive/four-wheel feedback regressions\n",(unsigned long)assertions);
     return 0;

@@ -14,7 +14,7 @@
 #define ARM_SLIDE_HOME_MM              0
 #define ARM_LIFT_DIR_INVERT            1 /* 沿用队友调试结果：反转位置命令的方向位。 */
 #define ARM_SLIDE_DIR_INVERT           1
-#define ARM_AXIS_RPM                 120u /* 先降低调试速度，旧代码为1000/2000RPM。 */
+#define ARM_AXIS_RPM                 300u /* 升降/平推位置模式目标转速，RPM；提速后仍以反馈确认到位。 */
 #define ARM_AXIS_ACCEL               150u
 #define ARM_ENCODER_COUNTS_PER_REV 65536u
 #define ARM_PULSES_PER_REV          3200u /* 驱动器必须使用对应16细分。 */
@@ -31,19 +31,20 @@
 #define ARM_CLAW_MAX_DEG             270.0f
 #define ARM_CLAW_OFFSET_DEG            1.0f
 #define ARM_CLAW_OPEN_DEG             45
-#define ARM_CLAW_CLOSE_DEG             0
-#define ARM_PICK_SLIDE_MM             65
-#define ARM_PICK_LIFT_MM             110
-#define ARM_PICK_YAW_DEG             126.0f /* 1275us，采用远程当前抓取标定。 */
-#define ARM_PLACE_SLIDE_MM            30
+#define ARM_CLAW_CLOSE_DEG            15 /* 操作者2026-10-18提供：夹紧15度，张开45度。 */
+#define ARM_PICK_SLIDE_MM             55
+#define ARM_PICK_LIFT_MM             105
+#define ARM_PICK_YAW_DEG             131.0f /* 约1247us，操作者提供的原料抓取角。 */
+#define ARM_PLACE_SLIDE_MM            35
 #define ARM_PLACE_LIFT_MM            110
-#define ARM_PLACE_YAW_DEG            254.0f /* 564us，放上载物台。 */
+#define ARM_PLACE_YAW_DEG            256.0f /* 约553us，操作者提供的车上放置角。 */
 #define ARM_PLATFORM_FIRST_DEG        20.0f /* PA2，沿用随包PWM.c三个档位。 */
 #define ARM_PLATFORM_SECOND_DEG      139.0f
 #define ARM_PLATFORM_THIRD_DEG       256.0f
 #define ARM_CHASSIS_STOP_HOLD_MS     200u
 #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u
-#define ARM_SERVO_TIME_MS           2000u /* 插值时间；舵机无到位反馈。 */
+#define ARM_SERVO_TIME_MS           2000u /* 云台/载物台插值时间，ms；舵机无到位反馈。 */
+#define ARM_CLAW_TIME_MS             500u /* 夹爪开合插值时间，ms；当前45/15度，需实车复核夹持。 */
 #define ARM_YAW_TEST_TIME_MS        8000u /* 全行程诊断单次插值时间，不改变夹取动作速度。 */
 #define ARM_POLL_MS                   10u
 #define ARM_FEEDBACK_TIMEOUT_MS      500u

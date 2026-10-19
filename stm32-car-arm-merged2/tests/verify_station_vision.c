@@ -53,6 +53,14 @@ static void vision_tests(void)
 {
     uint8_t color;int16_t x,y;unsigned i;
     reset_plant(0,1.0);
+    {
+        char longest[49];
+        memset(longest,'Z',48);longest[48]=0;
+        peer_reply(longest,0);tick(1);send_line("vision status");
+        CHECK(strstr(output,"[vision] state=idle") && strstr(output," timeout=0\r\n"));
+        CHECK(strstr(output,longest) && strstr(output,"last=\"") && strstr(output,"\"\r\n"));
+    }
+    reset_plant(0,1.0);
     send_line("vision pick 1extra");CHECK(vision_pick_state()==VISION_PICK_IDLE);
     vision_tx_ready=0;vision_request_pick(1,clock_ms);tick(20);
     CHECK(!vision_tx_count && vision_pick_state()==VISION_PICK_WAITING);
@@ -82,6 +90,36 @@ static void vision_tests(void)
     clock_ms+=20000;vision_update(clock_ms);CHECK(vision_pick_state()==VISION_PICK_TIMEOUT);
     stop_request();CHECK(vision_pick_state()==VISION_PICK_IDLE);
     puts("PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation");
+}
+
+static void task_round_lifetime_tests(void)
+{
+    unsigned ending;
+    for(ending=0;ending<3;ending++) {
+        reset_plant(0,1.15);
+        send_line("task 134+123+314+231");
+        if(ending==0)run_done();
+        else if(ending==1) {run.station_enabled=1;run_fault("test round cancellation");}
+        else stop_request();
+        send_line("station");
+        CHECK(strstr(output,"colors=000 rings=000") && !strstr(output,"colors=134"));
+        CHECK(station_start(NODE_B,0,clock_ms)==1 && station_active());
+        station_update(clock_ms+1000);CHECK(station_active());
+        CHECK(station_command("task 314+231+134+123"));
+        station_update(clock_ms+1001);CHECK(!station_active() && !station_failed());
+        station_status();CHECK(strstr(output,"colors=314 rings=231") && strstr(output,"colors=134 rings=123"));
+        station_abort();station_status();CHECK(strstr(output,"colors=000 rings=000"));
+    }
+    /* 整圈结束后相机仍吐出旧码，也不能在闲置状态把它重新缓存。 */
+    reset_plant(0,1.15);send_line("task 134+123+314+231");run_done();
+    scanner.state=SCANNER_READY;scanner_receive((const uint8_t *)"134+123+314+231\r\n",17);tick(1);
+    send_line("station");CHECK(strstr(output,"colors=000 rings=000"));
+    /* 新一轮明确手输仍可预置；独立定角/横移完成不算整轮结束。 */
+    send_line("task 314+231+134+123");run.turn_only=1;run_done();
+    send_line("station");CHECK(strstr(output,"colors=314 rings=231"));
+    run.turn_only=0;run.translation_only=1;run_done();
+    send_line("station");CHECK(strstr(output,"colors=314 rings=231"));
+    puts("PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained");
 }
 static void loading_tests(void)
 {
@@ -183,7 +221,8 @@ static void raw_preparation_timing_tests(void)
         } else {
             CHECK(arm_positions==2 && arm_trace_address[0]==5 && arm_trace_address[1]==7);
             CHECK(arm_trace_yaw_us[0]==home_pwm && arm_trace_yaw_us[1]==home_pwm);
-            CHECK(clock_ms-start>=4u*ARM_SERVO_TIME_MS);
+            CHECK(clock_ms-start>=ARM_SERVO_TIME_MS+ARM_CLAW_TIME_MS);
+            CHECK(clock_ms-start<ARM_SERVO_TIME_MS+ARM_CLAW_TIME_MS+1000u);
         }
         stop_request();
     }
@@ -236,17 +275,28 @@ static void automatic_route_tests(void)
         CHECK(sent && waiting>=1000 && replies==6 && clock_ms<deadline);
         CHECK(run.state==RUN_DONE && !run_active && run.job==8 && run.edge==16);
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && heading_reuses==3 && arm_ready() && arm_parked());
+        /* 同一上电会话再跑一轮：不得继承上一轮码；首个B必须等新码。 */
+        send_line("station");CHECK(strstr(output,"task_ready=0") && strstr(output,"colors=000 rings=000"));
+        send_line(plan?"runimu C":"runimu A");deadline=clock_ms+30000;
+        while(run.state!=RUN_STATION && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+        CHECK(run.state==RUN_STATION && run.job==0 && run.edge==1);
+        tick(1000);CHECK(run.state==RUN_STATION && !run.job && !run_active);
+        send_line("task 314+231+134+123");deadline=clock_ms+3000;
+        while(!run_active && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+        CHECK(run_active && run.job==1 && run.edge==1);
+        stop_request();
 #else
         CHECK(sent && waiting>=1000 && replies==3 && clock_ms<deadline);
         CHECK(run.state==RUN_FAULT && !run_active && run.job==2 && run.edge==5);
         CHECK(!arm_pose_known() && !arm_platform_known());
         CHECK(strstr(output,"station action refused") || strstr(output,"station work failed"));
 #endif
+        send_line("station");CHECK(strstr(output,"task_ready=0") && strstr(output,"colors=000 rings=000"));
     }
 #if STN_ROUGH_PLACE_READY && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY
     puts("PASS automatic A/C full mock flow: 8 jobs, 13960mm and three uninterrupted E passes retained; test-only READY overrides with placeholder poses, NOT calibration or hardware acceptance");
 #else
-    puts("PASS automatic A/C: rear scanner faces +X only after heading -X and four-wheel stop; F yaw 126 and open claw before each vision request, ordered three slots/colors and parked resume; D uncalibrated fault without job advance");
+    puts("PASS automatic A/C: rear scanner faces +X only after heading -X and four-wheel stop; F uses configured pick yaw and open claw before each vision request, ordered three slots/colors and parked resume; D uncalibrated fault without job advance");
 #endif
 }
 static void automatic_fault_tests(void)
@@ -302,9 +352,136 @@ static void automatic_obstacle_return_test(void)
     tick(500);CHECK(!run_active && run.state==RUN_WAIT_OBSTACLE);
     puts("PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart");
 }
+
+static void prepare_rough(unsigned batch, const char *task)
+{
+    RoadPoint point;
+    prepare_arm_auto(batch & 1u);send_line(task);
+    CHECK(road_point(NODE_D,&point));
+    field_x=planned_x=point.x;field_y=planned_y=point.y;initial_field_heading=HEAD_X_POS;
+    physical_yaw=origin_yaw=0;sample_yaw(0);
+    run.state=RUN_STATION;run.station_enabled=1;run.plan=(uint8_t)(batch & 1u);
+    run.job=(uint8_t)(batch ? 5 : 2);run.edge=(uint8_t)(batch ? 11 : 5);
+    run.heading=run.target_heading=HEAD_X_POS;run.yaw_zero_cdeg=-9000;
+    run.distance_mm=4567;run.steps=19;run.completed_roads=0x123;
+    CHECK(road_plan(NODE_E,NODE_D,&run.road));
+    checked_job=run.job;
+}
+
+static void rough_index_tests(void)
+{
+    static const uint8_t permutations[6][3]={{1,2,3},{1,3,2},{2,1,3},{2,3,1},{3,1,2},{3,2,1}};
+    unsigned batch,variant,i;
+    int configured=STN_ROUGH_PLACE_READY && STN_PLATFORM_TAKE_READY
+        && (STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_YAW_DEG);
+    if(!configured) {
+        prepare_rough(0,"task 134+123+314+231");firmware_step();
+        CHECK(run.state==RUN_FAULT && !run_active && !arm_positions && !velocity_batches);
+        CHECK(strstr(output,"not calibrated"));
+        puts("PASS rough calibration guard: rough/platform take not ready or zero rough pose refuses before arm/index movement");
+        return;
+    }
+    for(batch=0;batch<2;batch++)for(variant=0;variant<6;variant++) {
+        char task[48];uint32_t deadline;unsigned events=0,expected_count=0,placed=0,taken=0;
+        uint8_t targets[16],ring=2;int moves[16];float prior_claw=ARM_CLAW_OPEN_DEG;
+        unsigned positions_during_index=0,was_index=0;
+        const uint8_t *order=permutations[variant];
+        snprintf(task,sizeof(task),"task 134+%u%u%u+314+%u%u%u",order[0],order[1],order[2],order[0],order[1],order[2]);
+        prepare_rough(batch,task);
+        for(i=0;i<7;i++) {
+            uint8_t target=i==6 ? 2u : order[i%3];
+            if(ring!=2 && ring!=target) {targets[expected_count]=2;moves[expected_count++]=(2-(int)ring)*STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN;ring=2;}
+            if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN;ring=target;}
+        }
+        deadline=clock_ms+400000;
+        while(run.state!=RUN_FAULT && run.job==(batch ? 5 : 2) && clock_ms<deadline) {
+            int slide,lift;float yaw,claw;
+            plant_step();
+            if(strstr(output,"[station index] ring=")) {
+                unsigned target;int mm;
+                CHECK(sscanf(strstr(output,"[station index] ring="),"[station index] ring=%u move_mm=%d",&target,&mm)==2);
+                CHECK(events<expected_count && target==targets[events] && mm==moves[events]);
+                CHECK(abs(mm)==STN_ROUGH_INDEX_MM && run.station_shift && arm_parked());
+                positions_during_index=arm_positions;events++;
+            }
+            if(run.station_shift) {
+                CHECK(arm_parked() && arm_positions==positions_during_index);
+                CHECK(abs(run.forward_cmd_rpm)<=STN_ROUGH_INDEX_RPM);
+            } else if(was_index) {
+                CHECK(run.state==RUN_STATION && run.station_relock && arm_lock.state==1);
+                CHECK(run.distance_mm==4567 && run.steps==19 && run.completed_roads==0x123);
+                CHECK(run.edge==(batch ? 11 : 5) && run.plan==(batch & 1u));
+            }
+            was_index=run.station_shift;
+            arm_pose_now(&slide,&lift,&yaw,&claw);
+            if(claw!=prior_claw && slide==STN_ROUGH_SLIDE_MM && lift==STN_ROUGH_LIFT_MM && yaw==STN_ROUGH_YAW_DEG) {
+                RoadPoint point;double physical_ring;CHECK(road_point(NODE_D,&point));
+                physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+                if(claw==ARM_CLAW_OPEN_DEG) {CHECK(placed<3 && taken==0 && fabs(physical_ring-order[placed])<0.15);placed++;}
+                else if(claw==ARM_CLAW_CLOSE_DEG) {CHECK(placed==3 && taken<3 && fabs(physical_ring-order[taken])<0.15);taken++;}
+            }
+            prior_claw=claw;
+        }
+        if(run.state==RUN_FAULT)fprintf(stderr,"ROUGH batch=%u permutation=%u: %s\n",batch,variant,output);
+        CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==(batch ? 6 : 3));
+        CHECK(placed==3 && taken==3 && events==expected_count && arm_parked() && arm_platform_slot()==1);
+        CHECK(run.distance_mm==4567 && run.completed_roads==0x123);
+        {RoadPoint point;CHECK(road_point(NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
+        send_line("station");CHECK(strstr(output,"task_ready=1"));
+        stop_request();
+    }
+    /* 非排列/超界环号不得执行任何机械或底盘动作，任务码解析接口本身保持兼容。 */
+    for(variant=0;variant<2;variant++) {
+        prepare_rough(0,variant ? "task 134+125+314+231" : "task 134+113+314+231");
+        firmware_step();CHECK(run.state==RUN_FAULT && !arm_positions && !velocity_batches);
+    }
+    /* 索引接口不能绕开已收臂、零速、工位类型和新鲜IMU限制。 */
+    for(variant=0;variant<7;variant++) {
+        prepare_rough(0,"task 134+123+314+231");run.station_phase=1;
+        if(variant==0)CHECK(arm_command("arm pose 1 135 0 45",clock_ms));
+        if(variant==1)heading_sensor_invalidate(&heading_sensor);
+        if(variant==2)motor_feedback[3].speed_rpm=1;
+        if(variant==3)motor_feedback[3].speed_ms=clock_ms-ARM_FEEDBACK_TIMEOUT_MS-1u;
+        if(variant==4)arm_lock.state=1;
+        if(variant==5)run.job=1;
+        CHECK(!station_chassis_start(variant==6 ? 2*STN_ROUGH_INDEX_MM : STN_ROUGH_INDEX_MM));
+        CHECK(!run_active && !run.station_shift && !velocity_batches);
+    }
+    /* 索引期间异常取消整轮，不能退回路线旧节点或继续夹取。 */
+    for(variant=0;variant<7;variant++) {
+        uint32_t deadline;unsigned positions;
+        prepare_rough(0,"task 134+123+314+231");deadline=clock_ms+10000;
+        while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+        CHECK(run.station_shift && run_active);positions=arm_positions;
+        if(variant==0)missing_feedback_motor=4;
+        if(variant==1)missing_velocity_ack=4;
+        if(variant==2) {frozen_imu=1;heading_sensor_invalidate(&heading_sensor);}
+        if(variant==3)route_test_can_error(1);
+        if(variant==4)stop_request();
+        if(variant==5)send_line("obstacle");
+        if(variant==6)send_line("arm stop");
+        while(run_active && clock_ms<deadline)plant_step();
+        if(!(clock_ms<deadline && (run.state==RUN_FAULT || run.state==RUN_STOPPED)))
+            fprintf(stderr,"ROUGH failure variant=%u state=%u active=%u: %s\n",variant,(unsigned)run.state,run_active,output);
+        CHECK(clock_ms<deadline && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
+        tick(500);CHECK(!run_active && !station_active() && arm_positions==positions && !run.obstacle_phase);
+        send_line("station");CHECK(strstr(output,"task_ready=0"));
+    }
+    {
+        uint32_t deadline;unsigned positions;
+        prepare_rough(0,"task 134+123+314+231");deadline=clock_ms+10000;
+        while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+        positions=arm_positions;
+        while(run_active && clock_ms<deadline)plant_step();
+        CHECK(run.station_relock && arm_lock.state==1);
+        diagnostic_auto_reply=status_auto_reply=0;tick(2500);
+        CHECK(run.state==RUN_FAULT && arm_lock.state==3 && arm_positions==positions);
+    }
+    puts("PASS rough indexing: both batches/all six ring permutations; 150mm split steps, same-order place/take, return to ring2, route state retained, fresh zero-speed reacquisition, calibration/duplicate/range/park/IMU/feedback/ACK/CAN/stop/obstacle failures");
+}
 int main(void)
 {
-    task_and_stop_tests();vision_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();
+    task_and_stop_tests();vision_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();
     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
     return 0;
 }

@@ -1,4 +1,4 @@
-#include "vision_link.h"
+﻿#include "vision_link.h"
 #include "arm_control.h"
 #ifdef ARM_HOST_TEST
 #include "../tests/vision_host_io.h"
@@ -32,7 +32,7 @@ static struct {
     uint8_t busy_reported, mismatch_reported;
     char message[VISION_PAYLOAD_MAX + 1u];
     uint32_t frames, crc_errors, bad_frames, overflows, timeouts;
-    char line[96];
+    char line[256]; /* 中文UTF-8状态和最长协议原文。 */
 } vision;
 
 static uint8_t vision_crc8(const uint8_t *data, uint16_t length)
@@ -271,7 +271,7 @@ void vision_request_pick(uint8_t color, uint32_t now)
     __disable_irq();rx_tail = rx_head;rx_fault = 0;__enable_irq();
     if (!vision_send(payload)) {vision.pick_state = VISION_PICK_FAULT;return;}
     snprintf(vision.line, sizeof(vision.line),
-             "[vision] request %s; wait for PICK (20s)\r\n", payload);
+             "[vision] queued request %s; wait for PICK (20s)\r\n", payload);
     arm_output(vision.line);
 }
 
@@ -317,12 +317,12 @@ int vision_command(const char *s, uint32_t now)
     }
     if (!strcmp(s, "vision ping")) {
         if (!vision_send("D")) {arm_output("[vision rejected: transmit busy]\r\n");return 1;}
-        arm_output("[vision] sent D; expect R frame\r\n");
+        arm_output("[vision] queued D; expect R frame\r\n");
         return 1;
     }
     if (!strcmp(s, "vision range")) {
         if (!vision_send("R")) {arm_output("[vision rejected: transmit busy]\r\n");return 1;}
-        arm_output("[vision] sent R\r\n");
+        arm_output("[vision] queued R\r\n");
         return 1;
     }
     if (!strcmp(s, "vision clear")) {

@@ -87,6 +87,9 @@
 #define CAR_VELOCITY_STOP_RPM         1       /* 四轮新速度反馈的停稳阈值。 */
 #define CAR_ENCODER_COUNTS_PER_REV 65536u     /* 0x36编码器位置计数/圈。 */
 #define CAR_POSITION_PULSES_PER_REV 3200u     /* 既有距离标定的脉冲/圈，16细分。 */
+#define CAR_ENCODER_LEARN_MM          2       /* 净位移至少2mm且连续两份新位置沿同向增长，才确认符号。 */
+#define CAR_ENCODER_LEARN_RPM        20       /* 四轮方向全部确认前的平移速度上限，RPM。 */
+#define CAR_ENCODER_LEARN_TIMEOUT_MS 1500u    /* 起步方向无法确认时停车；不带着未知里程继续加速。 */
 #define CAR_DISTANCE_KP_X100          50       /* 剩余1mm对应0.50 RPM，近终点减速。 */
 #define CAR_DISTANCE_MIN_RPM           3
 #define CAR_DISTANCE_TOLERANCE_MM      1
@@ -115,7 +118,9 @@
     CAR_DRIVE_ACCEL_RPM_PER_S < 1 || CAR_DRIVE_DECEL_RPM_PER_S < 1 || \
     CAR_DRIVE_SLEW_MAX_DT_MS < CAR_VELOCITY_CONTROL_MS || CAR_DRIVE_SLEW_MAX_DT_MS > CAR_VELOCITY_REPLY_MS || \
     CAR_VELOCITY_QUERY_MS < 1 || CAR_VELOCITY_FEEDBACK_MS <= CAR_VELOCITY_REPLY_MS || \
-    CAR_POSITION_PULSES_PER_REV < 1 || CAR_DISTANCE_TOLERANCE_MM < 1
+    CAR_POSITION_PULSES_PER_REV < 1 || CAR_DISTANCE_TOLERANCE_MM < 1 || \
+    CAR_ENCODER_LEARN_MM < 1 || CAR_ENCODER_LEARN_RPM < CAR_DISTANCE_MIN_RPM || \
+    CAR_ENCODER_LEARN_RPM > CAR_LATERAL_MAX_RPM || CAR_ENCODER_LEARN_TIMEOUT_MS < CAR_VELOCITY_FEEDBACK_MS
 #error Invalid_heading_configuration
 #endif
 #if CAR_STATION_RAW_HEADING < 0 || CAR_STATION_RAW_HEADING > 3 || \

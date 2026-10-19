@@ -1,2 +1,2 @@
-# 保留交付代码、固件和验证记录的原始字节，避免换行转换导致SHA256校验失败。
+# Preserve source, firmware and evidence bytes for package SHA256 checks.
 * -text

@@ -1,10 +1,8 @@
 # 底盘＋机械机构独立合并工程
 
-> GitHub目录为 `stm32-car-arm-merged2`，同步自本地当前工程 `stm32-car-arm-merged`。当前操作与验证以本页链接及 `evidence/current-validation.json` 为准，继承的历史记录不能当作本版验收。
+**当前版本：20261019-merge2-r10。新增粗加工D的150mm逐环索引、按任务码物块顺序放下并抓回、最后回2号环基准；保留当前底盘闭环、路线、原料区、暂存区及机械参数。粗加工姿态和平台取料仍未标定，READY=0，到D会保护停车；[粗加工配置与操作](docs/粗加工环位作业合并.md)。r8增加起步编码器方向确认，r9使任务码只对一整轮两批作业有效，返程过B不重扫，整轮完成或取消后需新任务。机械臂两轴300RPM、夹爪0.5秒、云台/平台2秒插值，英文串口及原抓放参数保持。[完整操作与标定要求](docs/merged2功能合并与自动作业.md)。全程只使用 `runimu A/C`；同向直行节点不停，串口 `obstacle` 可在普通道路退回上一已记录节点并停等，工位作业/索引中遇障碍直接取消停车。尚无自动障碍输入，保留 `CAR_RUN_RPM=3000`。[连续直行与退回边界](docs/连续直行与障碍退回.md)。构建和电脑回归通过不代表烧录或实车验收。**
 
-**当前本地版本：20261018-merge2-r3，底盘沿用本地当前版本，合入 merged2 的机械臂装车、任务码、UART5视觉和自动到站作业。[完整操作与标定要求](docs/merged2功能合并与自动作业.md)。旧 `run A/C`、`tl/tr` 和专用脉冲标定入口已移除，全程只使用 `runimu A/C`。`runimu A/C` 同向直行节点连续通过，新增串口 `obstacle` 触发后退回上一已记录节点并停等。尚无自动障碍检测输入，保留你确认的 `CAR_RUN_RPM=3000`。[操作与验证边界](docs/连续直行与障碍退回.md)。本目录为已同步的GitHub交付版本，尚未由代理烧录实车。**
-
-本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。本地工作目录仍为 `stm32-car-arm-merged`；本次按操作者指定上传至GitHub的 `stm32-car-arm-merged2/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
 
 **打开 [keil/TableNavigation.uvprojx](keil/TableNavigation.uvprojx)，目标 `TableNavigation`。现场操作先看本文，再查 [串口命令速查与故障处理](docs/串口命令速查.md)；完整命令、互锁和参数来源见 [合并与串口操作](docs/合并与串口操作.md)。** SDK、离线查表和驱动均已包含，可单独复制本文件夹使用。工具链沿用ARM Compiler 5.06 update 5、STM32F4xx_DFP 3.1.1；不要切换到Compiler 6。
 
@@ -16,9 +14,9 @@
 ## 1. 打开、编译和下载
 
 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
-2. 使用ARM Compiler 5，执行 **Rebuild all target files**。本次交付构建为68个编译单元、0错误、30条原驱动警告，记录见 [当前验证](evidence/current-validation.json)。
+2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
 3. 下载本目录 `keil/OBJ/table_navigation.hex`，或下载自己刚编译的固件。源码改过就重新编译，不使用旁边原底盘工程的固件。
-4. 下载后复位并运行芯片。串口应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261018-merge2-r3`。只显示发送记录不代表板子已回复。
+4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r10`。只显示发送记录不代表板子已回复。
 
 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
 
@@ -106,9 +104,9 @@ arm pose 0 135 0 45
 
 小步动作确认正确，机构在收回0、最高135、云台0后：
 
-1. 发 `arm pick`。程序开爪→云台126°→高位伸65mm→降至110mm→合爪。等 `arm done`，确认物块夹稳；此时不会自动回收或松爪。
+1. 发 `arm pick`。程序开爪→云台131°→高位伸55mm→降至105mm→合爪15°。等 `arm done`，确认物块夹稳；此时不会自动回收或松爪。
 2. 放料前声明载物台实际角度。**只有平台确实在20°初始档时**，发 `arm platform pose 20`；它会立即写PA2 PWM。其他姿态按真实角度填写。
-3. 发 `arm place`。程序保持夹持，先升135→收0→云台254°→伸30→降110→开爪。等完成并检查物块已放稳。
+3. 发 `arm place`。程序保持夹持，先升135→收0→云台256°→伸35→降110→开爪45°。等完成并检查物块已放稳。
 4. 发 `arm home`，等完成、确认收拢后，可用 `arm platform 2`切到第二档；另外两档为 `arm platform 1`、`arm platform 3`。平台档位角度为20/139/256°，沿用原驱动，实际落位仍需测量。
 
 `arm cycle`把回收拢位、夹取、放平台连成一套，会开爪；手里已有物块时用单独的 `arm place`。平台不会在取放流程中自动轮换，也没有物块占位检测。
@@ -130,7 +128,7 @@ arm off
 
 ## 文件与验证
 
-- [src/arm_config.h](src/arm_config.h)：最新机械参数；云台0/126/254度分别约1975/1275/564us。
+- [src/arm_config.h](src/arm_config.h)：最新机械参数；云台0/131/256度分别约1975/1247/553us；夹爪开45°/合15°约826/604us。
 - [src/arm_control.c](src/arm_control.c)：非阻塞取放、两轴反馈和三路PWM插值。
 - [src/main_table_nav.c](src/main_table_nav.c)：共享串口/CAN与底盘互锁。
 - [evidence/current-validation.json](evidence/current-validation.json)：本次源码、测试、构建和固件一致性记录。
