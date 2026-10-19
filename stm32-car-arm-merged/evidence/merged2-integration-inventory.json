@@ -1,0 +1,63 @@
+{
+  "upstreamCommit": "4b3b5a7bcf2152254744db9649224f958c6a07eb",
+  "upstreamDirectory": "stm32-car-arm-merged2",
+  "currentChassisFilesUnchanged": {
+    "src/car_config.h": "c7fde38a442ec41e84a11ee5b2a8254b745ae670cdebe21dfc2af4c3b22e9ceb",
+    "src/arm_config.h": "eccc79e5d3a87e35d5a53cbc2e561cb92e907dcc791b4a5b90d1959eb46e6643",
+    "src/heading_control.c": "0669ef497011638e388744d2cd7040bb3ad7555c268ce65b926b2e58ea0a12ad",
+    "src/heading_control.h": "320ed13dbab443778d3a5046259bf1bec874911571cc66545d873b0bc07022b6",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/motion.c": "a05b80f2f6813d6438f5e5cf6d2903696528200f856dd108b1e200958d49f900",
+    "src/motion.h": "6e38de39aea2b96d955f1abbe7999bd3c5425f3346ae6f71dd778817e1f763dc",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/structure.h": "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
+    "lookup/route_table.h": "6e921114a83b36e32e0c91f2d77353bca6ce910069484a4aa0b781af48a63e7c",
+    "lookup/table_data.h": "52f9e9aa531bf693809ca61739188329f362bf5ca0be17c485ae05a6861fadc6",
+    "lookup/generation.json": "407f1d42188f82da99471ab383824fe62883cc6d488330438b974346544069c4"
+  },
+  "currentChassisFunctionsUnchanged": [
+    "run_resolve_leg",
+    "run_next_straight",
+    "run_straight_remaining",
+    "run_pass_straight",
+    "run_velocity_distance",
+    "run_velocity_send",
+    "run_forward_target",
+    "run_forward_slew",
+    "run_heading_window_sample",
+    "run_velocity_log",
+    "run_return_wait",
+    "run_return_next",
+    "run_obstacle_request"
+  ],
+  "portedModules": [
+    "src/arm_control.c",
+    "src/arm_control.h",
+    "src/station_job.c",
+    "src/station_job.h",
+    "src/station_config.h",
+    "src/vision_link.c",
+    "src/vision_link.h"
+  ],
+  "uartOwnership": "UART5_IRQHandler retained in vendor with byte/error delivery to vision; legacy 9-byte parsing displaced",
+  "sourceDifferencesAfterLineEndingNormalization": [
+    "src/arm_control.c",
+    "src/car_config.h",
+    "src/heading_control.c",
+    "src/heading_control.h",
+    "src/main_table_nav.c",
+    "src/motion.c",
+    "src/motion.h",
+    "src/station_config.h",
+    "src/station_job.c",
+    "src/station_job.h",
+    "src/vision_link.c",
+    "src/vision_link.h"
+  ]
+}

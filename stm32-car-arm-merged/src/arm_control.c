@@ -1,4 +1,4 @@
-#include "arm_control.h"
+﻿#include "arm_control.h"
 #include "arm_config.h"
 #include <string.h>
 #include <stdio.h>
@@ -30,7 +30,7 @@ static struct {
     uint8_t referenced, state, sequence, step, count, submit;
     int slide, lift;
     float yaw, claw, platform;
-    uint8_t platform_known;
+    uint8_t platform_known, platform_slot; /* slot：1..3，0=未知。 */
     ArmStep target, single;
     ArmAxis axis[2]; /* 0=平推7号，1=升降5号。 */
     uint32_t phase_ms, move_ms, pwm_ms, poll_ms, query_ms, servo_ms;
@@ -63,11 +63,94 @@ static const ArmStep place_steps[] = {
     {0,ARM_PLACE_LIFT_MM,0,0,0,LIFT},
     {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW}
 };
+/* 一次装三块，对应独立程序的 @：
+ *   回默认位 -> 载物台 1 号位 -> (抓取 -> 放料) x3。
+ * 第 2、3 块放完后先抬离杯壁并收齿条，再让云台回抓取角和载物台 +120度
+ * 在同一步里并行；放下一块前该步尚未完成，因此不会落到两个杯位之间。
+ * 三块放完后机械臂回默认位（含夹爪45度），载物台最后回到1号位。 */
+static const ArmStep load3_steps[] = {
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_YAW_HOME_DEG,0,0,YAW},
+    {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW},
+    {0,0,0,0,ARM_PLATFORM_FIRST_DEG,PLATFORM},
+
+    {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW},
+    {0,0,ARM_PICK_YAW_DEG,0,0,YAW},
+    {ARM_PICK_SLIDE_MM,0,0,0,0,SLIDE},
+    {0,ARM_PICK_LIFT_MM,0,0,0,LIFT},
+    {0,0,0,ARM_CLAW_CLOSE_DEG,0,CLAW},
+
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_PLACE_YAW_DEG,0,0,YAW},
+    {ARM_PLACE_SLIDE_MM,0,0,0,0,SLIDE},
+    {0,ARM_PLACE_LIFT_MM,0,0,0,LIFT},
+    {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW},
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_PICK_YAW_DEG,0,ARM_PLATFORM_SECOND_DEG,YAW|PLATFORM},
+    {ARM_PICK_SLIDE_MM,0,0,0,0,SLIDE},
+    {0,ARM_PICK_LIFT_MM,0,0,0,LIFT},
+    {0,0,0,ARM_CLAW_CLOSE_DEG,0,CLAW},
+
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_PLACE_YAW_DEG,0,0,YAW},
+    {ARM_PLACE_SLIDE_MM,0,0,0,0,SLIDE},
+    {0,ARM_PLACE_LIFT_MM,0,0,0,LIFT},
+    {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW},
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_PICK_YAW_DEG,0,ARM_PLATFORM_THIRD_DEG,YAW|PLATFORM},
+    {ARM_PICK_SLIDE_MM,0,0,0,0,SLIDE},
+    {0,ARM_PICK_LIFT_MM,0,0,0,LIFT},
+    {0,0,0,ARM_CLAW_CLOSE_DEG,0,CLAW},
+
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_PLACE_YAW_DEG,0,0,YAW},
+    {ARM_PLACE_SLIDE_MM,0,0,0,0,SLIDE},
+    {0,ARM_PLACE_LIFT_MM,0,0,0,LIFT},
+    {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW},
+
+    {0,ARM_LIFT_HOME_MM,0,0,0,LIFT},
+    {ARM_SLIDE_HOME_MM,0,0,0,0,SLIDE},
+    {0,0,ARM_YAW_HOME_DEG,0,0,YAW},
+    {0,0,0,ARM_CLAW_OPEN_DEG,0,CLAW},
+    {0,0,0,0,ARM_PLATFORM_FIRST_DEG,PLATFORM}
+};
+#define LOAD1_MAX 20u
+static ArmStep load1_steps[LOAD1_MAX];
+static uint8_t load1_count;
 #define PICK_COUNT (sizeof(pick_steps)/sizeof(pick_steps[0]))
 #define HOME_COUNT (sizeof(home_steps)/sizeof(home_steps[0]))
 #define PLACE_COUNT (sizeof(place_steps)/sizeof(place_steps[0]))
+#define LOAD3_COUNT (sizeof(load3_steps)/sizeof(load3_steps[0]))
 static uint8_t axis_address(unsigned i) { return i ? ARM_LIFT_ADDRESS : ARM_SLIDE_ADDRESS; }
 static float axis_ppm(unsigned i) { return i ? ARM_LIFT_PULSES_PER_MM : ARM_SLIDE_PULSES_PER_MM; }
+static float platform_angle_of(uint8_t slot)
+{
+    if (slot == 2u) return ARM_PLATFORM_SECOND_DEG;
+    if (slot == 3u) return ARM_PLATFORM_THIRD_DEG;
+    return ARM_PLATFORM_FIRST_DEG;
+}
+static uint8_t platform_slot_of(float angle)
+{
+    if (angle > ARM_PLATFORM_FIRST_DEG - 5.0f && angle < ARM_PLATFORM_FIRST_DEG + 5.0f) return 1u;
+    if (angle > ARM_PLATFORM_SECOND_DEG - 5.0f && angle < ARM_PLATFORM_SECOND_DEG + 5.0f) return 2u;
+    if (angle > ARM_PLATFORM_THIRD_DEG - 5.0f && angle < ARM_PLATFORM_THIRD_DEG + 5.0f) return 3u;
+    return 0u;
+}
+static int append_step(int slide, int lift, float yaw, float claw, float platform, uint8_t mask)
+{
+    ArmStep *s;
+    if (load1_count >= LOAD1_MAX) return 0;
+    s = &load1_steps[load1_count++];
+    s->slide = slide; s->lift = lift; s->yaw = yaw; s->claw = claw;
+    s->platform = platform; s->mask = mask;
+    return 1;
+}
 
 /* 不启用旧PWM_Init：它会同时驱动PA2平台，并在上电时输出旧机构位置。
  * 本模块独占TIM2的CH2/CH3/CH4，使用主循环插值，不开TIM2中断。 */
@@ -151,6 +234,33 @@ static float yaw_of_pulse(uint16_t pulse)
 }
 void arm_init(void) { memset(&arm,0,sizeof(arm)); arm_head=arm_tail=arm_rx_fault=0; }
 int arm_enabled(void) { return arm.enabled; }
+int arm_busy(void)
+{
+    return arm.enabled && (arm.state==ARM_PREFLIGHT || arm.state==ARM_SUBMIT
+        || arm.state==ARM_MOVING || arm.state==ARM_YAW_TEST);
+}
+int arm_failed(void) { return arm.state==ARM_FAULT; }
+int arm_pose_known(void) { return arm.referenced; }
+int arm_platform_known(void) { return arm.platform_known; }
+float arm_platform_angle(void) { return arm.platform; }
+/* 自动工位用：已使能、姿态与载物台角度都已人工声明，且当前空闲。 */
+int arm_ready(void)
+{
+    return arm.enabled && arm.referenced && arm.platform_known && arm.state==ARM_IDLE;
+}
+int arm_platform_slot(void)
+{
+    if (!arm.platform_known) return 0;
+    return arm.platform_slot?arm.platform_slot:platform_slot_of(arm.platform);
+}
+/* 只读当前“已确认/已下发”的姿态，用于工位程序跳过无变化的步骤。 */
+void arm_pose_now(int *slide, int *lift, float *yaw, float *claw)
+{
+    if (slide) *slide = arm.slide;
+    if (lift) *lift = arm.lift;
+    if (yaw) *yaw = arm.yaw;
+    if (claw) *claw = arm.claw;
+}
 int arm_parked(void)
 {
     return arm.enabled && arm.referenced && arm.state==ARM_IDLE
@@ -278,11 +388,14 @@ static const ArmStep *current_step(void)
         if(step<PICK_COUNT)return &pick_steps[step];
         return &place_steps[step-PICK_COUNT];
     }
+    if(arm.sequence==5)return &load3_steps[arm.step];
+    if(arm.sequence==6)return &load1_steps[arm.step];
     return &arm.single;
 }
 static void begin_step(uint32_t now)
 {
     const ArmStep *s=current_step();
+    arm.target.mask=s->mask;
     arm.target.slide=(s->mask&SLIDE)?s->slide:arm.slide;
     arm.target.lift=(s->mask&LIFT)?s->lift:arm.lift;
     arm.target.yaw=(s->mask&YAW)?s->yaw:arm.yaw;
@@ -294,7 +407,11 @@ static void begin_step(uint32_t now)
     }
     memset(arm.axis,0,sizeof(arm.axis)); clear_arm_rx(0);
     arm.state=ARM_PREFLIGHT;arm.phase_ms=now;arm.poll_ms=now-ARM_POLL_MS;
-    arm.servo_ms=ARM_SERVO_TIME_MS;
+    /* 两轴到位由ACK、位置、速度和状态反馈确认，不附加无关的舵机等待。
+     * 云台与载物台同时动作时仍等完整插值；夹爪使用独立的短行程时间。 */
+    arm.servo_ms=0;
+    if(s->mask&(YAW|PLATFORM)) arm.servo_ms=ARM_SERVO_TIME_MS;
+    else if(s->mask&CLAW) arm.servo_ms=ARM_CLAW_TIME_MS;
     arm.waiting=arm.poll=arm.submit=0;
     arm_output("[arm step: waiting for fresh axis feedback]\r\n");
 }
@@ -305,18 +422,56 @@ static void start_single(ArmStep s,uint32_t now)
 static void arm_status(void)
 {
     /* 仅主循环调用；固定缓冲避免浮点格式化占满启动文件的1KiB栈。 */
-    static char message[260];
+    static char message[384];
     snprintf(message,sizeof(message),"[arm] enabled=%u referenced=%u state=%u step=%u/%u slide_mm=%d lift_mm=%d yaw_deg=%.1f claw_deg=%.1f rpm=%u claw_us=%u yaw_us=%u; servo positions are commanded estimates\r\n",
         arm.enabled,arm.referenced,arm.state,arm.step,arm.count,arm.slide,arm.lift,(double)arm.yaw,(double)arm.claw,
         (unsigned)ARM_AXIS_RPM,(unsigned)arm.claw_us,(unsigned)arm.yaw_us);
     arm_output(message);
-    snprintf(message,sizeof(message),"[platform] referenced=%u angle_deg=%.1f pulse_us=%u; no position sensor\r\n",
-        arm.platform_known,(double)arm.platform,(unsigned)arm.platform_us);
+    /* slot 就是“现在停在爪子正下方的是第几号杯位”：1/2/3，0=不在三个标定角上。 */
+    snprintf(message,sizeof(message),"[platform] referenced=%u slot=%u/3 angle_deg=%.1f pulse_us=%u; no position sensor\r\n",
+        arm.platform_known,(unsigned)arm_platform_slot(),(double)arm.platform,(unsigned)arm.platform_us);
     arm_output(message);
+}
+/* 视觉确认后的单块循环：抓当前取料口 -> 放到载物台当前空杯位 ->
+ * 离开杯壁、云台回抓取角，同时载物台转到下一个空位。
+ * 起始若不在抓取预备位，自动补回默认位；动作参数与 load3 完全相同。 */
+static int build_load_one(void)
+{
+    uint8_t slot;
+    float next;
+    if (!arm.referenced || !arm.platform_known)
+        return 0;
+    slot = arm.platform_slot ? arm.platform_slot : platform_slot_of(arm.platform);
+    if (!slot)
+        return 0;
+    next = platform_angle_of((uint8_t)(slot % 3u + 1u));
+    load1_count = 0;
+    if (arm.lift != ARM_LIFT_HOME_MM && !append_step(0, ARM_LIFT_HOME_MM, 0, 0, 0, LIFT)) return 0;
+    if (arm.slide != ARM_SLIDE_HOME_MM && !append_step(ARM_SLIDE_HOME_MM, 0, 0, 0, 0, SLIDE)) return 0;
+    if (arm.yaw != ARM_PICK_YAW_DEG && !append_step(0, 0, ARM_PICK_YAW_DEG, 0, 0, YAW)) return 0;
+    if (arm.claw != ARM_CLAW_OPEN_DEG && !append_step(0, 0, 0, ARM_CLAW_OPEN_DEG, 0, CLAW)) return 0;
+    /* 抓取：伸齿条 -> 下降 -> 合爪。 */
+    if (!append_step(ARM_PICK_SLIDE_MM, 0, 0, 0, 0, SLIDE)) return 0;
+    if (!append_step(0, ARM_PICK_LIFT_MM, 0, 0, 0, LIFT)) return 0;
+    if (!append_step(0, 0, 0, ARM_CLAW_CLOSE_DEG, 0, CLAW)) return 0;
+    /* 放到车载载物台当前杯位。 */
+    if (!append_step(0, ARM_LIFT_HOME_MM, 0, 0, 0, LIFT)) return 0;
+    if (!append_step(ARM_SLIDE_HOME_MM, 0, 0, 0, 0, SLIDE)) return 0;
+    if (!append_step(0, 0, ARM_PLACE_YAW_DEG, 0, 0, YAW)) return 0;
+    if (!append_step(ARM_PLACE_SLIDE_MM, 0, 0, 0, 0, SLIDE)) return 0;
+    if (!append_step(0, ARM_PLACE_LIFT_MM, 0, 0, 0, LIFT)) return 0;
+    if (!append_step(0, 0, 0, ARM_CLAW_OPEN_DEG, 0, CLAW)) return 0;
+    /* 升高离开杯壁、收齿条；云台回抓取角和载物台换位并行。 */
+    if (!append_step(0, ARM_LIFT_HOME_MM, 0, 0, 0, LIFT)) return 0;
+    if (!append_step(ARM_SLIDE_HOME_MM, 0, 0, 0, 0, SLIDE)) return 0;
+    if (!append_step(0, 0, ARM_PICK_YAW_DEG, 0, next, YAW | PLATFORM)) return 0;
+    return load1_count;
 }
 int arm_command(const char *s,uint32_t now)
 {
     int v[4]; ArmStep step={0,0,0,0,0,0};
+    /* 独立程序的 @ 在合并工程里不占用底盘按键，保留为 arm load3 的别名。 */
+    if(!strcmp(s,"@"))s="arm load3";
     if(strcmp(s,"arm") && strncmp(s,"arm ",4) && strncmp(s,"claw ",5))return 0;
     if(!strcmp(s,"arm") || !strcmp(s,"arm status") || !strcmp(s,"claw status")){arm_status();return 1;}
     if(!strcmp(s,"arm stop")){arm_stop();return 1;}
@@ -362,7 +517,8 @@ int arm_command(const char *s,uint32_t now)
         arm_output(message);return 1;
     }
     if(!strncmp(s,"arm platform pose ",18) && numbers(s+18,v,1,1u) && v[0]>=0 && v[0]<=2700) {
-        arm.platform=v[0]/10.0f;arm.platform_known=1;platform_pose(arm.platform);
+        arm.platform=v[0]/10.0f;arm.platform_known=1;
+        arm.platform_slot=platform_slot_of(arm.platform);platform_pose(arm.platform);
         arm_output("[platform pose declared: PWM submitted; actual angle unverified]\r\n");return 1;
     }
     if(!arm.referenced){arm_output("[arm rejected: actual pose unknown; arm pose SLIDE LIFT YAW CLAW required]\r\n");return 1;}
@@ -386,6 +542,34 @@ int arm_command(const char *s,uint32_t now)
         arm.sequence=(uint8_t)(!strcmp(s,"arm place")?3:4);
         arm.count=(uint8_t)(arm.sequence==3?PLACE_COUNT:HOME_COUNT+PICK_COUNT+PLACE_COUNT);
         arm.step=0;begin_step(now);return 1;
+    }
+    if(!strcmp(s,"arm load3") || !strcmp(s,"arm load 3") || !strcmp(s,"arm cycle3")) {
+        if(!arm.platform_known) {
+            arm_output("[arm rejected: declare actual platform angle with arm platform pose DEG]\r\n");return 1;
+        }
+        arm_output("[arm load3: home -> slot 1 -> (pick -> place) x3; platform advances during yaw return]\r\n");
+        arm.sequence=5;arm.count=(uint8_t)LOAD3_COUNT;arm.step=0;begin_step(now);return 1;
+    }
+    /* 原料区每次只装一块：视觉确认颜色到位后由主流程调用。 */
+    if(!strcmp(s,"arm load1") || !strcmp(s,"arm load 1")) {
+        uint8_t built;
+        if(!arm.referenced) {
+            arm_output("[arm rejected: actual pose unknown; arm pose SLIDE LIFT YAW CLAW required]\r\n");return 1;
+        }
+        if(!arm.platform_known) {
+            arm_output("[arm rejected: declare actual platform angle with arm platform pose DEG]\r\n");return 1;
+        }
+        built=(uint8_t)build_load_one();
+        if(!built) {
+            arm_output("[arm rejected: load1 needs a known platform slot 1..3]\r\n");return 1;
+        }
+        {
+            static char message[160];
+            snprintf(message,sizeof(message),"[arm load1: one block into platform slot %u; %u steps]\r\n",
+                (unsigned)(arm.platform_slot?arm.platform_slot:platform_slot_of(arm.platform)),(unsigned)built);
+            arm_output(message);
+        }
+        arm.sequence=6;arm.count=built;arm.step=0;begin_step(now);return 1;
     }
     if(!strncmp(s,"arm platform ",13) && numbers(s+13,v,1,0) && v[0]>=1 && v[0]<=3) {
         static const float angles[3]={ARM_PLATFORM_FIRST_DEG,ARM_PLATFORM_SECOND_DEG,ARM_PLATFORM_THIRD_DEG};
@@ -491,9 +675,31 @@ void arm_update(uint32_t now)
             servo_pose((float)arm.target.claw,(float)arm.target.yaw);
             if(arm.platform_known){platform_pose(arm.target.platform);arm.platform=arm.target.platform;}
             arm.slide=arm.target.slide;arm.lift=arm.target.lift;arm.yaw=arm.target.yaw;arm.claw=arm.target.claw;
+            /* 单轴命令（arm platform N 等）完成后按目标角刷新杯位，
+             * 否则工位程序会读到过期杯位、重复转同一格。
+             * 多步流程（load1/load3）在各自收尾处自己处理，避免重复跳位。 */
+            if(arm.sequence==0 && arm.platform_known)
+                arm.platform_slot=platform_slot_of(arm.platform);
             arm_output("[arm step complete: axes feedback verified; servo motion estimated]\r\n");
             if(++arm.step<arm.count)begin_step(now);
-            else{arm.state=ARM_IDLE;arm.waiting=0;arm_output("[arm done: inspect actual grip; no grip sensor]\r\n");}
+            else{
+                arm.state=ARM_IDLE;arm.waiting=0;
+                if(arm.sequence==5) {
+                    arm.platform_slot=1u;
+                    arm_output("[arm load3 done: 3 blocks placed; arm home; platform back to slot 1]\r\n");
+                } else if(arm.sequence==6) {
+                    uint8_t slot=arm.platform_slot?arm.platform_slot:platform_slot_of(arm.platform);
+                    arm.platform_slot=(uint8_t)(slot%3u+1u);
+                    {
+                        static char message[120];
+                        snprintf(message,sizeof(message),
+                            "[arm load1 done: one block placed; platform now at slot %u]\r\n",
+                            (unsigned)arm.platform_slot);
+                        arm_output(message);
+                    }
+                }
+                arm_output("[arm done: inspect actual grip; no grip sensor]\r\n");
+            }
             return;
         }
     }

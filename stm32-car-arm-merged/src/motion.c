@@ -82,7 +82,6 @@ int motion_start(Motion *motion, MotionParameters parameters, uint32_t now_ms)
     motion->parameters = parameters;
     motion->started_ms = now_ms;
     motion->forward_trim_mm = 0;
-    motion->rotating = motion->clockwise = 0;
     if (parameters.axis == BODY_LEFT)
     {
         int16_t per_m = parameters.mm > 0
@@ -123,47 +122,6 @@ int motion_start(Motion *motion, MotionParameters parameters, uint32_t now_ms)
         if (wheel_pulses[wheel_index] && !wheel_rpm)
             wheel_rpm = 1;
         if (!motion->io.position(motion->io.user, wheels[wheel_index].addr, dir, wheel_rpm, parameters.acceleration, wheel_pulses[wheel_index]))
-        {
-            stop_wheels(motion);
-            motion->state = MOTION_FAULT;
-            return 0;
-        }
-    }
-    if (!motion->io.synchronize(motion->io.user))
-    {
-        stop_wheels(motion);
-        motion->state = MOTION_FAULT;
-        return 0;
-    }
-    return 1;
-}
-
-int motion_start_rotation(Motion *motion, uint8_t clockwise, uint32_t pulses,
-                          uint16_t rpm, uint8_t acceleration, uint32_t now_ms)
-{
-    uint8_t wheel_index;
-    uint8_t direction = clockwise ? (uint8_t)!CAR_TURN_CCW_DIR : CAR_TURN_CCW_DIR;
-    if (!motion || (motion->state != MOTION_IDLE && motion->state != MOTION_DONE)
-        || clockwise > 1u || !pulses || pulses > 2u * CAR_TURN_MAX_TEST_PULSES
-        || rpm < 20 || rpm > 300 || CAR_TURN_CCW_DIR > 1u)
-        return 0;
-    motion->parameters.axis = BODY_FORWARD;
-    motion->parameters.mm = 0;
-    motion->parameters.rpm = rpm;
-    motion->parameters.acceleration = acceleration;
-    motion->generation++;
-    motion->started_ms = now_ms;
-    motion->pulses = pulses;
-    motion->forward_trim_mm = 0;
-    motion->rotating = 1;
-    motion->clockwise = clockwise;
-    estimate_motion(motion, pulses, rpm, acceleration);
-    motion->state = MOTION_RUNNING;
-    /* 原 car_move 的纯旋转映射：四轮方向位相同，沿用已有位置接口同步启动。 */
-    for (wheel_index = 0; wheel_index < 4; wheel_index++)
-    {
-        if (!motion->io.position(motion->io.user, wheels[wheel_index].addr,
-                                 direction, rpm, acceleration, pulses))
         {
             stop_wheels(motion);
             motion->state = MOTION_FAULT;

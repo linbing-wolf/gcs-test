@@ -1,0 +1,7 @@
+PASS nonstop route A uart_cost=0: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000
+PASS nonstop route C uart_cost=0: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000
+PASS nonstop route A uart_cost=1: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000
+PASS nonstop route C uart_cost=1: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000
+PASS obstacle return: A/C before/after E, ordinary road, start lateral+forward and return backward+lateral; stop first, return to latest node, block road, wait without job advance or restart
+PASS obstacle failures: missing feedback/ACK, wheel4 not stopped, IMU invalid, CAN fault, emergency stop, second obstacle and preflight obstacle; no false arrival
+PASS nonstop/obstacle: 2154054 assertions; run_rpm=3000 return_rpm=60; simulation, not vehicle acceptance

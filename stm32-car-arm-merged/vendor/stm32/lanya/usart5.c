@@ -6,10 +6,6 @@
 #include "LED.h"
 #include "delay.h"
 
-static u8 RxCounter1=0;
-static u8 RxBuffer1[10];
-static u8 RxState1 = 0;	
-static u8 RxFlag1 = 0;
 u16 USART5_RX_STA=0;
 int i;
 char test[10];
@@ -67,79 +63,16 @@ void uart5_init(u32 bound)
   * @retval 无
   ******************************************************************************
   */
-void UART5_IRQHandler(void)                 
+/* UART5 belongs to the vision protocol; IRQ only queues bytes. */
+extern void vision_receive_byte(uint8_t byte, uint8_t uart_error);
+void UART5_IRQHandler(void)
 {
-    // 判断是否接收到数据（接收缓冲非空中断标志位是否置位）
-    if(USART_GetITStatus(UART5, USART_IT_RXNE) != RESET)
-    {
-        u8 r;
-        // 读取接收到的数据
-        r = USART_ReceiveData(UART5);
-        // 如果还未接收完成
-        if((USART5_RX_STA & 0x8000) == 0)
-        {
-            // 第一步：等待帧头0x04
-            if(RxState1 == 0 && r == 0x04)
-            {
-                RxState1 = 1;                     // 状态转移
-                RxBuffer1[RxCounter1++] = r;      // 存储数据
-            }
-            // 第二步：等待帧头0x05
-            else if(RxState1 == 1 && r == 0x05)
-            {
-                RxState1 = 2;
-                RxBuffer1[RxCounter1++] = r;
-            }
-            // 第三步：接收中间数据（6字节）
-            else if(RxState1 == 2)
-            {
-                RxBuffer1[RxCounter1++] = r;
-                if(RxCounter1 >= 9)
-                {
-                    RxState1 = 3;     // 转入结束标志判断状态
-                    RxFlag1 = 1;      // 标记接收完成
-                }
-            }
-            // 第四步：检查最后一个字节是否为0x06（帧尾）
-            else if(RxState1 == 3)
-            {
-                if(RxBuffer1[RxCounter1 - 1] == 0x06)
-                {
-                    // 成功接收一帧数据，关闭中断处理
-                    USART_ITConfig(UART5, USART_IT_RXNE, DISABLE);
-                    if(RxFlag1)
-                    {
-                        // 可以在这里处理接收到的数据，如触发事件、设置标志位等
-						UART5_SendArray(RxBuffer1,6);
-                    }
-
-                    // 清除状态，准备接收下一帧
-                    RxFlag1 = 0;
-                    RxCounter1 = 0;
-                    RxState1 = 0;
-                    USART_ITConfig(UART5, USART_IT_RXNE, ENABLE);
-                }
-            }
-            // 若接收中出现错误字节或顺序错误，重置状态
-            else
-            {
-                RxState1 = 0;
-                RxCounter1 = 0;
-                for(i = 0; i < 9; i++)
-                    RxBuffer1[i] = 0x00;
-            }
-        }
-        // 接收异常（如帧已标记完成但仍有数据进来），重置
-        else
-        {
-            RxState1 = 0;
-            RxCounter1 = 0;
-            for(i = 0; i < 9; i++)
-                RxBuffer1[i] = 0x00;
-        }
+    uint32_t status = UART5->SR;
+    if (status & (USART_FLAG_RXNE | USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE | USART_FLAG_PE)) {
+        uint8_t byte = (uint8_t)UART5->DR;
+        vision_receive_byte(byte,(uint8_t)((status & (USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE | USART_FLAG_PE)) != 0));
     }
 }
-
 
 void UART5_SendString(char *str) 
 {

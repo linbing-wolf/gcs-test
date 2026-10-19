@@ -1,0 +1,25 @@
+PASS body coordinates: independent drawing vectors, four headings, forward/backward/left/right, stored-road encoding preserved
+PASS removed run: old A/C route, raw turns and pulse setters rejected in nav/test/turn without motion; retained diagnostic help
+PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, test mode and stop priority; no motion triggered
+PASS XM1601: exact CRLF/continuous packets, fragmented ACK, no premature READY, QR line assembly, burst results, UART/queue/line overflow recovery, invalid ACK timeout, explicit baud/reinit, timer wrap and stop priority; no motion or Flash writes
+PASS entry: 37247 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/removed-run checks
+PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap
+PASS encoder startup: forward/backward/left/right 1670mm with every single-wheel 0.6mm opposite initial sample; all complete near model target; established sign contradiction faults without averaging cancellation
+PASS continuous turn: 12 origin/direction/angle cases, +/-180 wrap, variable wheel gain, deceleration, overshoot reversal, sequential commands, no position pulses
+Lateral plant observation (simulation only): max lateral coordinate error 0.8mm; unobserved forward/back displacement 37.6mm under persistent yaw disturbance and retained translation feedforward
+Start 60mm plant observation (simulation only): lateral error 0.2mm, forward/back displacement 0.2mm
+PASS lateral closed loop: 30 left/right-distance-speed cases; live yaw disturbance recovery; 60RPM cap, encoder X scale, terminal overshoot correction, four-wheel stop, stale IMU/telemetry/ACK, frozen encoder, CAN/stop priority, timer wrap; physical accuracy unverified
+PASS continuous route A: 13960mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 29.8mm (simulated)
+PASS transition timing A: 3 heading reuses, 15 baselines avg 1.0ms max 1ms; first moving batch avg 24.0ms max 29ms (simulation only)
+ROUTE_TIME A simulated_ms=137753; excludes physical UART cost and vehicle calibration
+PASS continuous route C: 13960mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 32.0mm (simulated)
+PASS transition timing C: 3 heading reuses, 15 baselines avg 1.0ms max 1ms; first moving batch avg 23.3ms max 29ms (simulation only)
+ROUTE_TIME C simulated_ms=138173; excludes physical UART cost and vehicle calibration
+PASS right-gripper gating: F west / D east / H south; reverse-approach disturbance recovery; no job advance on moving wheel-4, invalid IMU or stop during station alignment
+PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed
+PASS IMU adapter: configured UART switch, checksum/yaw byte path, UART error invalidation
+PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward travel, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs
+PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A left / C right 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8
+PASS transition reuse: same-target completion carried once; latest IMU sample checked without rebasing; reject yaw/rate/stale IMU/wheel-4/missing ACK/unverified stop/changed heading/station alignment; cached positions fenced by stopped interval; final completion and timer wrap
+PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history
+PASS heading/feedback: 1544581 assertions; selected IMU turn/drive/four-wheel feedback regressions

@@ -1,5 +1,7 @@
 # 底盘＋机械机构独立合并工程
 
+**当前版本：20261019-merge2-r11。粗加工D接入MaixCAM2现有 `R/READY`、`D`、`MOVE`、`DISC` 视觉协议：先确认中间2号环，前1中2后3，按1→2→3放下、再1→2→3抓回原杯位，最后视觉对准2号基准并去暂存。粗加工使用操作者指定55mm / 105mm / yaw125°，平台取料复用35mm / 110mm / yaw256°；每次视觉修正3mm并重新确认四轮严格零速。暂存姿态及其旧平台取料READY仍为0，到H会保护停车；视觉缺失/未对准也停车。[粗加工配置与操作](docs/粗加工环位作业合并.md)。保留当前底盘闭环、路线、原料区、暂存区及原机械参数。r8增加起步编码器方向确认，r9使任务码只对一整轮两批作业有效，返程过B不重扫，整轮完成或取消后需新任务。机械臂两轴300RPM、夹爪0.5秒、云台/平台2秒插值，英文串口及原抓放参数保持。[完整操作与标定要求](docs/merged2功能合并与自动作业.md)。全程只使用 `runimu A/C`；同向直行节点不停，串口 `obstacle` 可在普通道路退回上一已记录节点并停等，工位作业/索引中遇障碍直接取消停车。尚无自动障碍输入，保留 `CAR_RUN_RPM=3000`。[连续直行与退回边界](docs/连续直行与障碍退回.md)。构建和电脑回归通过不代表烧录或实车验收。**
+
 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
 
 **打开 [keil/TableNavigation.uvprojx](keil/TableNavigation.uvprojx)，目标 `TableNavigation`。现场操作先看本文，再查 [串口命令速查与故障处理](docs/串口命令速查.md)；完整命令、互锁和参数来源见 [合并与串口操作](docs/合并与串口操作.md)。** SDK、离线查表和驱动均已包含，可单独复制本文件夹使用。工具链沿用ARM Compiler 5.06 update 5、STM32F4xx_DFP 3.1.1；不要切换到Compiler 6。
@@ -7,14 +9,14 @@
 - 保留底盘原有IMU闭环、A/C全程路线、地图/查表、扫码和PC9按钮行为。
 - 新增 `arm ...` / `claw ...` 串口命令。底盘运动与机械机构会话互斥，四轮反馈确认停稳后才启用机械机构。
 - `!`始终提出全系统停止请求，不沿用独立测试程序的夹取快捷键。上电不启动路线、不使能5/7号机械电机、不输出三路舵机PWM。
-- 本次是手动串口整合；A/C路线到站仍跳过取放，串口屏未接入。
+- `runimu A/C` 默认自动到站作业；粗加工按本次指定参数和视觉确认执行；暂存及其平台取料表未标定，仍拒绝暂存动作。`station auto off` 可仅跑底盘，串口屏未在本次接入。
 
 ## 1. 打开、编译和下载
 
 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
-2. 使用ARM Compiler 5，执行 **Rebuild all target files**。本次交付构建为68个编译单元、0错误、30条原驱动警告，记录见 [当前验证](evidence/current-validation.json)。
+2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
 3. 下载本目录 `keil/OBJ/table_navigation.hex`，或下载自己刚编译的固件。源码改过就重新编译，不使用旁边原底盘工程的固件。
-4. 下载后复位并运行芯片。串口应出现 `merged chassis + arm serial control; ! always emergency stop`。只显示发送记录不代表板子已回复。
+4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r11`。只显示发送记录不代表板子已回复。
 
 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
 
@@ -29,6 +31,7 @@
 | HWT101航向 | USART2，PD5 TX / PD6 RX，115200 |
 | XM1601扫码 | USART1，PB6 TX / PB7 RX，暂定9600；PC0低有效触发 |
 | 开始按钮 | PC9，按下高电平；只打印提示，不发车 |
+| 视觉UART5 | PD2 RX←上位机TX；PC12 TX→上位机RX；115200、AA55+CRC8；替换原9字节接收协议 |
 
 串口助手设置为 **115200、8数据位、无校验、1停止位、无流控、文本/ASCII发送**，关闭循环发送；普通命令以换行结束，LF或CRLF均可。`!`无需换行。
 
@@ -43,11 +46,11 @@ feedback
 qr
 ```
 
-`imu`应显示 `uart_enabled=1 fresh=1`，采样数增加，转动车身时角度变化。`qr`返回 `[scanner]` 状态，配置应答通过后才是READY；扫码文本打印 `[scan] ...`，目前不会自动安排路线。上电不会自动发车，机械5/7号不使能，三路舵机PWM关闭。
+`imu`应显示 `uart_enabled=1 fresh=1`，采样数增加，转动车身时角度变化。`qr`返回 `[scanner]` 状态，配置应答通过后才是READY；扫码文本打印 `[scan] ...`，现在可保存为任务码并让B点扫码等待继续，但扫码本身不会启动整圈路线。上电不会自动发车，机械5/7号不使能，三路舵机PWM关闭。
 
 ## 4. 底盘怎么操作
 
-机械机构会话关闭时才允许底盘运动。若提示 `arm session owns motion`，按第7节退出机构后重试。
+手动底盘测试仍要求退出机构会话。自动 `runimu` 则要求机构会话有效、真实姿态已声明、已收拢且平台在1号位；具体准备步骤见 [自动作业说明](docs/merged2功能合并与自动作业.md)。
 
 | 目的 | 逐条发送 | 完成/前置条件 |
 |---|---|---|
@@ -58,7 +61,7 @@ qr
 | 右下启停区2整圈 | `runimu C` | 初始车头向上、朝扫码区；起步左移60mm |
 | 停止 | `!` | 不等换行，提出底盘和机构停止请求 |
 
-A/C固定任务路线为扫码B→原料F→粗加工D→暂存H→F→D→H→起点。**当前到站仍跳过夹取/放料，不会边跑路线边自动操作机械机构。** 全程或单动作结束后检查实物；归位偏差、真实角度和间隙仍待现场验收。旧 `run A/C`默认缺少脉冲标定会拒绝，日常闭环整圈用 `runimu`。
+A/C固定任务路线为扫码B→原料F→粗加工D→暂存H→F→D→H→起点。**默认到站执行工位作业；行驶和机构动作互斥。只测底盘时先退出机构会话并发送 `station auto off`，再发送 `runimu A/C`。** 全程或单动作结束后检查实物；归位偏差、真实角度和间隙仍待现场验收。旧 `run A/C`、`tl/tr`、`pulses N`、`ccw90 N/cw90 N` 已移除；定角调试保留 `turn` 后的 `left90/right90/left180/right180`。清理范围见 [runimu全程入口与旧代码清理](docs/runimu全程入口与旧代码清理.md)。
 
 ## 5. 机械机构首次小步测试
 
@@ -101,9 +104,9 @@ arm pose 0 135 0 45
 
 小步动作确认正确，机构在收回0、最高135、云台0后：
 
-1. 发 `arm pick`。程序开爪→云台126°→高位伸65mm→降至110mm→合爪。等 `arm done`，确认物块夹稳；此时不会自动回收或松爪。
+1. 发 `arm pick`。程序开爪→云台131°→高位伸55mm→降至105mm→合爪15°。等 `arm done`，确认物块夹稳；此时不会自动回收或松爪。
 2. 放料前声明载物台实际角度。**只有平台确实在20°初始档时**，发 `arm platform pose 20`；它会立即写PA2 PWM。其他姿态按真实角度填写。
-3. 发 `arm place`。程序保持夹持，先升135→收0→云台254°→伸30→降110→开爪。等完成并检查物块已放稳。
+3. 发 `arm place`。程序保持夹持，先升135→收0→云台256°→伸35→降110→开爪45°。等完成并检查物块已放稳。
 4. 发 `arm home`，等完成、确认收拢后，可用 `arm platform 2`切到第二档；另外两档为 `arm platform 1`、`arm platform 3`。平台档位角度为20/139/256°，沿用原驱动，实际落位仍需测量。
 
 `arm cycle`把回收拢位、夹取、放平台连成一套，会开爪；手里已有物块时用单独的 `arm place`。平台不会在取放流程中自动轮换，也没有物块占位检测。
@@ -117,15 +120,15 @@ arm home
 arm off
 ```
 
-必须等 `arm home`完成且检查机构收拢，才发 `arm off`；否则会提示 `park with arm home`。`arm off`关闭三路舵机PWM并释放底盘互锁，夹爪可能失去保持力，5/7号步进仍使能。然后才能用 `test`、`turn`或`runimu A/C`。
+必须等 `arm home`完成且检查机构收拢，才发 `arm off`；否则会提示 `park with arm home`。`arm off`关闭三路舵机PWM并释放底盘互锁，夹爪可能失去保持力，5/7号步进仍使能。然后可用 `test`、`turn` 或 `station auto off` 下的 `runimu A/C`；自动作业的 `runimu` 需要保留已声明、已收拢的机构会话。
 
-`!`随时提出底盘和机构停止请求；`arm stop`仅停止机构，保留底盘独占。停止时保持最后PWM及步进使能，舵机仍可能朝最后目标运动。停止后的机械坐标基准失效，不能盲目重发整套动作。
+`!`随时提出底盘和机构停止请求；`arm stop`在手动会话仅停止机构；自动行驶/工位期间会同时取消整圈作业并停车，保留故障锁。停止时保持最后PWM及步进使能，舵机仍可能朝最后目标运动。停止后的机械坐标基准失效，不能盲目重发整套动作。
 
 全系统急停/底盘反馈故障后：检查实物→`arm on`重新等四轮停稳→按真实姿态重新 `arm pose ...`；平台也重新声明实际姿态。故障不会自动续跑。具体反馈含义和恢复方法见 [串口命令速查与故障处理](docs/串口命令速查.md)。
 
 ## 文件与验证
 
-- [src/arm_config.h](src/arm_config.h)：最新机械参数；云台0/126/254度分别约1975/1275/564us。
+- [src/arm_config.h](src/arm_config.h)：最新机械参数；云台0/131/256度分别约1975/1247/553us；夹爪开45°/合15°约826/604us。
 - [src/arm_control.c](src/arm_control.c)：非阻塞取放、两轴反馈和三路PWM插值。
 - [src/main_table_nav.c](src/main_table_nav.c)：共享串口/CAN与底盘互锁。
 - [evidence/current-validation.json](evidence/current-validation.json)：本次源码、测试、构建和固件一致性记录。
@@ -137,6 +140,9 @@ arm off
 ```powershell
 .\tools\verify-heading.ps1 -Gcc C:\msys64\ucrt64\bin\gcc.exe
 .\tools\verify-arm-integration.ps1 -Gcc C:\msys64\ucrt64\bin\gcc.exe
+.\tools\verify-continuous.ps1 -Gcc C:\msys64\ucrt64\bin\gcc.exe
+.\tools\verify-drive.ps1 -Gcc C:\msys64\ucrt64\bin\gcc.exe
+.\tools\verify-station-vision.ps1 -Gcc C:\msys64\ucrt64\bin\gcc.exe
 .\tools\build-isolated.ps1 -CompilerBin D:\keil5\ARM\ARMCC\bin
 .\tools\check-package.ps1
 ```

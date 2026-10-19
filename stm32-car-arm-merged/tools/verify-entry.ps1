@@ -11,7 +11,7 @@ try {
     $env:PATH=(Split-Path -Parent $entryGccPath)+';'+$env:PATH
     $entryRelativeExe='evidence/'+(Split-Path -Leaf $entryOut)+'/verify_entry.exe'
     & $entryGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
-        tests/verify_entry.c src/arm_control.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
+        tests/verify_entry.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
         lookup/route_table.c -lm -o $entryRelativeExe
     if($LASTEXITCODE -ne 0){throw 'Host test compilation failed'}
     $entryText=& $entryExe

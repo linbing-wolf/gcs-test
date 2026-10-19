@@ -70,6 +70,23 @@ int16_t heading_control_rpm(const HeadingControl *control, uint16_t max_rpm)
     return (int16_t)rpm;
 }
 
+int16_t heading_control_drive_rpm(const HeadingControl *control, uint16_t max_rpm)
+{
+    int32_t error = control->error_cdeg, rate = control->rate_cdeg_s;
+    int32_t effort, rpm;
+    if (error <= CAR_DRIVE_HEADING_QUIET_CDEG && error >= -CAR_DRIVE_HEADING_QUIET_CDEG
+        && rate <= CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S && rate >= -CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S)
+        return 0;
+    effort = error * CAR_DRIVE_HEADING_KP_X100 - rate * CAR_DRIVE_HEADING_KD_X100;
+    rpm = effort >= 0 ? (effort + 5000) / 10000 : -((-effort + 5000) / 10000);
+    /* 电机接口仅接受整数RPM；静稳区外，保留PD方向而非按角差强制转向。 */
+    if (effort > 0 && rpm < CAR_DRIVE_HEADING_MIN_RPM) rpm = CAR_DRIVE_HEADING_MIN_RPM;
+    if (effort < 0 && rpm > -CAR_DRIVE_HEADING_MIN_RPM) rpm = -CAR_DRIVE_HEADING_MIN_RPM;
+    if (rpm > max_rpm) rpm = max_rpm;
+    if (rpm < -(int32_t)max_rpm) rpm = -(int32_t)max_rpm;
+    return (int16_t)rpm;
+}
+
 void heading_control_wheels(int16_t forward, int16_t turn, int16_t rpm[4])
 {
     heading_control_translate_wheels(forward, 0, turn, rpm);

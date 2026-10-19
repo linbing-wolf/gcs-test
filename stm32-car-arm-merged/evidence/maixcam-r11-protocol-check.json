@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "commit": "16949b0a6fa4af86323a55e0659c8d74779f5d4c",
+  "sourceGitBlobsVerified": {
+    "vision-maixcam/AI_HANDOFF_STM32.md": "0db946551b707fac752107ff946b64a9e129cca7c6b99f62a9bd58aadd68eaba",
+    "vision-maixcam/README.md": "e7b41e071f5e8ee2c45752043c9da72cc9332e087d4624caf975008d81e68b09",
+    "vision-maixcam/maixcam_app/main.py": "ea2aaf9923377ef919f01a353105dc2cc0b59a241d581fe2057ca628838842a4",
+    "vision-maixcam/maixcam_app/protocol.py": "dc2896a7206e22c56e37c39adb408a5e417dcbd43109283370f2481103e108b6",
+    "vision-maixcam/maixcam_app_v2/config.py": "54dd6e27a4f98ebaf9c2914e98187f4af510f31701fc0a7e32c05fc3f709e3e5",
+    "vision-maixcam/maixcam_app_v2/main.py": "4053bf288df0d90044eba17b18daea145611a5de305edcbcfa95f3e412ad19ea",
+    "vision-maixcam/maixcam_app_v2/precision.py": "cddc22d43039e05e5dfd94f77c95f49ec23183e4e43c81f7922ab8626aec97ea",
+    "vision-maixcam/maixcam_app_v2/protocol.py": "cb6e487ee0eeb3408d2d34b80484eb4a1bd7a15ae44aa17aa12bfa8510641733",
+    "vision-maixcam/maixcam_app_v2/README.md": "d8718aee868415c4c4bf04892855cbd26558703728198bcb4b6e2765071289ad",
+    "vision-maixcam/maixcam_app_v2/tasks.py": "d9795383de260215a452d0e14df2da4fdae3d50d653f1340a36dde3cbc2bec75",
+    "vision-maixcam/maixcam_app_v2/vision.py": "f86c1aaa70bbf6c1f3a6a53f185bb974ed6495f5416d7bedd2bc46c13601f003",
+    "vision-maixcam/stm32_patch/README.md": "ada9b95c630dcc9154a4f0eb0df353f667843434ef8aa825a92e0cedbf9d5f2d"
+  },
+  "vectors": {
+    "R": "aa550152ac0d",
+    "D": "aa550144ce0d",
+    "READY": "aa550552454144590c0d",
+    "MOVE,30": "aa55074d4f56452c3330110d",
+    "MOVE,-30": "aa55084d4f56452c2d3330ff0d",
+    "DISC,318,242,-2,1": "aa5511444953432c3331382c3234322c2d322c31920d"
+  },
+  "actualTaskChecks": [
+    "actual pack_move/pack_disc and frame parser",
+    "actual TaskCtl/task_disc: MOVE -> R cancellation -> READY without second move",
+    "actual task_disc: five centered frames -> DISC,320,240,0,1"
+  ],
+  "scope": "actual remote Python functions with stub camera/UART, no hardware"
+}

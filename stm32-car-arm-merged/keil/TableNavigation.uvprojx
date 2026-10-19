@@ -914,9 +914,51 @@
         <Group>
           <GroupName>ArmControl</GroupName>
           <Files>
-            <File><FileName>arm_control.c</FileName><FileType>1</FileType><FilePath>..\src\arm_control.c</FilePath></File>
-            <File><FileName>arm_control.h</FileName><FileType>5</FileType><FilePath>..\src\arm_control.h</FilePath></File>
-            <File><FileName>arm_config.h</FileName><FileType>5</FileType><FilePath>..\src\arm_config.h</FilePath></File>
+            <File>
+              <FileName>arm_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\src\arm_control.c</FilePath>
+            </File>
+            <File>
+              <FileName>arm_control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\src\arm_control.h</FilePath>
+            </File>
+            <File>
+              <FileName>arm_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\src\arm_config.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>StationControl</GroupName>
+          <Files>
+            <File>
+              <FileName>station_job.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\src\station_job.c</FilePath>
+            </File>
+            <File>
+              <FileName>vision_link.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\src\vision_link.c</FilePath>
+            </File>
+            <File>
+              <FileName>station_job.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\src\station_job.h</FilePath>
+            </File>
+            <File>
+              <FileName>station_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\src\station_config.h</FilePath>
+            </File>
+            <File>
+              <FileName>vision_link.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\src\vision_link.h</FilePath>
+            </File>
           </Files>
         </Group>
       </Groups>

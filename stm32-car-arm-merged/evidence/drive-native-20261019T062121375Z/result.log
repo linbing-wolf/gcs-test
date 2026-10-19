@@ -1,0 +1,15 @@
+PASS drive core: logged small-angle/rate cases, predictive damping sign, unchanged turn control, bounded ramps, delayed tick, reverse, wrap and braking envelope
+PASS drive execution: ramp applied at submit opportunities, command/feedback logs, immediate emergency bypass and fresh profile after restart
+PASS heading windows: transient peaks survive zero-error log snapshot, signed extrema positions/timestamps, sample deduplication across windows, periodic output, restart, lateral and sequence/time wrap
+PASS heading window boundaries: lateral/forward segment-final flush and reset at next encoder baseline
+DYNAMICS A uart_cost=0 E-H yaw_max=0.670deg cross_max=1.350mm; H-E yaw_max=0.700deg cross_max=0.925mm; simulated, not hardware
+DYNAMICS C uart_cost=0 E-H yaw_max=0.770deg cross_max=0.973mm; H-E yaw_max=0.710deg cross_max=0.866mm; simulated, not hardware
+DYNAMICS A uart_cost=1 E-H yaw_max=0.620deg cross_max=1.226mm; H-E yaw_max=0.690deg cross_max=1.217mm; simulated, not hardware
+DYNAMICS C uart_cost=1 E-H yaw_max=0.630deg cross_max=1.251mm; H-E yaw_max=0.600deg cross_max=1.047mm; simulated, not hardware
+PASS continuous route A: 13960mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 29.8mm (simulated)
+PASS transition timing A: 3 heading reuses, 15 baselines avg 1.0ms max 1ms; first moving batch avg 24.0ms max 29ms (simulation only)
+ROUTE_TIME A simulated_ms=137753; excludes physical UART cost and vehicle calibration
+PASS continuous route C: 13960mm, 18 segments, 1 reverse, 18 turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error 32.0mm (simulated)
+PASS transition timing C: 3 heading reuses, 15 baselines avg 1.0ms max 1ms; first moving batch avg 23.3ms max 29ms (simulation only)
+ROUTE_TIME C simulated_ms=138173; excludes physical UART cost and vehicle calibration
+PASS drive dynamics: 614949 assertions; independent wheel-response model, hardware accuracy unverified

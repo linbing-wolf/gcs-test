@@ -10,11 +10,12 @@
 
 /* 1. 常用速度与加速度，RPM 为电机转速，150 为驱动器加速度档位。 */
 #define CAR_TEST_RPM                60       /* test 模式上电默认速度；可用 rpm 命令改。 */
-#define CAR_RUN_RPM                 90       /* run/runimu 全程直行速度；覆盖道路表速度。 */
+#define CAR_RUN_RPM                 3000      /* runimu 全程直行速度；覆盖道路表速度。 */
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */
 #define CAR_RUN_RETURN_LATERAL_ENABLED 1     /* 已走返回路：恢复发车朝向后后退，末段60mm横移归位。 */
 #define CAR_LATERAL_MAX_RPM          60      /* 横移速度上限；先沿用已标定的60RPM范围。 */
+#define CAR_OBSTACLE_RETURN_RPM      60      /* obstacle触发后沿已走道路退回的速度上限，RPM。 */
 /* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y，暂存H向+X；A/C及B/E不移动。
  * 单位mm。修改后先运行tools/rebuild-route-table.ps1重生成并验证查表，再编译。 */
 #define CAR_MAP_TOP_INSET_MM         90
@@ -41,26 +42,10 @@
 #define LEFT_FORWARD_MM_PER_M     20
 #define RIGHT_FORWARD_MM_PER_M     8
 
-/* 原地转向：先用 turn / pulses / tl,tr 实测，再填写左右转90度的脉冲。
- * 0 表示未标定，拒绝 run A/C。不会由未知的轴距/轮距猜测转角。
- * 方向位沿用原 car_move(0,0,w)：w>0 时四轮 dir=1，w<0 时四轮 dir=0。
- * 小脉冲验证 tl 确实左转；若相反，只把 CAR_TURN_CCW_DIR 改为0再编译。
- */
-#define CAR_TURN_RPM                  30
-#define CAR_TURN_CLOSED_LOOP_RPM      60       /* 连续转向速度上限；不靠固定脉冲确认角度。 */
-#define CAR_TURN_TEST_PULSES         200u
-#define CAR_TURN_MAX_TEST_PULSES   20000u
-#define CAR_TURN_CCW_DIR               1u
-/* 第三版装配模型轮体几何中面：轴距190mm，轮距约215.964mm。
- * 理论轮行程=(轴距+轮距)*pi/4；乘前进脉冲/mm得到90度初值。
- * 仅供标定试验，不能据此宣告车身转到90度或直接放行全程。
- */
-#define CAR_MODEL_WHEELBASE_MM       190.0f
-#define CAR_MODEL_TRACK_MM           215.9641f
-#define CAR_TURN_MODEL_90_PULSES ((uint32_t)(CALIBRATED_PPM_Y * \
-    (CAR_MODEL_WHEELBASE_MM + CAR_MODEL_TRACK_MM) * 0.7853981634f + 0.5f))
-#define CAR_TURN_CCW_90_PULSES         0u
-#define CAR_TURN_CW_90_PULSES          0u
+/* 原地转向只使用IMU闭环；方向位同时供四轮速度混控使用，不能随旧入口删除。 */
+#define CAR_TURN_RPM                  30       /* turn模式手动定角转向默认速度上限，RPM。 */
+#define CAR_TURN_CLOSED_LOOP_RPM      1000       /* runimu连续转向速度上限；不靠固定脉冲确认角度。 */
+#define CAR_TURN_CCW_DIR               1u      /* 正向旋转的驱动器dir位；IMU左转角应增加。 */
 
 /* 6. runimu航向闭环。现场日志已有新角度，沿用当前开启的USART2接收。
  * 置1只开启USART2被动接收，不自动扫描波特率或向模块写配置。
@@ -83,6 +68,16 @@
 #define CAR_HEADING_MIN_RPM           3       /* 误差超容差时的低速修正初值。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
+/* 直行保持航向独立于原地转向：沿用PD增益初值，小角度仍保留角速度阻尼。 */
+#define CAR_DRIVE_HEADING_KP_X100    120       /* RPM/度 ×100，尚待本车实测调节。 */
+#define CAR_DRIVE_HEADING_KD_X100     30       /* RPM/(度/秒) ×100。 */
+#define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
+#define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
+#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向3RPM跳变。 */
+#define CAR_DRIVE_ACCEL_RPM_PER_S    120u      /* 前进/后退速度指令上升率，0到90RPM至少750ms。 */
+#define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速的指令变化率；急停/故障不经过斜坡。 */
+#define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 100u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */
+#define CAR_DRIVE_SLEW_MAX_DT_MS      50u      /* 吸收正常日志开销；长时间延迟最多推进50ms的斜坡。 */
 #define CAR_VELOCITY_CONTROL_MS      25u      /* 目标控制周期；只采用新IMU样本更新角度。 */
 #define CAR_VELOCITY_QUERY_MS         5u      /* 串行轮询四轮位置/转速/状态，约60ms一轮。 */
 #define CAR_VELOCITY_REPLY_MS       150u
@@ -92,6 +87,9 @@
 #define CAR_VELOCITY_STOP_RPM         1       /* 四轮新速度反馈的停稳阈值。 */
 #define CAR_ENCODER_COUNTS_PER_REV 65536u     /* 0x36编码器位置计数/圈。 */
 #define CAR_POSITION_PULSES_PER_REV 3200u     /* 既有距离标定的脉冲/圈，16细分。 */
+#define CAR_ENCODER_LEARN_MM          2       /* 净位移至少2mm且连续两份新位置沿同向增长，才确认符号。 */
+#define CAR_ENCODER_LEARN_RPM        20       /* 四轮方向全部确认前的平移速度上限，RPM。 */
+#define CAR_ENCODER_LEARN_TIMEOUT_MS 1500u    /* 起步方向无法确认时停车；不带着未知里程继续加速。 */
 #define CAR_DISTANCE_KP_X100          50       /* 剩余1mm对应0.50 RPM，近终点减速。 */
 #define CAR_DISTANCE_MIN_RPM           3
 #define CAR_DISTANCE_TOLERANCE_MM      1
@@ -99,7 +97,6 @@
 #define CAR_DRIVE_TIMEOUT_MS      30000u      /* 单个几何直行段总时限。 */
 #define CAR_CONTROL_LOG_MS          500u
 #define CAR_HEADING_MAX_DRIFT_CDEG  1500       /* 直行偏航15度请求停车。 */
-#define CAR_RUN_STATUS_MAX_AGE_MS    250u
 
 /* 右侧夹爪朝工位：地图航向0=下(+Y)、1=左(-X)、2=上(-Y)、3=右(+X)。 */
 #define CAR_STATION_RAW_HEADING       1u      /* 原料在上：车头向左，右侧向上。 */
@@ -112,10 +109,18 @@
     (CAR_RUN_START_LATERAL_ENABLED != 0 && CAR_RUN_START_LATERAL_ENABLED != 1) || \
     (CAR_RUN_RETURN_LATERAL_ENABLED != 0 && CAR_RUN_RETURN_LATERAL_ENABLED != 1) || \
     CAR_LATERAL_MAX_RPM < 20 || CAR_LATERAL_MAX_RPM > 300 || \
+    CAR_OBSTACLE_RETURN_RPM < 20 || CAR_OBSTACLE_RETURN_RPM > 300 || \
     CAR_HEADING_TOLERANCE_CDEG < 1 || CAR_HEADING_STABLE_SAMPLES < 2 || \
     CAR_HEADING_KP_X100 < 1 || CAR_VELOCITY_CONTROL_MS < 10 || \
+    CAR_DRIVE_HEADING_KP_X100 < 1 || CAR_DRIVE_HEADING_KD_X100 < 0 || \
+    CAR_DRIVE_HEADING_QUIET_CDEG < 1 || CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S < 1 || \
+    CAR_DRIVE_HEADING_MIN_RPM < 1 || CAR_DRIVE_HEADING_MIN_RPM > CAR_HEADING_DRIVE_TRIM_RPM || \
+    CAR_DRIVE_ACCEL_RPM_PER_S < 1 || CAR_DRIVE_DECEL_RPM_PER_S < 1 || \
+    CAR_DRIVE_SLEW_MAX_DT_MS < CAR_VELOCITY_CONTROL_MS || CAR_DRIVE_SLEW_MAX_DT_MS > CAR_VELOCITY_REPLY_MS || \
     CAR_VELOCITY_QUERY_MS < 1 || CAR_VELOCITY_FEEDBACK_MS <= CAR_VELOCITY_REPLY_MS || \
-    CAR_POSITION_PULSES_PER_REV < 1 || CAR_DISTANCE_TOLERANCE_MM < 1
+    CAR_POSITION_PULSES_PER_REV < 1 || CAR_DISTANCE_TOLERANCE_MM < 1 || \
+    CAR_ENCODER_LEARN_MM < 1 || CAR_ENCODER_LEARN_RPM < CAR_DISTANCE_MIN_RPM || \
+    CAR_ENCODER_LEARN_RPM > CAR_LATERAL_MAX_RPM || CAR_ENCODER_LEARN_TIMEOUT_MS < CAR_VELOCITY_FEEDBACK_MS
 #error Invalid_heading_configuration
 #endif
 #if CAR_STATION_RAW_HEADING < 0 || CAR_STATION_RAW_HEADING > 3 || \
@@ -136,10 +141,6 @@
 #define CAR_SCANNER_UART_BAUD              9600u
 #define CAR_SCANNER_BOOT_MS                1000u
 #define CAR_SCANNER_ACK_MS                 1000u
-#define CAR_RUN_QUERY_INTERVAL_MS            25u
-#define CAR_RUN_DIAGNOSTIC_INTERVAL_MS      500u /* 等待未到位轮时，交替只读误差/转速。 */
-#define CAR_RUN_STATUS_TIMEOUT_MS          1000u
-#define CAR_RUN_POSITION_ACK_TIMEOUT_MS    1500u
 
 /* 5. 运动估时/超时。估时不确认到位；全程仍需四轮反馈，导航仍需确认。 */
 #define CAR_MOTION_MIN_ESTIMATE_MS    200u

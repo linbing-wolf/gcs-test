@@ -6,9 +6,17 @@
 void arm_init(void);
 int arm_enabled(void);
 int arm_parked(void);
+int arm_pose_known(void);
 int arm_command(const char *command, uint32_t now);
 void arm_update(uint32_t now);
 void arm_stop(void);
+int arm_busy(void);
+int arm_failed(void);
+int arm_platform_known(void);
+float arm_platform_angle(void);
+int arm_ready(void);
+int arm_platform_slot(void);
+void arm_pose_now(int *slide, int *lift, float *yaw, float *claw);
 void arm_can_error(uint8_t flags);
 void arm_can_rx(uint32_t id, uint8_t ide, uint8_t rtr,
                 uint8_t length, const uint8_t *data, uint32_t now);

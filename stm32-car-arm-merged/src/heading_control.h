@@ -22,6 +22,8 @@ int heading_control_start(HeadingControl *control, HeadingSample sample,
 HeadingDecision heading_control_update(HeadingControl *control, HeadingSample sample,
                                        uint32_t now_ms);
 int16_t heading_control_rpm(const HeadingControl *control, uint16_t max_rpm);
+/* 前进/后退保持航向；允许越过零误差前的角速度阻尼，不使用原地转向3RPM规则。 */
+int16_t heading_control_drive_rpm(const HeadingControl *control, uint16_t max_rpm);
 /* forward>0为沿车头前进，turn>0为左转；输出正值对应原驱动dir=1。 */
 void heading_control_wheels(int16_t forward, int16_t turn, int16_t rpm[4]);
 /* left>0为车身左移；前进、横移、旋转叠加后统一限幅。 */

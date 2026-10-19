@@ -1,0 +1,15 @@
+PASS task/stop: compact and separated groups, rings 4/5, invalid atomic rollback, station command does not trigger s shortcut; newline s and immediate ! retained
+PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation
+PASS rough vision transport: actual R/READY-D-MOVE/DISC frames; MOVE requires cancellation READY, old/bad/malformed/un-aligned replies, bounds/UART/timeouts/wrap rejected
+PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained
+PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump
+PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure
+RAW_READY_TIMING yaw_start_ms=152 vision_request_ms=2061; simulation only
+PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full 2s yaw; changed lift/slide/claw targets still execute in safe order with fresh feedback
+PASS automatic A/C: raw loading retained; configured rough completes before protected storage; disabled rough refuses before job advance
+PASS station failures: emergency, obstacle during work, arm stop and wheel-4 motion stop all work with no automatic resume
+PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup
+PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart
+PASS rough indexing: both batches/all six task permutations; fixed 1/2/3 visit order, original cup mapping, front1/rear3, initial/final ring2 vision, route state and strict zero interlock retained; fault coverage
+PASS rough closed loop: independent simulated geometry +/-9mm converges using 3mm steps and fresh observations; no arm motion during chassis movement; stop/obstacle/arm/IMU/CAN feedback faults and missing camera hold vehicle
+PASS station/vision integration: 2309326 assertions; ready_flags=1/0/0; simulation only

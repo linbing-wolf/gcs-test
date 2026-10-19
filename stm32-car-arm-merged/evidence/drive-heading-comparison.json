@@ -1,0 +1,133 @@
+{
+  "status": "SIMULATED_COMPARISON_NOT_PHYSICAL_ACCEPTANCE",
+  "beforeLog": "evidence/drive-compare-before-20261017T150121796078Z/result.log",
+  "afterLog": "evidence/drive-native-20261017T150459645Z/result.log",
+  "identicalTestFixture": true,
+  "productionBaselineMatchesCapturedPreChangeSource": true,
+  "model": {
+    "imuPeriodMs": 20,
+    "yawGain": 1.15,
+    "slowWheelAccelerationRpmPerMs": 0.14,
+    "fastWheelAccelerationRpmPerMs": 0.2,
+    "uartCharacterMicrosecondsWhenEnabled": 87,
+    "parametersIdentifiedFromHardware": false
+  },
+  "before": [
+    {
+      "start": "A",
+      "uartCost": false,
+      "E-H": {
+        "maxYawErrorDeg": 3.85,
+        "maxCrossTrackDeltaMm": 25.723
+      },
+      "H-E": {
+        "maxYawErrorDeg": 3.87,
+        "maxCrossTrackDeltaMm": 25.943
+      }
+    },
+    {
+      "start": "C",
+      "uartCost": false,
+      "E-H": {
+        "maxYawErrorDeg": 3.9,
+        "maxCrossTrackDeltaMm": 26.258
+      },
+      "H-E": {
+        "maxYawErrorDeg": 3.82,
+        "maxCrossTrackDeltaMm": 25.415
+      }
+    },
+    {
+      "start": "A",
+      "uartCost": true,
+      "E-H": {
+        "maxYawErrorDeg": 3.85,
+        "maxCrossTrackDeltaMm": 25.767
+      },
+      "H-E": {
+        "maxYawErrorDeg": 3.87,
+        "maxCrossTrackDeltaMm": 26.083
+      }
+    },
+    {
+      "start": "C",
+      "uartCost": true,
+      "E-H": {
+        "maxYawErrorDeg": 3.86,
+        "maxCrossTrackDeltaMm": 25.919
+      },
+      "H-E": {
+        "maxYawErrorDeg": 3.87,
+        "maxCrossTrackDeltaMm": 25.968
+      }
+    }
+  ],
+  "after": [
+    {
+      "start": "A",
+      "uartCost": false,
+      "E-H": {
+        "maxYawErrorDeg": 0.66,
+        "maxCrossTrackDeltaMm": 1.035
+      },
+      "H-E": {
+        "maxYawErrorDeg": 0.68,
+        "maxCrossTrackDeltaMm": 0.991
+      }
+    },
+    {
+      "start": "C",
+      "uartCost": false,
+      "E-H": {
+        "maxYawErrorDeg": 0.65,
+        "maxCrossTrackDeltaMm": 1.002
+      },
+      "H-E": {
+        "maxYawErrorDeg": 0.76,
+        "maxCrossTrackDeltaMm": 0.994
+      }
+    },
+    {
+      "start": "A",
+      "uartCost": true,
+      "E-H": {
+        "maxYawErrorDeg": 0.7,
+        "maxCrossTrackDeltaMm": 1.106
+      },
+      "H-E": {
+        "maxYawErrorDeg": 0.67,
+        "maxCrossTrackDeltaMm": 0.992
+      }
+    },
+    {
+      "start": "C",
+      "uartCost": true,
+      "E-H": {
+        "maxYawErrorDeg": 0.63,
+        "maxCrossTrackDeltaMm": 1.158
+      },
+      "H-E": {
+        "maxYawErrorDeg": 0.65,
+        "maxCrossTrackDeltaMm": 1.066
+      }
+    }
+  ],
+  "standardRouteMsBefore": {
+    "A": "148373",
+    "C": "148298"
+  },
+  "standardRouteMsAfter": {
+    "A": "148553",
+    "C": "149228"
+  },
+  "testHashes": {
+    "tests/verify_entry.c": "5fce2fa0e9caf521d510b692037763764d084f9e669e2228abd59a120889f0e0",
+    "tests/verify_heading.c": "e5a202739fdb1f55d3b0a8f6beee74d9fd70beba357661e2f596e5ab7068427d",
+    "tests/verify_drive.c": "382a2279047a9ba39e7a29be33346f1abcd6fac546d1196747f8cb5f2df20915"
+  },
+  "limitations": [
+    "Wheel response and slip models do not establish real vehicle accuracy.",
+    "Maximum cross-track delta is relative to the beginning of each E-H/H-E leg, not absolute map position.",
+    "Route timing is simulated and excludes real UART cost in the standard route cases."
+  ]
+}

@@ -1,0 +1,8 @@
+PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis
+PASS mutual exclusion: removed-run/nav/runimu/shift/turn blocked in arm session; chassis rejects arm acquisition while busy; ! stops both and requires explicit recovery
+PASS four-wheel interlock: missing status/speed, disabled/stalled wheel 4, moving wheel 4, bus off, queue overflow, active-session watchdog and timestamp wrap
+PASS arm failure paths: either axis missing, ACK missing, frozen/reversed encoder, stall, stop/CAN fault during submission; platform PWM holds at stop; full-stroke yaw diagnostic
+PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation
+PASS English console: lift 120 retains axis command and all three messages; complete arm/platform status is ASCII
+PASS arm speed: axes finish on fresh verified feedback without 2s floor; claw keeps 500ms interpolation, yaw keeps 2s; delayed position/missing ACK/either axis/nonzero axis speed cannot complete early
+PASS arm integration: 83204 assertions; host simulation only, no hardware accessed
