@@ -210,6 +210,7 @@ static void reset_fixture(void)
     memset((void *)rx_buffer,0,sizeof(rx_buffer));memset(line,0,sizeof(line));
     memset(sent,0,sizeof(sent));position_count=sync_count=stop_count=velocity_count=0;
     interrupt_at_position=fail_can_at_position=0;output_size=0;output[0]=0;
+    hmi_init(0);memset(&screen_clock,0,sizeof(screen_clock));
     vision_init();station_init();(void)station_command("station auto off");output_size=0;output[0]=0;
     memset(&run,0,sizeof(run));run_active=run_rx_head=run_rx_tail=run_rx_overflow=0;
     memset(&turn_postcheck,0,sizeof(turn_postcheck));

@@ -35,11 +35,26 @@ static struct {
     int16_t pick_x, pick_y;
     uint32_t request_ms, pick_warning_ms, align_warning_ms;
     uint8_t busy_reported, mismatch_reported;
+    uint8_t display_known,display_color;
+    int16_t display_dx,display_dy;
+    uint32_t display_ms;
     char message[VISION_PAYLOAD_MAX + 1u];
     uint32_t frames, crc_errors, bad_frames, overflows, timeouts;
     char line[256]; /* 中文UTF-8状态和最长协议原文。 */
 } vision;
 
+void vision_display(uint32_t now,int32_t *color,int32_t *dx,int32_t *dy,int32_t *age)
+{
+    uint32_t elapsed=now-vision.display_ms;
+    *age=vision.display_known ? (elapsed>0x7fffffffu ? 0x7fffffff : (int32_t)elapsed) : -1;
+    *color=vision.display_known && elapsed<=1000u ? vision.display_color : 0;
+    *dx=vision.display_dx;*dy=vision.display_dy;
+}
+static void vision_observed(uint8_t color,int x,int y,uint32_t now)
+{
+    vision.display_known=1;vision.display_color=color;
+    vision.display_dx=(int16_t)x;vision.display_dy=(int16_t)y;vision.display_ms=now;
+}
 static uint8_t vision_crc8(const uint8_t *data, uint16_t length)
 {
     uint8_t crc = 0;
@@ -109,7 +124,7 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
 {
     char message[VISION_PAYLOAD_MAX + 1u];
     const char *cursor;
-    int value, x = 0, y = 0;
+    int value, x = 0, y = 0, has_coordinates = 0;
     if (memchr(payload,0,length)) {vision.bad_frames++;return;}
     memcpy(message, payload, length);
     message[length] = 0;
@@ -125,6 +140,7 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
                 vision.bad_frames++;arm_output("[vision warning] invalid MOVE; request retained\r\n");return;
             }
             if (!offset) return;
+            vision_observed(0,offset,0,now);
             vision.align_error=(int16_t)offset;
             vision.align_move_ms=now;vision.align_move_pending=1;
             return;
@@ -134,11 +150,12 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
             cursor=message+4;
             if (!vision_number(&cursor,&cx) || !vision_number(&cursor,&cy)
                 || !vision_number(&cursor,&dx) || !vision_number(&cursor,&ok) || *cursor
-                || cx<0 || cx>=640 || cy<0 || cy>=480 || dx!=cx-320
+                || cx<0 || cx>=640 || cy<0 || cy>=480
                 || ok!=1) {
                 vision.bad_frames++;arm_output("[vision warning] DISC not successful/valid; request retained\r\n");return;
             }
-            /* 对准是否成功由视觉ok决定；不再用像素偏差幅值二次否决。 */
+            /* 上位机ok=1即确认对准；不重算dx，也不要求它与cx/320一致。 */
+            vision_observed(0,dx,cy-240,now);
             vision.align_move_pending=0;
             vision.align_error=0;vision.align_state=VISION_PICK_READY;return;
         }
@@ -170,9 +187,13 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
             if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y) || *cursor) {
                 vision.bad_frames++;return;
             }
+            has_coordinates=1;
         }
         vision.pick_x = (int16_t)x;vision.pick_y = (int16_t)y;
         vision.pick_color = vision.request_color;
+        if(has_coordinates && x>=0 && x<640 && y>=0 && y<480)
+            vision_observed(vision.pick_color,x-320,y-240,now);
+        else vision_observed(0,0,0,now);
         vision.pick_state = VISION_PICK_READY;
         snprintf(vision.line, sizeof(vision.line),
                  "[vision] PICK color=%u x=%d y=%d at fixed pick port; %lu ms\r\n",

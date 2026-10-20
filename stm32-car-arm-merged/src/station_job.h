@@ -16,6 +16,7 @@ void station_init(void);
 int station_auto_enabled(void);
 /* 本轮有效任务是否已接收；扫码接收窗口由底盘首次抵达B控制。 */
 int station_task_ready(void);
+void station_task_words(int32_t *first,int32_t *second);
 /* 返回 1 已启动作业，0 该节点无动作，-1 拒绝执行（已打印原因）。 */
 int station_start(uint8_t node, uint8_t job_index, uint32_t now);
 void station_update(uint32_t now);

@@ -730,9 +730,9 @@
           <GroupName>ckp</GroupName>
           <Files>
             <File>
-              <FileName>uart6_ckp.c</FileName>
+              <FileName>hmi_status.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\vendor\stm32\ckp\uart6_ckp.c</FilePath>
+              <FilePath>..\src\hmi_status.c</FilePath>
             </File>
             <File>
               <FileName>uart6_ckp.h</FileName>

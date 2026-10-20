@@ -750,7 +750,7 @@ static void align_transport_tests(void)
         } else if(variant==2) {peer_reply("NONE,D",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
         else if(variant==3) {peer_reply("DISC,320,240,0,0",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
         else if(variant==4) {peer_reply("MOVE,41",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
-        else if(variant==5) {peer_reply("DISC,340,240,0,1",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+        else if(variant==5) {peer_reply("DISC,340,240,0,1",0);tick(1);CHECK(vision_align_state()==VISION_PICK_READY);}
         else if(variant==6) {peer_reply("MOVE,-20",1);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);clock_ms+=25000;vision_update(clock_ms);CHECK(vision_align_state()==VISION_PICK_WAITING);}
         else if(variant==7) {vision_receive_byte(0,1);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
         else {peer_reply("ERR,camera",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
@@ -771,6 +771,21 @@ static void align_transport_tests(void)
             CHECK(vision_tx_count==6);
             vision_cancel_pick();
         }
+    }
+    {
+        static const char *const replies[]={"DISC,386,177,71,1","DISC,386,177,420,1","DISC,386,177,620,1","DISC,300,177,-71,1"};
+        unsigned area,i;
+        for(area=0;area<2;area++)for(i=0;i<4;i++) {
+            int32_t color,dx,dy,age;int16_t move;
+            reset_plant(0,1.0);vision_request_align(area ? 'E' : 'D',2,clock_ms);tick(8);
+            peer_reply(replies[i],0);tick(1);
+            CHECK(vision_align_state()==VISION_PICK_READY && vision_tx_count==6);
+            CHECK(!vision_align_take_move(&move,NULL));
+            vision_display(clock_ms,&color,&dx,&dy,&age);
+            CHECK(dx==(i==0 ? 71 : i==1 ? 420 : i==2 ? 620 : -71));
+            send_line("vision status");CHECK(strstr(output,"bad=0"));
+        }
+        puts("PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request");
     }
     reset_plant(0,1.0);clock_ms=UINT32_MAX-100u;vision_request_align('D',2,clock_ms);tick(8);
     clock_ms+=24900u;peer_reply("MOVE,20",0);vision_update(clock_ms);
@@ -803,7 +818,7 @@ static void storage_index_tests(void)
         unsigned offset=0,aligned=0,expected_count=0,events=0,taken=0,placed=0,positions=0,was_shift=0;
         int moves[8],can_run=STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY;
         int height=STN_STORAGE_LIFT_MM+(batch ? STN_STORAGE_LAYER_LIFT_MM : 0);
-        int take_height=batch ? ARM_PLACE_LIFT_MM : STN_ROUGH_PLATFORM_TAKE_LIFT_MM;
+        int take_height=100; /* 两批平台夹取高度相同；地面叠层高度独立。 */
         float previous=ARM_CLAW_OPEN_DEG;uint16_t yaw_pwm=0;
         const uint8_t *order=permutations[variant],*color_order=permutations[color_variant];
         static const uint8_t first_colors[3]={1,3,4};
@@ -976,13 +991,21 @@ static void station_alignment_tests(void)
         peer_geometry=2;deadline=clock_ms+30000;
         while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline){serve_peer(&offset);plant_step();}
         CHECK(run.station_shift && peer_disc_count==1);positions=arm_positions;
-        peer_session_active=0;peer_reply("DISC,411,183,91,1",0);tick(1);
+        peer_session_active=0;peer_reply("DISC,386,177,71,1",0);tick(1);
         CHECK(vision_align_state()==VISION_PICK_READY && arm_positions==positions);
         while(station_chassis_busy() && run.state!=RUN_FAULT && clock_ms<deadline) {
             CHECK(arm_positions==positions);plant_step();
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && arm_lock.state==2);
         CHECK(strstr(output,"[station aligned]") && peer_disc_count==1 && run.job==job);
+        {
+            int slide,lift;float yaw,claw;int closed=0;
+            while(run.state!=RUN_FAULT && clock_ms<deadline) {
+                plant_step();arm_pose_now(&slide,&lift,&yaw,&claw);
+                if(slide==35 && lift==100 && yaw==256.0f && claw==ARM_CLAW_CLOSE_DEG){closed=1;break;}
+            }
+            CHECK(closed && arm_positions>positions && run.job==job && peer_disc_count==1);
+        }
         stop_request();
     }
     for(storage=0;storage<2;storage++)for(variant=0;variant<5;variant++) {

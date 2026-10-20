@@ -1,4 +1,4 @@
-  #include "arm_control.h"
+#include "arm_control.h"
 #include "arm_config.h"
 #include <string.h>
 #include <stdio.h>
@@ -251,6 +251,14 @@ int arm_busy(void)
 }
 int arm_failed(void) { return arm.state==ARM_FAULT; }
 int arm_pose_known(void) { return arm.referenced; }
+void arm_target_now(int *slide,int *lift,float *yaw,float *claw)
+{
+    int moving=arm_busy() && arm.state!=ARM_YAW_TEST;
+    if(slide)*slide=moving ? arm.target.slide : arm.slide;
+    if(lift)*lift=moving ? arm.target.lift : arm.lift;
+    if(yaw)*yaw=moving ? arm.target.yaw : arm.yaw;
+    if(claw)*claw=moving ? arm.target.claw : arm.claw;
+}
 int arm_platform_known(void) { return arm.platform_known; }
 float arm_platform_angle(void) { return arm.platform; }
 /* 自动工位用：已使能、姿态与载物台角度都已人工声明，且当前空闲。 */

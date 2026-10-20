@@ -263,7 +263,7 @@ static int build_storage(void)
     push(SS_ALIGN, 2);
     for (i = 0; i < 3u; i++) {
         if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
-        push_take_from_platform(i+1u,stn.batch ? ARM_PLACE_LIFT_MM : STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
+        push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
         push_release_at(&pose);
         push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
     }
@@ -609,6 +609,15 @@ static int parse_task(const char *s)
 }
 int station_auto_enabled(void) {return automatic;}
 int station_task_ready(void) {return task_ready;}
+void station_task_words(int32_t *first,int32_t *second)
+{
+    unsigned batch,i;int32_t words[2]={0,0};
+    if(task_ready)for(batch=0;batch<2;batch++) {
+        for(i=0;i<3;i++)words[batch]=words[batch]*10+task_colors[batch][i];
+        for(i=0;i<3;i++)words[batch]=words[batch]*10+task_rings[batch][i];
+    }
+    *first=words[0];*second=words[1];
+}
 
 void station_status(void)
 {

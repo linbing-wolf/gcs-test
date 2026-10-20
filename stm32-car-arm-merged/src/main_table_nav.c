@@ -21,6 +21,7 @@
 #include "station_job.h"
 #include "station_config.h"
 #include "vision_link.h"
+#include "hmi_status.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -55,6 +56,7 @@
 #define MOTOR_FLAG_STALLED           4u
 #define MOTOR_FLAG_PROTECTED         8u
 /* ===== 1. 全局状态：Keil Watch 窗口可观察这些变量 ===== */
+static struct {uint32_t start_ms,elapsed_ms;uint8_t running,started;} screen_clock;
 static volatile uint32_t clock_ms;       /* 系统毫秒计时，TIM5 中断更新。 */
 #define SCANNER_RX_SIZE 128u
 typedef enum {SCANNER_OFF, SCANNER_BOOT, SCANNER_SET_ENDING, SCANNER_SET_CONTINUOUS,
@@ -1080,6 +1082,8 @@ static int start_run(uint8_t initial_node)
     run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     run_clear_rx();
     run_active = 1;
+    screen_clock.start_ms=clock_ms;screen_clock.elapsed_ms=0;
+    screen_clock.started=screen_clock.running=1;
     text("[run route] ");
     for (i = 0; i < FULL_ROUTE_NODES; i++)
     {
@@ -2260,6 +2264,7 @@ static void help(void)
     text("ARM: arm load1 | arm load3 (or @) = calibrated loading sequences\r\n");
     text("STATION: task 134+123+314+231 | station | station auto on/off (default on)\r\n");
     text("VISION: vision status/ping/range/pick N/clear; UART5 AA55+CRC8\r\n");
+    text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
     text("turn = IMU closed-loop rotation test | rpm 20..300\r\n");
@@ -2358,6 +2363,75 @@ static int command_translation_test(const char *command_text)
     return accepted;
 }
 
+/* 状态屏只读取控制现场，不查询电机、不推进任务、不消费视觉偏差。 */
+static void screen_snapshot(HmiSnapshot *snapshot)
+{
+    static const uint8_t addresses[4]={HMI_LF_ADDRESS,HMI_RF_ADDRESS,HMI_LR_ADDRESS,HMI_RR_ADDRESS};
+    unsigned i;int slide,lift;float yaw,claw;uint8_t healthy=1,seen=0;
+    HeadingSample imu=heading_snapshot();
+    for(i=0;i<HMI_FIELDS;i++)snapshot->value[i]=HMI_UNKNOWN;
+    station_task_words(&snapshot->value[HMI_TASKA],&snapshot->value[HMI_TASKB]);
+    snapshot->value[HMI_TASKOK]=station_task_ready();
+    snapshot->value[HMI_PICK]=snapshot->value[HMI_PLACE]=-1;
+    snapshot->value[HMI_VOLTAGE]=-1;
+    if(screen_clock.running) {
+        screen_clock.elapsed_ms=clock_ms-screen_clock.start_ms;
+        if(run.state==RUN_DONE || run.state==RUN_FAULT || run.state==RUN_STOPPED)screen_clock.running=0;
+    }
+    snapshot->value[HMI_ELAPSED]=(int32_t)(screen_clock.elapsed_ms/1000u);
+    snapshot->value[HMI_PHASE]=screen_clock.started ? (run.job>=7u ? 8 : run.job+1u) : 0;
+    if(run.state==RUN_DONE && !run.turn_only && !run.translation_only)snapshot->value[HMI_PHASE]=9;
+    if(run.state==RUN_STOPPED)snapshot->value[HMI_PHASE]=0;
+    if(run.state==RUN_FAULT || (run.state!=RUN_STOPPED && (arm_failed() || arm_lock.state==3)))
+        snapshot->value[HMI_PHASE]=10;
+    for(i=0;i<4;i++) {
+        MotorFeedback *f=&motor_feedback[i];
+        if(f->speed_valid || f->status_replies)seen=1;
+        if(!f->speed_valid || !f->status_replies || (uint32_t)(clock_ms-f->speed_ms)>500u
+            || (uint32_t)(clock_ms-f->status_ms)>500u || !(f->status_flags&1u) || (f->status_flags&12u))healthy=0;
+    }
+    snapshot->value[HMI_COMM]=!seen ? 0 : healthy && !can_rx_fault ? 1 : 2;
+    for(i=0;i<4;i++)if(addresses[i]>=1u && addresses[i]<=4u) {
+        unsigned index=addresses[i]-1u;MotorFeedback *f=&motor_feedback[index];
+        if(run_active)snapshot->value[HMI_LF_T+i*2u]=run.wheel_rpm[index];
+        else if(arm_lock.state==2)snapshot->value[HMI_LF_T+i*2u]=0;
+        if(f->speed_valid && (uint32_t)(clock_ms-f->speed_ms)<=500u)
+            snapshot->value[HMI_LF_R+i*2u]=f->speed_rpm;
+    }
+    snapshot->value[HMI_MECHANISM]=!arm_enabled() ? 0 : arm_busy() ? 1 : -1;
+    if(arm_pose_known()) {
+        arm_target_now(&slide,&lift,&yaw,&claw);
+        snapshot->value[HMI_LIFT]=lift;snapshot->value[HMI_PUSH]=slide;
+        snapshot->value[HMI_GRIP]=(int32_t)claw;snapshot->value[HMI_PAN]=(int32_t)yaw;
+    }
+    if(arm_platform_known())snapshot->value[HMI_TRAY]=arm_platform_slot() ? arm_platform_slot() : HMI_UNKNOWN;
+    snapshot->value[HMI_IMU_AGE]=imu.valid ? (int32_t)(clock_ms-imu.received_ms) : -1;
+    if(heading_sample_fresh(&imu,clock_ms,CAR_IMU_MAX_AGE_MS))snapshot->value[HMI_YAW]=imu.yaw_cdeg/10;
+    if(run_active || run.state==RUN_STATION)
+        snapshot->value[HMI_YAW_T]=heading_wrap_cdeg((int32_t)run.heading_control.last_yaw_cdeg+run.heading_control.error_cdeg)/10;
+    vision_display(clock_ms,&snapshot->value[HMI_COLOR],&snapshot->value[HMI_DX],
+        &snapshot->value[HMI_DY],&snapshot->value[HMI_VISION_AGE]);
+}
+static void screen_update(void)
+{
+    static HmiSnapshot snapshot;
+    screen_snapshot(&snapshot);hmi_update(&snapshot,clock_ms);
+}
+static int screen_command(const char *s)
+{
+    if(!strcmp(s,"screen") || !strcmp(s,"screen status")) {
+        text("[screen] USART6 PC6 TX 9600 8N1; read-only; tx_busy=");number(hmi_busy());
+        text("; physical screen reception unconfirmed\r\n");return 1;
+    }
+    if(!strcmp(s,"screen main"))hmi_select(0,0);
+    else if(!strcmp(s,"screen chassis"))hmi_select(1,0);
+    else if(!strcmp(s,"screen arm"))hmi_select(1,1);
+    else if(!strcmp(s,"screen sensors"))hmi_select(1,2);
+    else if(!strcmp(s,"screen refresh"))hmi_resync();
+    else return 0;
+    text("[screen] display update requested\r\n");return 1;
+}
+
 /* 先处理公共命令和模式切换，再交给当前模式；只裁剪首尾空白。 */
 static void command(char *command_text)
 {
@@ -2373,6 +2447,7 @@ static void command(char *command_text)
     * trimmed_end = 0;
     if (! * command_text)
         return;
+    if(screen_command(command_text))return;
     if (!strcmp(command_text, "info"))
     {
         status();
@@ -2581,6 +2656,7 @@ static void firmware_step(void)
             rx_overflow = 1;
         }
     }
+    screen_update();
     if (!stop_pending)
     {
         if (arm_lock.state==2) arm_update(clock_ms);
@@ -2647,7 +2723,7 @@ int main(void)
     uart_init();
     clock_init_ms();
     arm_init();
-    vision_init();station_init();
+    vision_init();station_init();hmi_init(clock_ms);
     start_button_init();
     scanner_init(CAR_SCANNER_UART_BAUD);
     heading_sensor_reset(&heading_sensor);
@@ -2670,7 +2746,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261020-merge2-r30; parallel station rotation; faster turns; scan at B\r\n");
+    text("[drive] version=20261020-merge2-r33; DISC trusts vision ok; USART6 status; take100\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

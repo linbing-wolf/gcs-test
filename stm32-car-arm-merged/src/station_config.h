@@ -88,7 +88,7 @@ static const StationPose stn_storage_place = {
     STN_STORAGE_SLIDE_MM, STN_STORAGE_LIFT_MM, STN_STORAGE_YAW_DEG
 };
 
-/* 暂存首批平台取料沿用粗加工100mm；第二批取料仍为ARM_PLACE_LIFT_MM。 */
+/* 暂存两批平台取料均沿用粗加工100mm；叠层只改变地面放料高度。 */
 #ifndef STN_PLATFORM_TAKE_READY
 #define STN_PLATFORM_TAKE_READY 1
 #endif
