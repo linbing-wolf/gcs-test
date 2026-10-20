@@ -241,7 +241,7 @@ static void continuous_turn_tests(void)
     const int16_t origins[]={17900,-17900,7420};
     for(origin=0;origin<3;origin++)for(command=0;command<4;command++) {
         int expected=command>=2 ? 18000 : 9000;
-        int32_t measured;
+        int32_t measured;uint32_t start;
         if(command&1)expected=-expected;
         reset_plant(origins[origin],origin==1 ? 0.85 : 1.3);
         imu_period_ms=origin==0 ? 10 : origin==1 ? 50 : 100;
@@ -249,7 +249,8 @@ static void continuous_turn_tests(void)
         CHECK(run_active && run.turn_only && run.heading_control.target_cdeg==expected);
         send_line("left90");CHECK(strstr(output,"[rejected"));
         send_line("rpm 90");CHECK(strstr(output,"[rejected") && turn_rpm==60);
-        finish_plant(20000);
+        start=clock_ms;finish_plant(20000);
+        if(!command)printf("TURN_REGRESSION gain=%.2f imu_ms=%lu elapsed_ms=%lu\n",yaw_gain,(unsigned long)imu_period_ms,(unsigned long)(clock_ms-start));
         measured=(int32_t)lround(physical_yaw)-origins[origin];
         CHECK(abs(measured-expected)<=CAR_HEADING_TOLERANCE_CDEG+2);
         CHECK(max_turn_rpm<=60 && min_turn_rpm<=CAR_HEADING_MIN_RPM && forward_actions==0);
@@ -464,7 +465,7 @@ static void core_and_parser_tests(void)
     sample.sequence++;sample.received_ms=29;sample.yaw_cdeg=-17900;
     CHECK(heading_control_update(&h,sample,29)==HEADING_CORRECT && h.progress_cdeg==200);
     CHECK(heading_control_rpm(&h,60)==60);
-    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==3);
+    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==CAR_HEADING_MIN_RPM);
     h.rate_cdeg_s=10000;CHECK(heading_control_rpm(&h,60)==0);
     heading_control_wheels(90,10,wheels);CHECK(wheels[0]==-80 && wheels[1]==100 && wheels[2]==100 && wheels[3]==-80);
     heading_control_wheels(0,-30,wheels);CHECK(wheels[0]==-30 && wheels[3]==-30);

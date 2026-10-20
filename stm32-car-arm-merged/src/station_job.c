@@ -7,11 +7,12 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN };
+enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM_YAW, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN };
 typedef struct {
     uint8_t kind;
     int16_t value;
     uint8_t ring; /* 仅SS_CHASSIS：此步完成后对准的环号。 */
+    uint8_t platform_slot; /* 仅SS_PLATFORM_YAW：与云台一起旋转的杯位。 */
 } StationStep;
 
 enum {
@@ -68,9 +69,15 @@ static int push(uint8_t kind, int value)
     if (stn.count >= STN_STEP_MAX) {stn_fault("station program too large");return 0;}
     program[stn.count].kind = kind;
     program[stn.count].value = (int16_t)value;
-    program[stn.count].ring = 0;
+    program[stn.count].ring = program[stn.count].platform_slot = 0;
     stn.count++;
     return 1;
+}
+
+static void push_platform_yaw(uint8_t slot,float yaw)
+{
+    if (push(SS_PLATFORM_YAW,(int)(yaw*10.0f)))
+        program[stn.count-1u].platform_slot=slot;
 }
 
 /* 编排时的实际姿态只代表第一步，不能据此省掉后续步骤的目标。 */
@@ -94,17 +101,11 @@ static void push_retract(void)
     push(SS_LIFT, ARM_LIFT_HOME_MM);
     push(SS_SLIDE, ARM_SLIDE_HOME_MM);
 }
-/* 离开工位回车头0度；粗加工环间移动不调用此收尾。 */
-static void push_retreat_home(void)
-{
-    push_retract();
-    push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f));
-}
 /* 到目标靶位后才从指定杯位取料；下一杯由作业表显式选择。 */
-static void push_take_from_platform(int lift_mm)
+static void push_take_from_platform(uint8_t slot,int lift_mm)
 {
     /* 先在高处转向杯位并张开爪子，再伸齿条、下降；避免闭爪贴着杯壁下降。 */
-    push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+    push_platform_yaw(slot,ARM_PLACE_YAW_DEG);
     push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
     push(SS_LIFT, lift_mm);
@@ -113,9 +114,11 @@ static void push_take_from_platform(int lift_mm)
     push(SS_SLIDE, ARM_SLIDE_HOME_MM);
 }
 /* 粗加工放回原盘，只抬高收回，不回车头或自动换盘。 */
-static void push_place_on_platform(void)
+static void push_place_on_platform(uint8_t slot)
 {
-    push_move_to(ARM_PLACE_SLIDE_MM, ARM_PLACE_LIFT_MM, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+    push_platform_yaw(slot,ARM_PLACE_YAW_DEG);
+    push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
+    push(SS_LIFT, ARM_PLACE_LIFT_MM);
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
     push_retract();
 }
@@ -201,8 +204,7 @@ static int build_rough(void)
     for (i = 0; i < 3u; i++) {
         target = task_rings[stn.batch][i];
         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
-        push(SS_PLATFORM, i + 1);
-        push_take_from_platform(STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
+        push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
         push_move_to(stn_rough_place.slide_mm, stn_rough_place.lift_mm, (int)(stn_rough_place.yaw_deg * 10.0f));
         push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
         push_retract(); /* 保持125度，直接前后移动到下一环。 */
@@ -212,13 +214,12 @@ static int build_rough(void)
         target = task_rings[stn.batch][i];
         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
         push_grip_at(&stn_rough_grip);
-        push(SS_PLATFORM, i + 1);
-        push_place_on_platform();
+        push_place_on_platform(i+1u);
         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
     }
     if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
-    push(SS_PLATFORM, 1);
-    push_retreat_home(); /* 全部工位动作完成后才回车头0度。 */
+    push_retract();
+    push_platform_yaw(1u,ARM_YAW_HOME_DEG); /* 全部工位动作完成后才回车头0度。 */
     return 1;
 }
 static int build_storage(void)
@@ -262,14 +263,13 @@ static int build_storage(void)
     push(SS_ALIGN, 2);
     for (i = 0; i < 3u; i++) {
         if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
-        push(SS_PLATFORM, i + 1);
-        push_take_from_platform(stn.batch ? ARM_PLACE_LIFT_MM : STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
+        push_take_from_platform(i+1u,stn.batch ? ARM_PLACE_LIFT_MM : STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
         push_release_at(&pose);
         push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
     }
     if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
-    push(SS_PLATFORM, 1);
-    push_retreat_home();
+    push_retract();
+    push_platform_yaw(1u,ARM_YAW_HOME_DEG);
     return 1;
 }
 
@@ -332,7 +332,9 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
             int value=program[i].value;
             if ((program[i].kind==SS_SLIDE && (value<ARM_SLIDE_MIN_MM || value>ARM_SLIDE_MAX_MM))
                 || (program[i].kind==SS_LIFT && (value<ARM_LIFT_MIN_MM || value>ARM_LIFT_MAX_MM))
-                || (program[i].kind==SS_YAW && (value<ARM_YAW_MIN_DEG*10 || value>ARM_YAW_MAX_DEG*10))
+                || ((program[i].kind==SS_YAW || program[i].kind==SS_PLATFORM_YAW)
+                    && (value<ARM_YAW_MIN_DEG*10 || value>ARM_YAW_MAX_DEG*10))
+                || (program[i].kind==SS_PLATFORM_YAW && (program[i].platform_slot<1u || program[i].platform_slot>3u))
                 || (program[i].kind==SS_CLAW && (value<ARM_CLAW_MIN_DEG*10 || value>ARM_CLAW_MAX_DEG*10))) {
                 stn_fault("station pose outside configured travel");return -1;
             }
@@ -404,16 +406,9 @@ static int issue_step(uint32_t now)
             ok = arm_command(command, now);
         }
         break;
-    case SS_PLATFORM: {
-        int slot = s->value ? s->value : arm_platform_slot() % 3 + 1;
-        if (stn.job==2u || stn.job==5u || storage_job()) {
-            ok = arm_platform_at_yaw((uint8_t)slot, station_align_yaw(), now);
-        } else {
-            snprintf(line, sizeof(line), "arm platform %d", slot);
-            ok = arm_command(line, now);
-        }
+    case SS_PLATFORM_YAW:
+        ok=arm_platform_with_yaw(s->platform_slot,s->value/10.0f,now);
         break;
-    }
     case SS_CHASSIS: {
         char index_line[64];
         if (!station_chassis_start(s->value)) {
@@ -613,6 +608,7 @@ static int parse_task(const char *s)
     task_ready=1;return 1;
 }
 int station_auto_enabled(void) {return automatic;}
+int station_task_ready(void) {return task_ready;}
 
 void station_status(void)
 {

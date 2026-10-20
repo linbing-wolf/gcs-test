@@ -207,8 +207,9 @@ static void scan_handoff_tests(void)
         prepare_arm_auto(plan);
         if(preloaded)send_line("task 134+123+314+231");
         send_line(plan?"runimu C":"runimu A");deadline=clock_ms+30000;
-        while(run.state!=RUN_STATION && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
-        CHECK(run.state==RUN_STATION && !run.job && run.edge==1 && run.heading==HEAD_X_NEG);
+        while(run.job==0 && run.state!=RUN_STATION && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+        CHECK(run.state!=RUN_FAULT && run.edge==1 && run.heading==HEAD_X_NEG);
+        CHECK(preloaded ? run.job==1 : (run.state==RUN_STATION && !run.job));
         scan_yaw=physical_yaw;
         if(!preloaded)send_line("task 134+123+314+231");
         deadline=clock_ms+12000;
@@ -238,6 +239,52 @@ static void scan_handoff_tests(void)
     }
     puts("PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure");
 }
+static void scan_during_turn_tests(void)
+{
+    unsigned plan,mode;
+    for(plan=0;plan<2;plan++)for(mode=0;mode<3;mode++) {
+        uint32_t deadline;int32_t error;unsigned i,latched=0;
+        prepare_arm_auto(plan);scanner.state=SCANNER_READY;
+        send_line(plan?"runimu C":"runimu A");
+        /* 到B前持续上报码只能显示，不能载入本轮任务。 */
+        scanner_receive((const uint8_t *)"134+123+314+231\r\n",17);tick(1);CHECK(!station_task_ready());
+        deadline=clock_ms+30000;
+        while(!run.scan_turn_stage && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+        CHECK(clock_ms<deadline && run.scan_turn_stage==1 && run.job==0 && run.edge==1);
+        while(abs(run.heading_control.progress_cdeg)<1000 && run.scan_turn_stage && clock_ms<deadline)plant_step();
+        CHECK(run_active && run.scan_turn_stage==1 && run.state!=RUN_STATION);
+        error=run.heading_control.error_cdeg;CHECK(abs(error)>1500);
+        scanner_receive((const uint8_t *)"bad-task\r\n",10);CHECK(!station_task_ready());
+        scanner_receive((const uint8_t *)"134+123+314+231\r\n",8);CHECK(!station_task_ready());
+        if(mode==2) {
+            stop_request();scanner_receive((const uint8_t *)"134+123+314+231\r\n"+8,9);tick(1);
+            CHECK(!station_task_ready() && !run_active && !arm_positions);continue;
+        }
+        scanner_receive((const uint8_t *)"134+123+314+231\r\n"+8,9);
+        CHECK(station_task_ready() && run.scan_turn_stage==1 && !run.job);
+        /* 后续不同有效码也不能覆盖首次锁定的任务。 */
+        scanner_receive((const uint8_t *)"314+231+134+123\r\n",17);
+        station_status();CHECK(strstr(output,"batch1 colors=134 rings=123"));
+        if(mode==1) {
+            missing_feedback_motor=4;deadline=clock_ms+1200;
+            while(clock_ms<deadline)plant_step();
+            CHECK(run.job==0 && run.scan_turn_stage==1 && run.state!=RUN_FAULT);
+            for(i=0;i<4;i++)CHECK(!simulated_wheel_rpm[i]);
+            missing_feedback_motor=0;
+        }
+        deadline=clock_ms+15000;
+        while(run.state!=RUN_FAULT && clock_ms<deadline) {
+            plant_step();CHECK(run.state!=RUN_STATION && !arm_positions);
+            if(strstr(output,"task latched; depart directly"))latched=1;
+            if(run.job==1 && run.velocity_phase==VELOCITY_FORWARD && run.progress_mm>=50)break;
+        }
+        CHECK(clock_ms<deadline && run.job==1 && run.edge==1 && !run.scan_turn_stage);
+        CHECK(run.target_heading==HEAD_X_NEG && latched);
+        stop_request();
+    }
+    puts("PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock");
+}
+
 static void raw_preparation_timing_tests(void)
 {
     unsigned changed;
@@ -270,7 +317,7 @@ static void raw_preparation_timing_tests(void)
         }
         stop_request();
     }
-    puts("PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full 2s yaw; changed lift/slide/claw targets still execute in safe order with fresh feedback");
+    puts("PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback");
 }
 static void raw_last_return_tests(void)
 {
@@ -985,7 +1032,7 @@ static void station_alignment_tests(void)
 
 int main(void)
 {
-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
+    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();scan_during_turn_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
     return 0;
 }

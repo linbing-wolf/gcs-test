@@ -450,6 +450,16 @@ int arm_platform_at_yaw(uint8_t slot,float work_yaw,uint32_t now)
     start_single(step,now);
     return arm_busy() && !arm_failed();
 }
+int arm_platform_with_yaw(uint8_t slot,float target_yaw,uint32_t now)
+{
+    ArmStep step={0,0,0,0,0,YAW|PLATFORM};
+    if(slot<1u || slot>3u || !arm_ready()
+        || arm.slide!=ARM_SLIDE_HOME_MM || arm.lift!=ARM_LIFT_HOME_MM
+        || !pose_valid(arm.slide,arm.lift,target_yaw,arm.claw)) return 0;
+    step.yaw=target_yaw;step.platform=platform_angle_of(slot);
+    start_single(step,now);
+    return arm_busy() && !arm_failed();
+}
 static void arm_status(void)
 {
     /* 仅主循环调用；固定缓冲避免浮点格式化占满启动文件的1KiB栈。 */

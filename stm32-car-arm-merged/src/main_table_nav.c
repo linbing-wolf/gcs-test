@@ -554,8 +554,10 @@ static void scanner_update(void)
                     scanner.result[--scanner.length] = 0;
                     if (scanner.length) {
                         text("[scan] "); text(scanner.result); text("\r\n"); scanner.results++;
-                        /* 只在本轮首次B点等待时接收任务；闲置/结束后的连续扫码不能重装旧码。 */
-                        if (!run_active && run.state == RUN_STATION && run.job == 0u) {
+                        /* 首次抵达B即接码，包含转向过程；首个有效任务锁定，闲置/回程不重装。 */
+                        if (run.station_enabled && run.job==0u && run.edge==1u
+                            && ((run_active && run.scan_turn_stage==1u) || (!run_active && run.state==RUN_STATION))
+                            && !stop_pending && !station_task_ready()) {
                             char task_line[sizeof(scanner.result) + 6u];
                             snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
                             (void)station_command(task_line);
@@ -1229,7 +1231,7 @@ static void run_advance_segment(void)
     if (run.station_enabled && node == NODE_B && run.job == 0u) {
         run.scan_turn_stage=1;
         run.target_heading=(RoadHeading)STN_SCAN_HEADING;run.remaining_mm=0;
-        text("[scan station] align rear scanner to QR before waiting for task\r\n");
+        text("[scan station] B reached; accepting QR while aligning rear scanner\r\n");
         run_begin_alignment();return;
     }
     if (node == full_route_jobs[run.plan][run.job]
@@ -2091,7 +2093,15 @@ static void run_velocity_update(void)
                 return;
             }
             if (run.scan_turn_stage==1u) {
-                run.scan_turn_stage=0;run.turning=0;run_finish_node();return;
+                run.scan_turn_stage=0;run.turning=0;
+                if (station_task_ready()) {
+                    /* 扫码已与转向重叠，不再进入扫码工位重复获取机构互锁。
+                     * 下一段仍按IMU确认出站朝向，不把途中扫码当作航向已到位。 */
+                    run.job++;run.transition_ready=1;
+                    text("[scan station] task latched; depart directly on route heading\r\n");
+                    if (!run_road()) run_fault("scan departure road failed");
+                } else run_finish_node();
+                return;
             }
             if (run.turn_only || run.finishing) {run_done();return;}
             run_begin_baseline();
@@ -2660,7 +2670,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261019-merge2-r29; monitor warnings retain tasks; accel200; D/E once\r\n");
+    text("[drive] version=20261020-merge2-r30; parallel station rotation; faster turns; scan at B\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

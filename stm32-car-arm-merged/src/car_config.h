@@ -63,9 +63,9 @@
 #define CAR_HEADING_STABLE_SAMPLES     3u
 #define CAR_HEADING_SETTLE_MS        100u
 #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
-#define CAR_HEADING_KP_X100          120       /* 1.20 RPM/度，角度误差到电机速度。 */
+#define CAR_HEADING_KP_X100          200       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
 #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
-#define CAR_HEADING_MIN_RPM           3       /* 误差超容差时的低速修正初值。 */
+#define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
 /* 直行保持航向独立于原地转向：沿用PD增益初值，小角度仍保留角速度阻尼。 */
@@ -73,7 +73,7 @@
 #define CAR_DRIVE_HEADING_KD_X100     30       /* RPM/(度/秒) ×100。 */
 #define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
 #define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
-#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向3RPM跳变。 */
+#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向的最低转速跳变。 */
 #define CAR_DRIVE_ACCEL_RPM_PER_S    120u      /* 速度指令上升率RPM/s；0到90RPM至少750ms，沿用可跟随斜坡，与驱动器200档位不是同一单位。 */
 #define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速及制动距离计算共用RPM/s；沿用120的可跟随制动斜坡，不能由驱动器200档位推定制动能力。 */
 #define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 100u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */

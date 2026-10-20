@@ -294,9 +294,41 @@ static void axis_speed_log_only_tests(void)
     arm_flags=3;advance_arm(350);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
     puts("PASS arm axis speed log-only: both5/7 signed1/15/3000RPM pass preflight, position completion and servo steps; both nonzero axes still wait for actual target position and arrived flag");
 }
+static void parallel_platform_yaw_tests(void)
+{
+    uint32_t start,serial_ms;uint16_t yaw_start,platform_start,claw_start;unsigned positions;
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 45");
+    start=clock_ms;CHECK(arm_platform_at_yaw(2,125,clock_ms));
+    while(arm_busy() && clock_ms-start<2u*ARM_SERVO_TIME_MS)advance_arm(1);
+    send_line("arm yaw 256");
+    while(arm_busy() && clock_ms-start<3u*ARM_SERVO_TIME_MS)advance_arm(1);
+    CHECK(arm_ready());serial_ms=clock_ms-start;
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 45");
+    yaw_start=arm_yaw_us;platform_start=arm_platform_us;claw_start=arm_claw_us;positions=arm_positions;
+    CHECK(!arm_platform_with_yaw(0,256,clock_ms) && !arm_platform_with_yaw(4,256,clock_ms));
+    CHECK(!arm_platform_with_yaw(2,361,clock_ms));
+    start=clock_ms;CHECK(arm_platform_with_yaw(2,256,clock_ms));
+    advance_arm(ARM_SERVO_TIME_MS/2u+100u);
+    CHECK(arm_busy() && arm_yaw_us!=yaw_start && arm_platform_us!=platform_start);
+    CHECK(arm_claw_us==claw_start && arm_positions==positions);
+    CHECK(!arm_platform_with_yaw(3,125,clock_ms));
+    while(arm_busy() && clock_ms-start<2u*ARM_SERVO_TIME_MS)advance_arm(1);
+    CHECK(arm_ready() && arm_platform_slot()==2 && clock_ms-start<2u*ARM_SERVO_TIME_MS);
+    {float yaw;arm_pose_now(NULL,NULL,&yaw,NULL);CHECK(yaw==256.0f);}
+    CHECK(clock_ms-start<serial_ms);
+    printf("PARALLEL_ROTATION serial_ms=%lu parallel_ms=%lu servo_ms=%u; both PWM channels moved before completion\n",(unsigned long)serial_ms,(unsigned long)(clock_ms-start),(unsigned)ARM_SERVO_TIME_MS);
+    CHECK(arm_platform_with_yaw(3,125,clock_ms));advance_arm(ARM_SERVO_TIME_MS/2u+100u);
+    yaw_start=arm_yaw_us;platform_start=arm_platform_us;stop_request();advance_arm(2000);
+    CHECK(arm_failed() && arm_yaw_us==yaw_start && arm_platform_us==platform_start);
+    reset_fixture();declare_pose();send_line("arm platform pose 20");
+    send_line("arm pose 1 135 125 45");CHECK(!arm_platform_with_yaw(2,256,clock_ms));
+    send_line("arm pose 0 134 125 45");CHECK(!arm_platform_with_yaw(2,256,clock_ms));
+    puts("PASS simultaneous platform/yaw: shared interpolation, no extension/lowering before completion, target cup/yaw committed together, explicit emergency holds both PWM channels");
+}
+
 int main(void)
 {
-    manual_and_recipe_tests();station_platform_tests();mutual_exclusion_tests();wheel_lock_failures();
+    manual_and_recipe_tests();station_platform_tests();parallel_platform_yaw_tests();mutual_exclusion_tests();wheel_lock_failures();
     arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();axis_speed_log_only_tests();
     printf("PASS arm integration: %u assertions; host simulation only, no hardware accessed\n",assertions);
     return 0;
