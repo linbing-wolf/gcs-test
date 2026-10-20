@@ -1,2 +1,3 @@
 # 保持源码、固件和证据的原始字节，跨电脑不转换行尾，避免 SHA256 失配。
 stm32-car-test/** -text
+stm32-car-arm-merged/** -text

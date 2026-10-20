@@ -31,12 +31,13 @@ temp/
 # 参考开源仓库（第三方代码，仅本地参考，不推送到 gcs-test）
 参考开源/
 
-# 当前目录还有其他本地项目；本轮仅纳入程序和原有资料。
+# 默认忽略根目录其他项目；仅纳入底盘工程、当前合并工程和原有资料。
 /*
 !/.gitignore
 !/.gitattributes
 !/README.md
 !/stm32-car-test/
+!/stm32-car-arm-merged/
 !/文档/
 !/附件/
 
@@ -62,3 +63,11 @@ __pycache__/
 
 # 清单中的历史验证日志随程序交接；临时运行目录仍按上方规则忽略。
 !/stm32-car-test/evidence/**/*.log
+
+# 当前合并工程：保留源码和工程配置，不把历史构建证据与IDE会话产物纳入普通改动列表。
+/stm32-car-arm-merged/evidence/
+/stm32-car-arm-merged/keil/OBJ/
+/stm32-car-arm-merged/keil/RTE/
+/stm32-car-arm-merged/keil/DebugConfig/
+/stm32-car-arm-merged/keil/*.uvguix.*
+/stm32-car-arm-merged/keil/*.uvoptx
