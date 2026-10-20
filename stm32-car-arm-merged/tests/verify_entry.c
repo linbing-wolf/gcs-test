@@ -43,6 +43,7 @@ static uint32_t status_queries;
 static uint32_t diagnostic_queries;
 static uint8_t diagnostic_auto_reply;
 static int16_t simulated_wheel_rpm[4], staged_wheel_rpm[4], reported_wheel_rpm[4];
+static int16_t wheel_feedback_bias[4]; /* 仅影响报告轮速，不改变独立物理位置/转速模型。 */
 static int64_t simulated_encoder[4];
 static uint8_t velocity_ack_enabled, position_auto_reply, speed_auto_reply;
 static uint8_t missing_velocity_ack, missing_feedback_motor, moving_at_stop_motor;
@@ -62,8 +63,9 @@ void entry_host_send_byte(uint8_t value)
 static uint16_t arm_claw_us,arm_yaw_us,arm_platform_us;
 static uint32_t arm_enables,arm_stops,arm_positions,arm_queries;
 static int64_t arm_encoder[2];
+static int16_t arm_speed_bias[2]; /* 只改变轴速回包，不改变独立编码器轨迹。 */
 static uint8_t arm_auto_reply=1,arm_ack=1,arm_freeze,arm_bad_direction,arm_flags=3;
-static uint8_t arm_missing_motor,arm_moving_motor,arm_inject_stop,arm_inject_can_error;
+static uint8_t arm_missing_motor,arm_inject_stop,arm_inject_can_error;
 static uint8_t arm_trace_address[128],arm_trace_dir[128];
 static uint32_t arm_trace_pulses[128];
 static uint16_t arm_trace_yaw_us[128],arm_trace_claw_us[128];
@@ -91,7 +93,7 @@ static void arm_fixture_position(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t a
 static void arm_fixture_query(uint8_t addr,SysParams_t parameter)
 {
     uint8_t reply[7]={0x3a,0,0x6b,0,0,0,0x6b};
-    int64_t value=parameter==S_CPOS?arm_encoder[addr==5]:(addr==arm_moving_motor?10:0);
+    int64_t value=parameter==S_CPOS?arm_encoder[addr==5]:arm_speed_bias[addr==5];
     uint32_t magnitude=(uint32_t)(value<0?-value:value);
     uint8_t length=3;
     arm_queries++;
@@ -135,9 +137,11 @@ void Emm_V5_Read_Sys_Params(uint8_t addr,SysParams_t parameter)
         CHECK(parameter==S_PERR || parameter==S_VEL || parameter==S_CPOS);diagnostic_queries++;
         if(run.imu_mode) {
             int64_t value=parameter==S_CPOS ? simulated_encoder[addr-1u] : reported_wheel_rpm[addr-1u];
-            uint32_t magnitude=(uint32_t)(value<0?-value:value);
+            uint32_t magnitude;
+            if(parameter==S_VEL)value+=wheel_feedback_bias[addr-1u];
+            magnitude=(uint32_t)(value<0?-value:value);
             if(missing_feedback_motor==addr)return;
-            if(parameter==S_VEL && moving_at_stop_motor==addr && !value)magnitude=10;
+            if(parameter==S_VEL && moving_at_stop_motor==addr && !value)magnitude=16;
             reply[0]=parameter==S_CPOS ? 0x36 : 0x35;
             reply[1]=value<0;
             if(parameter==S_CPOS) {
@@ -170,7 +174,7 @@ void Emm_V5_Stop_Now(uint8_t addr,bool synchronous)
  CHECK(addr>=1 && addr<=4 && !synchronous);stop_count++;simulated_wheel_rpm[addr-1u]=staged_wheel_rpm[addr-1u]=0;}
 void Emm_V5_Vel_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,bool synchronous)
 {
-    CHECK(addr>=1 && addr<=4 && acc==150);velocity_count++;
+    CHECK(addr>=1 && addr<=4 && acc==CAR_STOP_ACCELERATION);velocity_count++;
     if(synchronous) {
         const uint8_t ack[3]={0xf6,2,0x6b};
         CHECK(run_active && run.imu_mode && dir<=1 && rpm<=300);
@@ -194,8 +198,8 @@ static void reset_fixture(void)
     simulate_uart_cost=0;uart_fraction_us=0;
     arm_claw_us=arm_yaw_us=arm_platform_us=0;
     arm_enables=arm_stops=arm_positions=arm_queries=0;
-    memset(arm_encoder,0,sizeof(arm_encoder));arm_auto_reply=arm_ack=1;arm_flags=3;
-    arm_freeze=arm_bad_direction=arm_missing_motor=arm_moving_motor=arm_inject_stop=arm_inject_can_error=0;
+    memset(arm_encoder,0,sizeof(arm_encoder));memset(arm_speed_bias,0,sizeof(arm_speed_bias));arm_auto_reply=arm_ack=1;arm_flags=3;
+    arm_freeze=arm_bad_direction=arm_missing_motor=arm_inject_stop=arm_inject_can_error=0;
     clock_ms=0;rx_head=rx_tail=stop_pending=rx_overflow=0;
     simulated_start_button=0;start_button_init();
     memset(&scanner,0,sizeof(scanner));scanner_head=scanner_tail=scanner_rx_error=scanner_rx_overflow=0;
@@ -206,6 +210,7 @@ static void reset_fixture(void)
     memset((void *)rx_buffer,0,sizeof(rx_buffer));memset(line,0,sizeof(line));
     memset(sent,0,sizeof(sent));position_count=sync_count=stop_count=velocity_count=0;
     interrupt_at_position=fail_can_at_position=0;output_size=0;output[0]=0;
+    hmi_init(0);memset(&screen_clock,0,sizeof(screen_clock));
     vision_init();station_init();(void)station_command("station auto off");output_size=0;output[0]=0;
     memset(&run,0,sizeof(run));run_active=run_rx_head=run_rx_tail=run_rx_overflow=0;
     memset(&turn_postcheck,0,sizeof(turn_postcheck));
@@ -218,6 +223,7 @@ static void reset_fixture(void)
     memset(simulated_wheel_rpm,0,sizeof(simulated_wheel_rpm));
     memset(staged_wheel_rpm,0,sizeof(staged_wheel_rpm));memset(simulated_encoder,0,sizeof(simulated_encoder));
     memset(reported_wheel_rpm,0,sizeof(reported_wheel_rpm));
+    memset(wheel_feedback_bias,0,sizeof(wheel_feedback_bias));
     memset(motor_flags,3,sizeof(motor_flags));
     CHECK(motion_init(&drive,&io,&config));CHECK(nav_init(&nav,NODE_A,HEAD_Y_POS,&port));
 }
@@ -235,7 +241,7 @@ static void check_positions(uint32_t offset,const uint8_t directions[4],const ui
     uint8_t i;
     for(i=0;i<4;i++) {
         SentPosition *p=&sent[offset+i];
-        CHECK(p->addr==i+1 && p->dir==directions[i]);CHECK(p->rpm==rpm[i] && p->acc==150);
+        CHECK(p->addr==i+1 && p->dir==directions[i]);CHECK(p->rpm==rpm[i] && p->acc==CAR_MOTION_ACCELERATION);
         CHECK(p->pulses==pulses[i] && !p->absolute && p->synchronous);
     }
 }
@@ -317,10 +323,10 @@ static void stop_and_timeout_tests(void)
     CHECK(position_count==0 && rx_head==rx_tail && line_length==0);
     send_line("f");CHECK(position_count==4);
     clock_ms=drive.started_ms+drive.timeout_ms;firmware_step();
-    CHECK(drive.state==MOTION_IDLE && test_mode && !nav.position_confirmed);
-    CHECK(strstr(output,"stop requested") && position_count==4 && sync_count==1);
+    CHECK(drive.state==MOTION_WAIT_CONFIRM && test_mode && !nav.position_confirmed);
+    CHECK(position_count==4 && sync_count==1);
     clock_ms+=60000;firmware_step();CHECK(position_count==4 && sync_count==1);
-    send_line("f");CHECK(position_count==8);stop_request();
+    stop_request();send_line("f");CHECK(position_count==8);stop_request();
     for(i=0;i<RX_SIZE;i++) queue_byte('f');
     firmware_step();
     CHECK(rx_head==rx_tail && !rx_overflow && position_count==8);
@@ -350,7 +356,7 @@ static void navigation_regression(void)
     send_line("node B");CHECK(nav.state==NAV_ARRIVED && nav.position_confirmed && (nav.passed&1));
     reset_fixture();send_line("pose A");send_line("go B");
     clock_ms=drive.started_ms+drive.timeout_ms;firmware_step();
-    CHECK(nav.state==NAV_FAULT && nav.error==NAV_MOTION_FAILED);
+    CHECK(nav.state==NAV_MOVING && nav.error==NAV_OK && drive.state==MOTION_WAIT_CONFIRM);
     stop_request();send_line("pose F");CHECK(nav.state==NAV_IDLE && nav.error==NAV_OK);
 }
 static void trim_tests(void)

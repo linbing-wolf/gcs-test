@@ -1,0 +1,83 @@
+{
+  "passed": true,
+  "version": "20261020-merge2-r31",
+  "scope": "仅将第二次暂存作业从车载平台夹取高度由110mm改为100mm；两批同为35/100/256。平台放回110mm、第二层地面放料65mm、视觉程序/方向/对准流程及r30节拍策略保持。所有当前回归、完整ARM构建通过；未烧录或实车验证。",
+  "sourceFilesChanged": [
+    "docs/合并与串口操作.md",
+    "docs/按任务码作业与暂存叠放.md",
+    "README.md",
+    "src/main_table_nav.c",
+    "src/station_config.h",
+    "src/station_job.c",
+    "tests/verify_station_vision.c",
+    "tools/verify-station-vision.ps1"
+  ],
+  "sourceHashes": {
+    "docs/合并与串口操作.md": "cee178f9290033bd286f405952d22e7da793095da1eb39e6fb66854873e30d98",
+    "docs/按任务码作业与暂存叠放.md": "444ef5fd534aebc00b0f7a7ef553fe0eb63348d9b497df1956baadaa657f3712",
+    "README.md": "e3df81a468d8dc440ada20140297fe1ea080d4e9dec5bb34796e6a555c411068",
+    "src/main_table_nav.c": "424e056230965ab6535d23940ec90760ba9ecf11d62927fc903b676acbf13aab",
+    "src/station_config.h": "dabd832fc3d9abd0444516ddc5b71893d5733d50716c0ef925b328b75ee85c00",
+    "src/station_job.c": "a838af74e03696d6827c3b0d97e5337da8a68699c6063a2033366e83cab7455b",
+    "tests/verify_station_vision.c": "bee991bb689f6377a760b3673420773ef0e7478a3e1549b5bcdfd12b7d6666f3",
+    "tools/verify-station-vision.ps1": "fee76ef46d63f8f5346d4164ab29d7b074098a24cb0bb1c30e124c18f2c516e0"
+  },
+  "reports": {
+    "heading": "evidence/heading-native-20261020T083922820Z/result.json",
+    "arm": "evidence/arm-native-20261020T083922838Z/result.json",
+    "drive": "evidence/drive-native-20261020T083922897Z/result.json",
+    "continuous": "evidence/continuous-native-20261020T083922852Z/result.json",
+    "station": "evidence/station-native-20261020T083922905Z/result.json"
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261020T083937842Z/build.log",
+    "verification": "evidence/storage-take100-r31-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 450432,
+    "start": "0x8000000",
+    "endExclusive": "0x806df80",
+    "artifacts": {
+      "evidence/merged-keil-20261020T083937842Z/table_navigation.axf": "af7a94bb3c7a9c88f6fbbf56fdcee918958119a1aebbd1f50dc08c4878ca77d3",
+      "evidence/merged-keil-20261020T083937842Z/table_navigation.hex": "544d3871615d68229130a3882e70fff5e843e5aff7e3d9d5b62fd3dd59ee6ff3",
+      "evidence/merged-keil-20261020T083937842Z/table_navigation.map": "2bda8dd41adbe5d44fe0908e3b369e06afd324c97127b20619d7024403ba9588"
+    }
+  },
+  "staticStack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "storageSecondTakeChange": {
+    "verification": "evidence/storage-take100-r31-verification.json",
+    "beforeLiftMm": 110,
+    "afterLiftMm": 100,
+    "firstBatchLiftMm": 100,
+    "slideMm": 35,
+    "yawDeg": 256,
+    "roughPlatformReturnLiftMmUnchanged": 110,
+    "storageSecondPlaceLiftMmUnchanged": 65,
+    "visualFilesAndDirectionUnchanged": true,
+    "stationSequenceOnlyDeltaProved": true,
+    "allCalibrationDefinesUnchanged": true,
+    "physicalVerified": false
+  },
+  "unchangedSourceHashes": {
+    "src/vision_link.c": "088a993dfb923f3a8cf7f8e276f794135ffcc5ff2793f0ddfab94f11f8711fce",
+    "src/car_config.h": "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+    "src/arm_config.h": "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+    "src/arm_control.c": "d0f0e9225e5383b11bd640a807e3591328cde0daa243b5a215c5fb946f45e9ad"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

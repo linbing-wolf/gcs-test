@@ -1,0 +1,13 @@
+PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained
+PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation
+PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered
+PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump
+RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=761; simulation only
+PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full 2s yaw; changed lift/slide/claw targets still execute in safe order with fresh feedback
+PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained
+PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup
+PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained
+PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving
+PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained
+PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera, drift limit, emergency/obstacle/axis/IMU/wheel faults cannot continue
+PASS isolated station target: 4537357 assertions; current production config; no full-road acceptance

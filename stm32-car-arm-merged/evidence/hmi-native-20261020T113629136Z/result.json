@@ -1,0 +1,59 @@
+﻿{
+    "passed":  true,
+    "exitCode":  0,
+    "scope":  "read-only serial screen host integration; no screen or vehicle accessed; synthetic wheel mapping is test-only",
+    "sourceHashes":  {
+                         "src/arm_config.h":  "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+                         "src/arm_control.c":  "6ccb6eed124c2da19910cc8d18bfc933dff232ac0799f44d14e60a36da58efdf",
+                         "src/arm_control.h":  "a02003c13555a9bdd7221cefafd310a2429e64dcfcc5c4a26aeecbb60e3e9d6b",
+                         "src/car_config.h":  "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+                         "src/full_route.h":  "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+                         "src/heading_control.c":  "0b45813548e935365282fb13a9a81fbeb1db76e6baadd65291e0b869ed0bbd6f",
+                         "src/heading_control.h":  "320ed13dbab443778d3a5046259bf1bec874911571cc66545d873b0bc07022b6",
+                         "src/heading_sensor.c":  "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+                         "src/heading_sensor.h":  "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+                         "src/hmi_status.c":  "8e626dabbc98232fc361ff72fe1b559515e5943e653cd505097f631f00e4da7c",
+                         "src/hmi_status.h":  "c91dce4aa3dd0e35fc136378785160c449b46f277627ee925614e5e6cf771f98",
+                         "src/main_table_nav.c":  "9a15651428a2d97edceefeebe9bc3b5bdc551f9f34ed1fab270517b938e1fae9",
+                         "src/motion.c":  "61202aa94c7008d58c6b57098730fe166e24c261dacfb7c500e37623c493339f",
+                         "src/motion.h":  "cb1c9de1da84841601110f50c73142cc2efbd36fe6cda3462708a9707cbfee12",
+                         "src/navigation.c":  "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+                         "src/navigation.h":  "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+                         "src/road_map.c":  "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
+                         "src/road_map.h":  "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+                         "src/station_config.h":  "dabd832fc3d9abd0444516ddc5b71893d5733d50716c0ef925b328b75ee85c00",
+                         "src/station_job.c":  "f330e8cf6b2e72dfb51afee849c472146ab9fba7f4afede1efb47818a683229a",
+                         "src/station_job.h":  "309ee7135726a277cee4314facb36499e0cbd8f80792f06aaebdef6643b1a4ff",
+                         "src/structure.h":  "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+                         "src/vision_link.c":  "8b1b2a974d6ffca4cb5498b5770743b5bf7e67715fd0bd9df4550b35a0bd8712",
+                         "src/vision_link.h":  "4fb12f85fd46b64e17575c9e02907e40ba7f0e2ea367b2542d25552cf43b7dc5",
+                         "tests/verify_hmi.c":  "da0790235a4de575797e37f1307b153ba0fbfdd72b9b2304b8876177dbb5d323",
+                         "tests/verify_heading.c":  "34d152a4f6f9c11afc50efa3b9d372032bc7b77bdd1b9ad1fc9919aef6163142",
+                         "tests/verify_entry.c":  "f52ba277d7fc7ee51fa3c604c4cb41477d7ce15ac67f2d1dad1a0a79d449ca08",
+                         "tests/entry_host_io.h":  "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+                         "tests/arm_host_io.h":  "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71",
+                         "tests/vision_host_io.h":  "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+                         "tools/verify-hmi.ps1":  "fd558f7d31a7838ff3438d52d040380c2526c3a1ff78b355402f06e0974b39a8",
+                         "keil/TableNavigation.uvprojx":  "18fc771585885a7aad6ef01a4d0ebaccada740c021e6f20983d5e749ecc153a9"
+                     },
+    "variants":  [
+                     {
+                         "output":  [
+                                        "PASS HMI serializer: ASCII/three FF, full task transaction, atomic batch, busy transport/page changes, delta refresh, periodic resync, signed32 bounds, boot and timer wrap",
+                                        "PASS HMI adapter: four task groups, all phases/time freeze, unknown counts/voltage/servo arrival, fresh/stale feedback, readonly page commands, MOVE ownership, visual age, disconnected TX cannot block emergency",
+                                        "PASS HMI integration: 6464 assertions; no screen/vehicle accessed"
+                                    ],
+                         "exitCode":  0,
+                         "testOnlyWheelMapping":  false
+                     },
+                     {
+                         "output":  [
+                                        "PASS HMI serializer: ASCII/three FF, full task transaction, atomic batch, busy transport/page changes, delta refresh, periodic resync, signed32 bounds, boot and timer wrap",
+                                        "PASS HMI adapter: four task groups, all phases/time freeze, unknown counts/voltage/servo arrival, fresh/stale feedback, readonly page commands, MOVE ownership, visual age, disconnected TX cannot block emergency",
+                                        "PASS HMI integration: 6465 assertions; no screen/vehicle accessed"
+                                    ],
+                         "exitCode":  0,
+                         "testOnlyWheelMapping":  true
+                     }
+                 ]
+}

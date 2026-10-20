@@ -1,0 +1,120 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r23",
+  "scope": "自动工位轮速读数仅记录日志，不再以幅值或持续时间停机/等待，覆盖进站互锁、原料视觉等待、3mm/150mm入口及底层PREFLIGHT、停车推进、重取互锁、离站预检。推进仍需停车命令ACK、既有时序、新鲜反馈和IMU/编码器条件。急停、驱动器状态和失联停止保持；手动会话及普通道路的轮速检查保持。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T131238303Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T131238263Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T131238351Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T131238366Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T131238236Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      1542198,
+      1544581
+    ],
+    "hostArm": [
+      133200
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      3805174,
+      5648580,
+      1343432,
+      1343432,
+      3805253,
+      2834316,
+      5648124
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T131306034Z/build.log",
+    "verification": "evidence/station-speed-log-r23-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448984,
+    "start": "0x8000000",
+    "endExclusive": "0x806d9d8",
+    "artifacts": {
+      "evidence/merged-keil-20261019T131306034Z/table_navigation.axf": "66a409a197d0c773e0594f119fe1e17065d8cb3cfb0dc774387dd981178ca08a",
+      "evidence/merged-keil-20261019T131306034Z/table_navigation.hex": "ce0974be47c91e03cf7e556062aeda85f64ab6fd47c9eda7b3f8e427bbd93f55",
+      "evidence/merged-keil-20261019T131306034Z/table_navigation.map": "6a6a93444a6e91f3e837320088b3bd2f11e491eb795abdcede9d3b423829a8d8"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "stationWheelFeedback": {
+    "verification": "evidence/station-speed-log-r23-verification.json",
+    "policy": "log_only",
+    "speedMagnitudeThreshold": null,
+    "nonzeroDurationStopMs": null,
+    "stages": [
+      "automatic_entry_interlock",
+      "raw_C_PICK_wait",
+      "station_launch",
+      "station_PREFLIGHT",
+      "zero_command_ACK_and_settle",
+      "station_reacquisition",
+      "station_departure_preflight_and_alignment"
+    ],
+    "stopCommandAckRequired": true,
+    "stopCommandSettleTimingRetained": true,
+    "freshFeedbackRequired": true,
+    "driverStatusRequired": true,
+    "emergencyAndCommunicationStopsRetained": true,
+    "manualAndNormalRoadChecksRetained": true,
+    "physicalStopVerified": false
+  },
+  "persistentSpeedBiasPatternsTested": [
+    [
+      5,
+      3,
+      -3,
+      5
+    ],
+    [
+      16,
+      -16,
+      40,
+      -40
+    ]
+  ],
+  "rawCameraWaitWithSigned40RpmTestedMs": 6000,
+  "rawPickThenLoadVerified": true,
+  "driverStallAndLostFeedbackAndIMUStillStop": true,
+  "fullRoughAndStorageBiasedSimulationIncludesMotionAndAllGripsAndDeparture": true,
+  "testPlantPositionUnaffectedByReportedSpeedBias": true,
+  "testStationParentsNowCarryActualImuModeAndTurnSpeed": true,
+  "numericArmConfigUnchanged": true,
+  "sourceDiff": "evidence/station-speed-log-r23-source.diff",
+  "defaultKeilOutputPreserved": {
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "cd5cfccadbc0742fe949c534cb0c09e22a71935a83a19e17d8f638cfe2332e30",
+      "keil/OBJ/table_navigation.hex": "4d1bbcfa909dec9787d66ff2bd7f8f5c122ab66ac65c6d1a12bfa716c66eac87",
+      "keil/OBJ/table_navigation.map": "39f82f58e376438937199442e781985f21768f0db1f77eaa46e70ec4fddafa71"
+    },
+    "scope": "Keil default output untouched; current verified firmware is in the isolated build directory"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

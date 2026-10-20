@@ -1,0 +1,26 @@
+﻿{
+    "passed":  true,
+    "exitCode":  0,
+    "scope":  "actual configured RPM; simulated nonstop node passing and obstacle return; no hardware accessed",
+    "sourceHashes":  {
+                         "src/main_table_nav.c":  "424e056230965ab6535d23940ec90760ba9ecf11d62927fc903b676acbf13aab",
+                         "src/car_config.h":  "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+                         "src/full_route.h":  "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+                         "src/structure.h":  "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+                         "src/heading_control.c":  "0b45813548e935365282fb13a9a81fbeb1db76e6baadd65291e0b869ed0bbd6f",
+                         "src/heading_sensor.c":  "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+                         "tests/verify_entry.c":  "5e9990b34c23b71fb30cbf0c0c3d9ff01c59971e8bdbb7456f9cddec2735eaff",
+                         "tests/verify_heading.c":  "34d152a4f6f9c11afc50efa3b9d372032bc7b77bdd1b9ad1fc9919aef6163142",
+                         "tests/verify_continuous.c":  "4dc85d0ee4941813eb900ac16c1684caa72f9c419681a5765469006adbfa59d4",
+                         "tools/verify-continuous.ps1":  "1baa72700575ef462fef85383fdf93a823fed7825e874788686e77ce5bcd1e48"
+                     },
+    "output":  [
+                   "PASS nonstop route A uart_cost=0: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000",
+                   "PASS nonstop route C uart_cost=0: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000",
+                   "PASS nonstop route A uart_cost=1: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000",
+                   "PASS nonstop route C uart_cost=1: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=3000",
+                   "PASS obstacle return: A/C before/after E, ordinary road, start lateral+forward and return backward+lateral; stop first, return to latest node, block road, wait without job advance or restart",
+                   "PASS obstacle failures: missing feedback/ACK, wheel4 not stopped, IMU invalid, CAN fault, emergency stop, second obstacle and preflight obstacle; no false arrival",
+                   "PASS nonstop/obstacle: 1939092 assertions; run_rpm=3000 return_rpm=60; simulation, not vehicle acceptance"
+               ]
+}

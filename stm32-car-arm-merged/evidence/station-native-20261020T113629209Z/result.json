@@ -1,0 +1,281 @@
+﻿{
+    "passed":  true,
+    "exitCode":  0,
+    "scope":  "DISC coordinate consistency veto removed: D/E accept reported ok1 despite dx!=cx-320, including386/177/71 and420/620 offsets; in-motion terminal reply waits for completion then reaches platform100 grip; simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup100/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed",
+    "sourceHashes":  {
+                         "src/station_job.c":  "f330e8cf6b2e72dfb51afee849c472146ab9fba7f4afede1efb47818a683229a",
+                         "src/station_job.h":  "309ee7135726a277cee4314facb36499e0cbd8f80792f06aaebdef6643b1a4ff",
+                         "src/station_config.h":  "dabd832fc3d9abd0444516ddc5b71893d5733d50716c0ef925b328b75ee85c00",
+                         "src/vision_link.c":  "8b1b2a974d6ffca4cb5498b5770743b5bf7e67715fd0bd9df4550b35a0bd8712",
+                         "src/vision_link.h":  "4fb12f85fd46b64e17575c9e02907e40ba7f0e2ea367b2542d25552cf43b7dc5",
+                         "src/hmi_status.c":  "8e626dabbc98232fc361ff72fe1b559515e5943e653cd505097f631f00e4da7c",
+                         "src/hmi_status.h":  "c91dce4aa3dd0e35fc136378785160c449b46f277627ee925614e5e6cf771f98",
+                         "src/arm_control.c":  "6ccb6eed124c2da19910cc8d18bfc933dff232ac0799f44d14e60a36da58efdf",
+                         "src/arm_control.h":  "a02003c13555a9bdd7221cefafd310a2429e64dcfcc5c4a26aeecbb60e3e9d6b",
+                         "src/arm_config.h":  "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+                         "tests/vision_host_io.h":  "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+                         "src/main_table_nav.c":  "9a15651428a2d97edceefeebe9bc3b5bdc551f9f34ed1fab270517b938e1fae9",
+                         "src/car_config.h":  "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+                         "src/full_route.h":  "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+                         "src/structure.h":  "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+                         "src/heading_control.c":  "0b45813548e935365282fb13a9a81fbeb1db76e6baadd65291e0b869ed0bbd6f",
+                         "src/heading_sensor.c":  "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+                         "tests/verify_entry.c":  "f52ba277d7fc7ee51fa3c604c4cb41477d7ce15ac67f2d1dad1a0a79d449ca08",
+                         "tests/verify_heading.c":  "34d152a4f6f9c11afc50efa3b9d372032bc7b77bdd1b9ad1fc9919aef6163142",
+                         "tests/verify_station_vision.c":  "c1c7ac07c3b86ada4890503346a5620aef23de947fbd2a546260988119c3de8b",
+                         "tools/verify-station-vision.ps1":  "b292c1f754bf951a70c318545371ce4fbfb0e5d5256465c985c55bbb9cd85f17"
+                     },
+    "variants":  [
+                     {
+                         "configuration":  "production_first5_second65_full_flow",
+                         "exitCode":  0,
+                         "defines":  [
+
+                                     ],
+                         "testOnlyOverrides":  false,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C full configured flow: both batches and storage stacking, 8 jobs, 13960mm and three uninterrupted E passes; persistent nonzero5/7RPM, simulation only, NOT hardware acceptance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 6015992 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "mock_layer20_full_flow",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_STORAGE_LAYER_LIFT_MM=20"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C full configured flow: both batches and storage stacking, 8 jobs, 13960mm and three uninterrupted E passes; persistent nonzero5/7RPM, simulation only, NOT hardware acceptance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 6015992 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "ready_without_pose",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_ROUGH_SLIDE_MM=0",
+                                         "-DSTN_ROUGH_LIFT_MM=0",
+                                         "-DSTN_ROUGH_PLACE_LIFT_MM=0",
+                                         "-DSTN_ROUGH_YAW_DEG=0.0f"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough calibration guard: rough/platform take not ready or zero rough pose refuses before arm/index movement",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 3220942 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "rough_platform_take_not_ready",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_ROUGH_PLATFORM_TAKE_READY=0"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough calibration guard: rough/platform take not ready or zero rough pose refuses before arm/index movement",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 3220942 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "layer_height_unknown",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_STORAGE_LAYER_LIFT_MM=0"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 4213116 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "storage_not_ready",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_STORAGE_PLACE_READY=0"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 3086216 assertions; ready_flags=1/0/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "mock_layer130_upper_boundary",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_STORAGE_LAYER_LIFT_MM=130"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C full configured flow: both batches and storage stacking, 8 jobs, 13960mm and three uninterrupted E passes; persistent nonzero5/7RPM, simulation only, NOT hardware acceptance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 6016082 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     },
+                     {
+                         "configuration":  "mock_layer131_exceeds_travel",
+                         "exitCode":  0,
+                         "defines":  [
+                                         "-DSTN_STORAGE_LAYER_LIFT_MM=131"
+                                     ],
+                         "testOnlyOverrides":  true,
+                         "output":  [
+                                        "PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained",
+                                        "PASS vision: exact CRC frame, nonblocking blocked TX, wrong/bad/stale/overflow/error frames, bounded signed coordinates, timeout and timer wrap; emergency cancellation",
+                                        "PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request",
+                                        "PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered",
+                                        "PASS task lifetime: full round completion/fault/stop expire both batches; B waits until new input; idle scanner cannot reload old code; fresh manual preload and standalone diagnostics retained",
+                                        "PASS loading: @/load3 and three load1 actions cycle slots, leave cup before rotation, retain explicit pose/stop semantics and no arm-on PWM jump",
+                                        "PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure",
+                                        "PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock",
+                                        "RAW_READY_TIMING yaw_start_ms=92 vision_request_ms=661; simulation only",
+                                        "PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback",
+                                        "PASS raw final block: both batches return directly from platform yaw to front0 without intermediate pick131 target; first two return to pick angle, all three vision gates and platform1 finish retained",
+                                        "PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance",
+                                        "PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall stops; missing speed/IMU replies retain the waiting task and recover",
+                                        "PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume",
+                                        "PASS raw preparation failures: emergency during yaw interpolation or missing lift feedback cannot issue vision request or begin pickup",
+                                        "PASS automatic moving obstacle: parked enabled arm retained while current encoder return stops at previous node; no station job or automatic restart",
+                                        "PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve5, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained",
+                                        "PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving",
+                                        "PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained",
+                                        "PASS station vision: rough D once / storage E once at entry ring2 yaw125; no target/return detection, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel",
+                                        "PASS station/vision integration: 4213856 assertions; ready_flags=1/1/1; simulation only"
+                                    ]
+                     }
+                 ]
+}

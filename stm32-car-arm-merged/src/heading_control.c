@@ -22,7 +22,8 @@ HeadingDecision heading_control_update(HeadingControl *control, HeadingSample sa
 {
     uint32_t elapsed_sample;
     int32_t magnitude, delta;
-    if (control->fault) return HEADING_FAULT;
+    if (control->fault && sample.sequence==control->sample_sequence) return HEADING_FAULT;
+    control->fault = 0;
     if (!heading_sample_fresh(&sample, now_ms, CAR_IMU_MAX_AGE_MS))
         control->fault = "IMU sample stale/invalid";
     if (control->fault) return HEADING_FAULT;

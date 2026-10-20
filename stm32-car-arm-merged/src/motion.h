@@ -7,7 +7,7 @@ typedef enum
     MOTION_RUNNING,       /* 当前相对位置命令执行中。 */
     MOTION_WAIT_CONFIRM,  /* 估时已过，仍等待人工确认实际位移。 */
     MOTION_DONE,          /* 当前命令已得到相应确认。 */
-    MOTION_FAULT          /* 提交失败或等待超时，已请求停车。 */
+    MOTION_FAULT          /* 命令提交失败，已请求停车；等待超时仅保留人工确认。 */
 } MotionState;
 typedef struct
 {
@@ -38,7 +38,7 @@ typedef struct
     uint32_t generation;      /* 每次开始/停车都会变化的命令代号。 */
     uint32_t started_ms;      /* 当前段提交时的系统时间。 */
     uint32_t estimate_ms;     /* 估时，不是到位信号。 */
-    uint32_t timeout_ms;      /* 超过此等待时长会请求停车。 */
+    uint32_t timeout_ms;      /* 估计等待期限；超过后继续等待确认，不自动停车/完成。 */
     uint32_t pulses;          /* 基础运动脉冲；预补偿后四轮脉冲可能不同。 */
     MotionParameters parameters;
     int16_t forward_trim_mm;  /* 本次横移叠加的前移量，正值向前。 */

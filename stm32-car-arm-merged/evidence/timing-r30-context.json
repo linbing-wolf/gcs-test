@@ -1,0 +1,31 @@
+{
+  "snapshot": "evidence/timing-before-20261020T065140432031Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "manifest": "90f17b329c46931af757ed8c93b95604b280465fe4f1b02f9389c9de6110594e",
+      "actual": "dad41c6332106b0d632fc7197f453bca076be66fb2ba8ac8c44116c22f039464"
+    },
+    "keil/OBJ/table_navigation.hex": {
+      "manifest": "31aa06c2158f8ceaf0f445406985519e8904a66fc17f201b3c13ee89da278990",
+      "actual": "c30a34b73654559d1532bf74428eeda21130ceaa1aacf25d1a794c951483596a"
+    },
+    "keil/OBJ/table_navigation.map": {
+      "manifest": "a136bc2f05a38a50fb23775bf1faa742d0b4255f1d14c4ee779714dcf5d27281",
+      "actual": "4360f8c696ac879deebca83137d6bd247430fe72fb2b3b89f7843b8425d54b1e"
+    },
+    "src/arm_config.h": {
+      "manifest": "f085c820eec3c0ef73e3f251a41e77fffc009f0c784ec0e7379cf6e06a33da3e",
+      "actual": "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a"
+    }
+  },
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "dad41c6332106b0d632fc7197f453bca076be66fb2ba8ac8c44116c22f039464",
+    "keil/OBJ/table_navigation.hex": "c30a34b73654559d1532bf74428eeda21130ceaa1aacf25d1a794c951483596a",
+    "keil/OBJ/table_navigation.map": "4360f8c696ac879deebca83137d6bd247430fe72fb2b3b89f7843b8425d54b1e"
+  },
+  "preservedUserConfiguration": {
+    "ARM_AXIS_RPM": 2500,
+    "ARM_SERVO_TIME_MS": 600,
+    "ARM_AXIS_ACCEL": 200
+  }
+}

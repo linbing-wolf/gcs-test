@@ -1,0 +1,28 @@
+{
+  "snapshot": "evidence/axis-speed-log-before-20261019T140135186330Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "actual": "4542c98fec054384302327c01191efbc98dac3498a7b6a48e508fab5d1b24d56",
+      "manifest": "e5c68d9d353b40cace4972785128c16911fe1da15bc48f661a0ec7be60cc36e9"
+    },
+    "keil/OBJ/table_navigation.hex": {
+      "actual": "82a5c1af5a0c6eb6c347e2df5d6a256ab8e03ca483585d7483339f5a09b2113b",
+      "manifest": "751b418cea11648a3e10a3ee00d44cb95ec8051bfa2a4878530d786dd7e6b60e"
+    },
+    "keil/OBJ/table_navigation.map": {
+      "actual": "cd39c42a6e5f6b9c3af830926787f13ac62a51076e2270c2771c5a4d84fcfb6d",
+      "manifest": "748369e07a7264c87cf4385f71fbcb316e0b9eee0353b67c5a91d3d849bba85c"
+    },
+    "src/arm_config.h": {
+      "actual": "dc9ac5127683c8202ce71a0cf95f47a5cd3d91fd59676c656d62d12e0df3b555",
+      "manifest": "a4ca29fb24b8c0bc18e1b831b36aca354ca42d17cc2318ce30bbd2aa01e75177"
+    }
+  },
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "4542c98fec054384302327c01191efbc98dac3498a7b6a48e508fab5d1b24d56",
+    "keil/OBJ/table_navigation.hex": "82a5c1af5a0c6eb6c347e2df5d6a256ab8e03ca483585d7483339f5a09b2113b",
+    "keil/OBJ/table_navigation.map": "cd39c42a6e5f6b9c3af830926787f13ac62a51076e2270c2771c5a4d84fcfb6d"
+  },
+  "carConfigBeforeAuthorized255Change": "deb09bc6b3bf342e0ee910b4f36c08454331beb396f50b071f5f147f4290c97a",
+  "accelerationChangeAuthorized": "User superseded keep500 and requested255 for arm axis, chassis motion and stop acceleration; speed/ramp parameters unchanged."
+}

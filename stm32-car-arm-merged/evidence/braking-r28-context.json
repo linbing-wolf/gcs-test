@@ -1,0 +1,14 @@
+{
+  "snapshot": "evidence/braking-before-20261019T141424776216Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "actual": "28f8550f1ec2a403e65a286e515031137e510049a858e3beb83acc4538b63fae",
+      "manifest": "82dd0db84169938afdcc62b4c9a2c67ec350f09ddedcad3c9934b98d702bd726"
+    }
+  },
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "28f8550f1ec2a403e65a286e515031137e510049a858e3beb83acc4538b63fae",
+    "keil/OBJ/table_navigation.hex": "784b048eea2714e0c448d5d971af99928ecc3a978e1d934f9dc0b2481d2c28c2",
+    "keil/OBJ/table_navigation.map": "1c95d209156ebe3edac6e27558aa3844f89a2647157085fe2de990e9cc09e1b5"
+  }
+}

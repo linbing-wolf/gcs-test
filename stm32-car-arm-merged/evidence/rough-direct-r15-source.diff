@@ -1,0 +1,407 @@
+--- before/README.md
++++ README.md
+@@ -1,6 +1,6 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r14。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；不再逐环等待视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/105/125°、暂存55/105/131°，平台取料共用35/110/256°。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±5RPM/300ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261019-merge2-r15。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；不再逐环等待视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存55/105/131°及其平台取料35/110/256°保持。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±5RPM/300ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -16,7 +16,7 @@
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+ 3. 下载本目录 `keil/OBJ/table_navigation.hex`，或下载自己刚编译的固件。源码改过就重新编译，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r14`。只显示发送记录不代表板子已回复。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r15`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -2,7 +2,9 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r14支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r15支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++
++r15按操作者本次确认修改粗加工：保持125°移车到任务目标，再直接转256°、平台取料高度100mm；抬到135mm并收平推后直接转125°、落位高度70mm。粗加工抓回同样在70mm夹起，直接转256°放回原盘，放回高度沿用110mm。工位内部换盘只允许高位收回且保持125°；普通手动换盘仍要求车头0°。全部粗加工作业完成、回2号并恢复平台1后才回0°。原料、暂存、速度及停机保护不作本次调整。测试以当前配置600RPM、舵机1000ms、夹爪250ms运行；这些速度/时长是在本次修改前已经存在的值。
+ 
+ r14以用户提供的《智能搬运赛项物料放置方案总结_已加入暂存区动作》为作业依据。粗加工按盘位顺序查G2/G4放下、同序抓回；不再逐环等视觉，进站停车点就是2号基准。暂存第一批查G2，第二批按颜色回查第一批G1/G2后叠放。两区方向都已确认前1、中2、后3，1↔3拆成两段150mm，作业结束回2号基准。原料视觉颜色确认保留。完整规则、参数和例子见[按任务码作业与暂存叠放](按任务码作业与暂存叠放.md)。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ docs/按任务码作业与暂存叠放.md
+@@ -1,6 +1,6 @@
+ # 按任务码作业与暂存叠放
+ 
+-版本：20261019-merge2-r14。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
++版本：20261019-merge2-r15。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
+ 
+ ## 任务码和盘位
+ 
+@@ -10,7 +10,16 @@
+ 
+ ## 粗加工顺序
+ 
+-进站停在2号基准，前1、中2、后3。按盘位1→2→3取料，每块先查本批G2/G4，移车到该靶位后才从车上取料并放下。三块全部放完，再按同一任务靶位顺序抓回，依次恢复到盘位1、2、3。最后回2号基准、机构回车头0°、平台回1号，再交回普通路线。
++进站停在2号基准，前1、中2、后3。先升到135mm、收回平推，再转125°。按盘位1→2→3取料，每块先查本批G2/G4，保持125°移车到该靶位，再执行：
++
++1. 在高位收回且保持125°时选择对应盘位，不回车头0°。
++2. 直接转256°，平推35mm，张爪45°，升降到100mm，夹紧15°。
++3. 升到135mm、收回平推，直接转125°，平推55mm，升降到70mm，张爪放下。
++4. 升到135mm、收回平推，保持125°进入下一次移车。
++
++三块全部放完，按同一任务靶位顺序抓回：125°/55mm/70mm夹起，升到135mm收回，保持125°选择原盘位，再直接转256°，按35mm/110mm放回原盘，松爪、抬高收回并直接转125°。抓回和放回也不插入车头0°。放回平台高度110mm沿用原值，不与本次取料100mm混改。
++
++最后回2号基准，在125°高位收回时把平台恢复1号，再回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；只有粗加工状态机使用带指定作业角检查的内部换盘接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
+ 
+ 例如第一批G1=314、G2=231：取1盘蓝放2号、取2盘红放3号、取3盘绿放1号；随后依次从2、3、1号抓回1、2、3盘。G4只影响第二批粗加工。
+ 
+@@ -39,9 +48,10 @@
+ 
+ | 参数 | 当前值 | 来源 |
+ | --- | --- | --- |
+-| 粗加工平推/升降/云台 | 55mm / 105mm / 125° | 用户既有指定 |
++| 粗加工落位/抓回平推/升降/云台 | 55mm / 70mm / 125° | 用户本次确认 |
+ | 暂存第一层平推/升降/云台 | 55mm / 105mm / 131° | 本次作业文档 |
+-| 两区平台取料 | 35mm / 110mm / 256° | 现有平台几何ARM_PLACE_* |
++| 粗加工平台取料 | 35mm / 100mm / 256° | 用户本次确认取料高度100mm |
++| 暂存平台取料 / 粗加工放回平台 | 35mm / 110mm / 256° | 现有ARM_PLACE_*，本次保持 |
+ | 两区索引 | 150mm，60RPM，符号-1 | 前1、中2、后3 |
+ | 夹爪夹紧/松开 | 15° / 45° | 当前配置 |
+ | 物块高度STN_STORAGE_LAYER_LIFT_MM | 60mm | 用户实测 |
+@@ -54,4 +64,4 @@
+ 
+ ## 验证边界
+ 
+-工位测试使用独立车辆位置模拟和夹爪动作，覆盖两批全部六种粗加工靶位排列、暂存全部靶位/颜色排列、原盘位恢复、第二批不依赖G4、150mm分段、移车时空爪收臂、原路线状态恢复，以及零速、急停、反馈和层高边界。测试专用20mm/30mm层高验证两批全路线与上限；0mm验证未标定拒绝，生产60mm验证超程拒绝。测试覆盖不等于真实基准停车、抓取成功、叠放稳定或实车精度。
++工位测试使用独立车辆位置模拟和夹爪动作，覆盖两批全部六种粗加工靶位排列、暂存全部靶位/颜色排列、原盘位恢复、第二批不依赖G4、150mm分段、移车时空爪收臂、原路线状态恢复，以及零速、急停、反馈和层高边界。测试专用20mm/30mm层高验证两批全路线与上限；0mm验证未标定拒绝，生产60mm验证超程拒绝。本版还检查粗加工全程只有125/256°交替、末尾才回0°，以及到目标后才在100mm夹取、70mm放下/抓回、高位换盘与缺轴反馈拒绝。测试覆盖不等于真实基准停车、抓取成功、叠放稳定或实车精度。
+--- before/src/arm_control.c
++++ src/arm_control.c
+@@ -419,6 +419,17 @@
+ {
+     arm.single=s;arm.sequence=arm.step=0;arm.count=1;begin_step(now);
+ }
++int arm_platform_at_yaw(uint8_t slot,float work_yaw,uint32_t now)
++{
++    static const float angles[3]={ARM_PLATFORM_FIRST_DEG,ARM_PLATFORM_SECOND_DEG,ARM_PLATFORM_THIRD_DEG};
++    ArmStep step={0,0,0,0,0,PLATFORM};
++    if(slot<1u || slot>3u || !arm_ready()
++        || arm.slide!=ARM_SLIDE_HOME_MM || arm.lift!=ARM_LIFT_HOME_MM || arm.yaw!=work_yaw
++        || !pose_valid(arm.slide,arm.lift,work_yaw,arm.claw)) return 0;
++    step.platform=angles[slot-1u];
++    start_single(step,now);
++    return arm_busy() && !arm_failed();
++}
+ static void arm_status(void)
+ {
+     /* 仅主循环调用；固定缓冲避免浮点格式化占满启动文件的1KiB栈。 */
+--- before/src/arm_control.h
++++ src/arm_control.h
+@@ -16,6 +16,9 @@
+ float arm_platform_angle(void);
+ int arm_ready(void);
+ int arm_platform_slot(void);
++/* 工位内部换盘：调用方须持有停车互锁；仅在高位收回且云台等于指定作业角时接受。
++ * 普通arm platform命令仍要求车头0度，不放宽手动接口。 */
++int arm_platform_at_yaw(uint8_t slot, float work_yaw, uint32_t now);
+ void arm_pose_now(int *slide, int *lift, float *yaw, float *claw);
+ void arm_can_error(uint8_t flags);
+ void arm_can_rx(uint32_t id, uint8_t ide, uint8_t rtr,
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -2621,7 +2621,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r14; task-ordered rough and color-stacked storage; English console\r\n");
++    text("[drive] version=20261019-merge2-r15; rough direct125/256 take100 place70; English console\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/src/station_config.h
++++ src/station_config.h
+@@ -22,7 +22,8 @@
+ /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
+  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
+  * 以进站停车为2号基准；索引不再等待视觉，不具备自动纠正停车误差的能力。
+- * 2026-10-19指定粗加工复用原料平推/升降，云台125度；不等于实车验收。
++ * 2026-10-19指定粗加工平推55mm、落位/抓回高度70mm、平台取料高度100mm。
++ * 作业内云台只在125/256度间直转，离站回0度；不等于实车验收。
+  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
+ #ifndef STN_ROUGH_PLACE_READY
+ #define STN_ROUGH_PLACE_READY   1
+@@ -34,7 +35,7 @@
+ #define STN_ROUGH_SLIDE_MM     55
+ #endif
+ #ifndef STN_ROUGH_LIFT_MM
+-#define STN_ROUGH_LIFT_MM     105
++#define STN_ROUGH_LIFT_MM      70
+ #endif
+ #ifndef STN_ROUGH_YAW_DEG
+ #define STN_ROUGH_YAW_DEG     125.0f
+@@ -42,7 +43,8 @@
+ static const StationPose stn_rough_place = {
+     STN_ROUGH_SLIDE_MM, STN_ROUGH_LIFT_MM, STN_ROUGH_YAW_DEG
+ };
+-/* 平台几何沿用当前已指定的ARM_PLACE_*，两个工位共用。 */
++/* 粗加工仅覆盖平台取料高度，平推/云台和放回平台高度仍用ARM_PLACE_*。 */
++#define STN_ROUGH_PLATFORM_TAKE_LIFT_MM 100
+ #ifndef STN_ROUGH_PLATFORM_TAKE_READY
+ #define STN_ROUGH_PLATFORM_TAKE_READY 1
+ #endif
+--- before/src/station_job.c
++++ src/station_job.c
+@@ -88,24 +88,23 @@
+     push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f));
+ }
+ /* 到目标靶位后才从指定杯位取料；下一杯由作业表显式选择。 */
+-static void push_take_from_platform(void)
++static void push_take_from_platform(int lift_mm)
+ {
+     /* 先在高处转向杯位并张开爪子，再伸齿条、下降；避免闭爪贴着杯壁下降。 */
+     push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+     push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
+     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+-    push(SS_LIFT, ARM_PLACE_LIFT_MM);
++    push(SS_LIFT, lift_mm);
+     push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+     push(SS_LIFT, ARM_LIFT_HOME_MM);
+     push(SS_SLIDE, ARM_SLIDE_HOME_MM);
+-    push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f));
+-}
++}
++/* 粗加工放回原盘，只抬高收回，不回车头或自动换盘。 */
+ static void push_place_on_platform(void)
+ {
+     push_move_to(ARM_PLACE_SLIDE_MM, ARM_PLACE_LIFT_MM, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+-    push_retreat_home();
+-    push(SS_PLATFORM, 0);
++    push_retract();
+ }
+ static void push_release_at(const StationPose *pose)
+ {
+@@ -117,7 +116,7 @@
+ {
+     push_move_to(pose->slide_mm, pose->lift_mm, (int)(pose->yaw_deg * 10.0f));
+     push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+-    push_retreat_home();
++    push_retract();
+ }
+ 
+ static int build_raw(void)
+@@ -183,13 +182,13 @@
+         seen |= (uint8_t)(1u << (target - 1u));
+     }
+     /* 文档方案以停车点作为2号基准，工位不再依赖视觉反馈推进。 */
++    push_retract();
+     push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f));
+     for (i = 0; i < 3u; i++) {
+         target = task_rings[stn.batch][i];
+         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+-        push_retreat_home();
+         push(SS_PLATFORM, i + 1);
+-        push_take_from_platform();
++        push_take_from_platform(STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
+         push_move_to(stn_rough_place.slide_mm, stn_rough_place.lift_mm, (int)(stn_rough_place.yaw_deg * 10.0f));
+         push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+         push_retract(); /* 保持125度，直接前后移动到下一环。 */
+@@ -204,8 +203,8 @@
+         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
+     }
+     if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+-    push_retreat_home();
+     push(SS_PLATFORM, 1);
++    push_retreat_home(); /* 全部工位动作完成后才回车头0度。 */
+     return 1;
+ }
+ static int build_storage(void)
+@@ -248,7 +247,8 @@
+         if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+         push_retreat_home();
+         push(SS_PLATFORM, i + 1);
+-        push_take_from_platform();
++        push_take_from_platform(ARM_PLACE_LIFT_MM);
++        push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f)); /* 暂存原流程保持回车头。 */
+         push_release_at(&pose);
+     }
+     if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+@@ -308,8 +308,8 @@
+         stn_fault("unknown station job");
+         return -1;
+     }
+-    /* 原料末块已在load1 last中完成回车头与平台换位，不重复编排回零。 */
+-    if (job != 1u && job != 4u) push_retreat_home();
++    /* 原料末块与粗加工已有自己的离站收尾，不重复编排回零。 */
++    if (job == 3u || job == 6u) push_retreat_home();
+     if (stn.phase == ST_FAULT) return -1;
+     {
+         unsigned i;
+@@ -373,8 +373,12 @@
+         break;
+     case SS_PLATFORM: {
+         int slot = s->value ? s->value : arm_platform_slot() % 3 + 1;
+-        snprintf(line, sizeof(line), "arm platform %d", slot);
+-        ok = arm_command(line, now);
++        if (stn.job==2u || stn.job==5u) {
++            ok = arm_platform_at_yaw((uint8_t)slot, STN_ROUGH_YAW_DEG, now);
++        } else {
++            snprintf(line, sizeof(line), "arm platform %d", slot);
++            ok = arm_command(line, now);
++        }
+         break;
+     }
+     case SS_CHASSIS: {
+--- before/src/station_job.h
++++ src/station_job.h
+@@ -6,8 +6,9 @@
+  *
+  * 原料区：圆盘每把一块物料转到固定取料口，上位机识别到目标颜色后回 PICK，
+  *         才执行一次已标定的单块装车动作（arm load1）。
+- * 粗加工区：视觉确认2号基准；前1中2后3，按1/2/3放下再同序抓回原杯。
+- * 暂存区：从车载载物台取 3 块放到暂存位。
++ * 粗加工区：停车位置为2号基准；前1中2后3，按任务靶位放下再同序抓回原杯。
++ *           平台取料高度100mm，落位/抓回70mm；作业内125/256度直转，离站回0。
++ * 暂存区：第一批查G2，第二批按颜色反查G1/G2同色叠放。
+  *
+  * 粗加工/暂存姿态未标定时拒绝自动执行（见 station_config.h）。
+  */
+@@ -22,8 +23,8 @@
+ /* 一轮含两批作业；仅整轮结束/取消时清除，普通工位交接不得调用。 */
+ void station_clear_task(void);
+ void station_status(void);
+-/* 仅粗加工使用：高位收回、云台0或粗加工观察角、四轮严格零速。
+- * 允许一环间距或有界视觉小步；完成后重新取得零速互锁。 */
++/* 粗加工/暂存使用：高位收回、云台0或粗加工作业角、四轮严格零速。
++ * 每次只允许150mm索引；完成后重新取得零速互锁。 */
+ int station_chassis_start(int16_t delta_mm);
+ int station_chassis_busy(void);
+ int station_chassis_failed(void);
+--- before/tests/verify_arm_integration.c
++++ tests/verify_arm_integration.c
+@@ -64,6 +64,42 @@
+     send_line("test");send_line("f");CHECK(position_count==4 && sync_count==1);
+     puts("PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis");
+ }
++static void station_platform_tests(void)
++{
++    unsigned variant;
++    reset_fixture();declare_pose();send_line("arm platform pose 20");
++    send_line("arm pose 0 135 125 45");
++    send_line("arm platform 2");CHECK(strstr(output,"arm home pose") && !arm_busy());
++    CHECK(arm_platform_at_yaw(2,125.0f,clock_ms));advance_arm(2400);
++    CHECK(arm_ready() && arm_platform_slot()==2 && arm_platform_us==1530);
++    expect_pose(0,135,125,45);
++    CHECK(arm_platform_at_yaw(3,125.0f,clock_ms));advance_arm(2400);
++    CHECK(arm_platform_slot()==3 && arm_platform_us==2396);expect_pose(0,135,125,45);
++    for(variant=0;variant<8;variant++) {
++        unsigned before_pwm;
++        reset_fixture();declare_pose();
++        if(variant!=4)send_line("arm platform pose 20");
++        send_line("arm pose 0 135 125 45");
++        if(variant==0)send_line("arm pose 1 135 125 45");
++        if(variant==1)send_line("arm pose 0 134 125 45");
++        if(variant==2)send_line("arm pose 0 135 124 45");
++        if(variant==3)send_line("arm yaw 126");
++        if(variant==5)arm_stop();
++        before_pwm=arm_platform_us;
++        CHECK(!arm_platform_at_yaw((uint8_t)(variant==6 ? 0 : variant==7 ? 4 : 2),125.0f,clock_ms));
++        CHECK(arm_platform_us==before_pwm);
++    }
++    for(variant=0;variant<2;variant++) {
++        uint16_t held;
++        reset_fixture();declare_pose();send_line("arm platform pose 20");
++        send_line("arm pose 0 135 125 45");held=arm_platform_us;
++        arm_missing_motor=(uint8_t)(variant ? 7 : 5);
++        CHECK(arm_platform_at_yaw(2,125.0f,clock_ms));advance_arm(600);
++        CHECK(arm_failed() && !arm_pose_known() && arm_platform_us==held);
++    }
++    puts("PASS station platform: high/retracted125 internal selection holds yaw; manual command still requires home0; extended/low/wrong-angle/busy/unknown/fault/invalid-slot rejected");
++}
++
+ static void mutual_exclusion_tests(void)
+ {
+     static const char *blocked[]={"runimu A","runimu C","run A","run C","test","turn","nav","go B","f","b","l","r","left90","tl"};
+@@ -273,11 +309,12 @@
+     reset_fixture();declare_pose();arm_moving_motor=7;
+     send_line("arm slide 55");advance_arm(350);
+     CHECK(arm_failed() && !arm_positions);
+-    puts("PASS arm speed: axes finish on fresh verified feedback without 2s floor; claw keeps 500ms interpolation, yaw keeps 2s; delayed position/missing ACK/either axis/nonzero axis speed cannot complete early");
++    printf("PASS arm speed: axes use fresh verified feedback; claw_ms=%u yaw_platform_ms=%u; delayed position/missing ACK/either axis/nonzero speed cannot complete early\n",
++        ARM_CLAW_TIME_MS,ARM_SERVO_TIME_MS);
+ }
+ int main(void)
+ {
+-    manual_and_recipe_tests();mutual_exclusion_tests();wheel_lock_failures();
++    manual_and_recipe_tests();station_platform_tests();mutual_exclusion_tests();wheel_lock_failures();
+     arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();
+     printf("PASS arm integration: %u assertions; host simulation only, no hardware accessed\n",assertions);
+     return 0;
+--- before/tests/verify_station_vision.c
++++ tests/verify_station_vision.c
+@@ -454,9 +454,10 @@
+         return;
+     }
+     for(batch=0;batch<2;batch++)for(variant=0;variant<6;variant++) {
+-        char task[48];uint32_t deadline;unsigned events=0,expected_count=0,placed=0,taken=0,returned=0;
++        char task[48];uint32_t deadline;unsigned events=0,expected_count=0,loaded=0,placed=0,taken=0,returned=0;
+         uint8_t targets[16],ring=2;int moves[16];float prior_claw=ARM_CLAW_OPEN_DEG;
+-        unsigned positions_during_index=0,was_index=0;
++        unsigned positions_during_index=0,was_index=0,yaw_changes=0;
++        float prior_yaw=ARM_YAW_HOME_DEG;
+         uint16_t index_yaw_pwm=0;
+         const uint8_t *order=permutations[variant];
+         snprintf(task,sizeof(task),"task 134+%u%u%u+314+%u%u%u",order[0],order[1],order[2],order[0],order[1],order[2]);
+@@ -484,6 +485,7 @@
+                 arm_pose_now(&slide,&lift,&yaw,&claw);
+                 CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM && yaw==STN_ROUGH_YAW_DEG
+                     && arm_positions==positions_during_index && arm_yaw_us==index_yaw_pwm);
++                CHECK(claw==ARM_CLAW_OPEN_DEG && loaded==placed && taken==returned);
+                 CHECK(abs(run.forward_cmd_rpm)<=STN_ROUGH_INDEX_RPM);
+             } else if(was_index) {
+                 CHECK(run.state==RUN_STATION && run.station_relock && arm_lock.state==1);
+@@ -492,6 +494,23 @@
+             }
+             was_index=run.station_shift;
+             arm_pose_now(&slide,&lift,&yaw,&claw);
++            if(yaw!=prior_yaw) {
++                if(!yaw_changes)CHECK(yaw==STN_ROUGH_YAW_DEG);
++                else if(yaw==ARM_YAW_HOME_DEG)CHECK(loaded==3 && placed==3 && taken==3 && returned==3 && events==expected_count);
++                else CHECK((prior_yaw==STN_ROUGH_YAW_DEG && yaw==ARM_PLACE_YAW_DEG)
++                    || (prior_yaw==ARM_PLACE_YAW_DEG && yaw==STN_ROUGH_YAW_DEG));
++                CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
++                yaw_changes++;
++            }
++            prior_yaw=yaw;
++            if(claw!=prior_claw && claw==ARM_CLAW_CLOSE_DEG && yaw==ARM_PLACE_YAW_DEG
++                && slide==ARM_PLACE_SLIDE_MM && lift==STN_ROUGH_PLATFORM_TAKE_LIFT_MM) {
++                RoadPoint point;double physical_ring;
++                CHECK(loaded<3 && taken==0 && loaded==placed && arm_platform_slot()==(int)loaded+1);
++                CHECK(road_point(NODE_D,&point));
++                physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
++                CHECK(fabs(physical_ring-order[loaded])<0.15);loaded++;
++            }
+             if(claw!=prior_claw && slide==STN_ROUGH_SLIDE_MM && lift==STN_ROUGH_LIFT_MM && yaw==STN_ROUGH_YAW_DEG) {
+                 RoadPoint point;double physical_ring;CHECK(road_point(NODE_D,&point));
+                 physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+@@ -509,7 +528,8 @@
+         }
+         if(run.state==RUN_FAULT)fprintf(stderr,"ROUGH batch=%u permutation=%u: %s\n",batch,variant,output);
+         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==(batch ? 6 : 3));
+-        CHECK(placed==3 && taken==3 && returned==3 && events==expected_count && arm_parked() && arm_platform_slot()==1);
++        CHECK(loaded==3 && placed==3 && taken==3 && returned==3 && yaw_changes==14
++            && events==expected_count && arm_parked() && arm_platform_slot()==1);
+         CHECK(run.distance_mm==4567 && run.completed_roads==0x123);
+         {RoadPoint point;CHECK(road_point(NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
+         send_line("station");CHECK(strstr(output,"task_ready=1"));
+@@ -557,7 +577,7 @@
+         diagnostic_auto_reply=status_auto_reply=0;tick(2500);
+         CHECK(run.state==RUN_FAULT && arm_lock.state==3 && arm_positions==positions);
+     }
+-    puts("PASS rough indexing: both batches/all six task permutations; task-ordered place/retrieve, original cups, front1/rear3, final ring2, no vision dependency, route state and strict zero interlock retained; fault coverage");
++    puts("PASS rough indexing: both batches/all six permutations; move before pickup100, place/retrieve70, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained");
+ }
+ 
+ static void align_transport_tests(void)

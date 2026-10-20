@@ -1,0 +1,176 @@
+--- before/src/arm_config.h
++++ src/arm_config.h
+@@ -43,7 +43,7 @@
+ #define ARM_PLATFORM_THIRD_DEG       256.0f
+ #define ARM_CHASSIS_STOP_HOLD_MS     200u
+ #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u
+-#define ARM_CHASSIS_SPEED_NOISE_RPM     5 /* 操作者指定：已停稳会话容许的短时轮速读数，±RPM。 */
++#define ARM_CHASSIS_SPEED_NOISE_RPM    15 /* 操作者指定：已停稳会话容许的短时轮速读数，±RPM。 */
+ #define ARM_CHASSIS_SPEED_NOISE_MS   3000u /* 操作者指定：会话内非零读数持续3000ms仍停车。 */
+ #define ARM_SERVO_TIME_MS           700u /* 云台/载物台插值时间，ms；舵机无到位反馈。 */
+ #define ARM_CLAW_TIME_MS             200u /* 夹爪开合插值时间，ms；当前45/15度，需实车复核夹持。 */
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -2622,7 +2622,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r20; accept DISC ok=1; reversed alignment direction; low-speed guard3000ms\r\n");
++    text("[drive] version=20261019-merge2-r21; accept DISC ok=1; reversed alignment direction; wheel guard15rpm/3000ms\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/tests/verify_entry.c
++++ tests/verify_entry.c
+@@ -137,7 +137,7 @@
+             int64_t value=parameter==S_CPOS ? simulated_encoder[addr-1u] : reported_wheel_rpm[addr-1u];
+             uint32_t magnitude=(uint32_t)(value<0?-value:value);
+             if(missing_feedback_motor==addr)return;
+-            if(parameter==S_VEL && moving_at_stop_motor==addr && !value)magnitude=10;
++            if(parameter==S_VEL && moving_at_stop_motor==addr && !value)magnitude=16;
+             reply[0]=parameter==S_CPOS ? 0x36 : 0x35;
+             reply[1]=value<0;
+             if(parameter==S_CPOS) {
+--- before/tests/verify_arm_integration.c
++++ tests/verify_arm_integration.c
+@@ -156,10 +156,11 @@
+         advance_arm(1);CHECK(arm_lock.state==3 && arm_stops==2);
+     }
+     reset_fixture();clock_ms=UINT32_MAX-100;declare_pose();CHECK(arm_lock.state==2);
+-    /* 会话内±5RPM可短时出现，连续非零仍停车；普通高速/失联保护不变。 */
+-    for(mode=0;mode<2;mode++) {
++    /* 会话内±15RPM可短时出现，连续非零仍停车；普通高速/失联保护不变。 */
++    for(mode=0;mode<6;mode++) {
++        static const int16_t accepted[]={1,-1,6,-6,15,-15};
+         reset_fixture();declare_pose();send_line("arm yaw 131");advance_arm(200);
+-        run.imu_mode=1;reported_wheel_rpm[1]=mode ? -1 : 1;
++        run.imu_mode=1;reported_wheel_rpm[1]=accepted[mode];
+         advance_arm(100);
+         CHECK(arm_lock.state==2 && !arm_stops && arm_lock.speed_noise[1]);
+         advance_arm(2500);CHECK(arm_lock.state==2 && !arm_stops);
+@@ -181,27 +182,27 @@
+         while((uint32_t)(clock_ms-since)<ARM_CHASSIS_SPEED_NOISE_MS-1u)advance_arm(1);
+         CHECK(arm_lock.state==2 && !arm_stops);
+         advance_arm(1);CHECK(arm_lock.state==3 && arm_stops==2 && strstr(output,"low-speed feedback persisted"));
+-        /* 超过±5RPM不使用延时；最晚下次轮询即停止。 */
++        /* 超过±15RPM不使用延时；最晚下次轮询即停止。 */
+         reset_fixture();declare_pose();run.imu_mode=1;
+         reported_wheel_rpm[wheel]=(int16_t)(sign*ARM_CHASSIS_SPEED_NOISE_RPM);
+         advance_arm(100);CHECK(arm_lock.state==2);
+         reported_wheel_rpm[wheel]=(int16_t)(sign*(ARM_CHASSIS_SPEED_NOISE_RPM+1));
+         advance_arm(100);CHECK(arm_lock.state==3 && arm_stops==2);
+-        /* 建立会话之前仍为严格零速，5RPM不能靠容差放行。 */
++        /* 建立会话之前仍为严格零速，15RPM不能靠容差放行。 */
+         reset_fixture();run.imu_mode=1;
+         reported_wheel_rpm[wheel]=(int16_t)(sign*ARM_CHASSIS_SPEED_NOISE_RPM);
+         send_line("arm on");advance_arm(2400);CHECK(arm_lock.state==3 && !arm_enabled());
+     }
+-    /* 有抖动时不能掩盖新鲜度/状态故障；异号±5也不能刷新连续非零计时。 */
++    /* 有抖动时不能掩盖新鲜度/状态故障；异号±15也不能刷新连续非零计时。 */
+     for(mode=0;mode<4;mode++) {
+         uint32_t since;
+-        reset_fixture();declare_pose();run.imu_mode=1;reported_wheel_rpm[1]=5;
++        reset_fixture();declare_pose();run.imu_mode=1;reported_wheel_rpm[1]=15;
+         advance_arm(100);CHECK(arm_lock.state==2 && arm_lock.speed_noise[1]);
+         since=arm_lock.speed_noise_ms[1];
+         if(mode==0)motor_flags[1]=7;
+         if(mode==1)status_auto_reply=0;
+         if(mode==2)speed_auto_reply=0;
+-        if(mode==3)reported_wheel_rpm[1]=-5;
++        if(mode==3)reported_wheel_rpm[1]=-15;
+         if(mode==3) {
+             while((uint32_t)(clock_ms-since)<ARM_CHASSIS_SPEED_NOISE_MS-1u)advance_arm(1);
+             CHECK(arm_lock.state==2 && !arm_stops);
+@@ -213,17 +214,17 @@
+     reset_fixture();declare_pose();clock_ms=UINT32_MAX-150u;run.imu_mode=1;
+     /* 刷新时间戳，单独覆盖跨回绕的噪声计时。 */
+     {unsigned wheel;for(wheel=0;wheel<4;wheel++)motor_feedback[wheel].speed_ms=motor_feedback[wheel].status_ms=clock_ms;}
+-    arm_lock.poll_ms=clock_ms-ARM_POLL_MS;reported_wheel_rpm[1]=5;
++    arm_lock.poll_ms=clock_ms-ARM_POLL_MS;reported_wheel_rpm[1]=15;
+     advance_arm(100);CHECK(arm_lock.state==2 && arm_lock.speed_noise[1]);
+     advance_arm(ARM_CHASSIS_SPEED_NOISE_MS+100u);CHECK(arm_lock.state==3 && arm_stops==2);
+-    reset_fixture();declare_pose();run.imu_mode=1;reported_wheel_rpm[0]=5;
++    reset_fixture();declare_pose();run.imu_mode=1;reported_wheel_rpm[0]=15;
+     advance_arm(100);
+     {uint32_t first=arm_lock.speed_noise_ms[0];
+-        reported_wheel_rpm[2]=5;advance_arm(100);
++        reported_wheel_rpm[2]=15;advance_arm(100);
+         while((uint32_t)(clock_ms-first)<ARM_CHASSIS_SPEED_NOISE_MS)advance_arm(1);
+         CHECK(arm_lock.state==3 && arm_stops==2); /* 另一轮出现噪声不能刷新第一轮计时。 */
+     }
+-    printf("PASS four-wheel interlock: initial strict zero, transient +/-1RPM recovery, +/-5RPM bound_ms=%u on every wheel, >5RPM immediate stop, sign changes, status/stale/bus faults, queue overflow and timestamp wrap\n",ARM_CHASSIS_SPEED_NOISE_MS);
++    printf("PASS four-wheel interlock: initial strict zero, transient +/-1/6/15RPM recovery, +/-15RPM bound_ms=%u on every wheel, +/-16RPM immediate stop, sign changes, status/stale/bus faults, queue overflow and timestamp wrap\n",ARM_CHASSIS_SPEED_NOISE_MS);
+ }
+ static void arm_faults_and_stop_tests(void)
+ {
+--- before/README.md
++++ README.md
+@@ -1,6 +1,6 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r20。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±5RPM/3000ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261019-merge2-r21。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±15RPM/3000ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -15,8 +15,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已验证r20固件为 `evidence/merged-keil-20261019T123748813Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r20`。只显示发送记录不代表板子已回复。
++3. 本次已验证r21固件为 `evidence/merged-keil-20261019T124507580Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r21`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -2,7 +2,9 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r20支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r21支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++
++r21按操作者要求将已建立机械臂会话的轮速容差从±5RPM改为±15RPM。±15RPM内非零允许最多3000ms等待回零，超范围立即停止；初次获取互锁和工位移车发车仍要求严格零速。视觉、路线和抓放参数保持。
+ 
+ r20按操作者要求取消DISC成功回包的±5像素幅值门槛：格式及坐标字段一致性正常且ok=1即接受，含54/84/91像素等非零偏差，车停稳后继续后续抓放。ok=0、非法帧、坐标不一致和超时处理保持；MOVE处理、正偏差后退方向及反馈节拍保持。
+ 
+@@ -38,7 +40,7 @@
+ 
+ ## 互锁和停止
+ 
+-`arm on`先要求底盘没有活动路线、待确认位置动作或导航流程，再下发四轮停车，轮询四轮的新使能/故障状态及零速反馈，连续保持200ms后启用5/7号机构电机。等待上限2秒，单项反馈时效500ms；缺少任一轮不能放行。此后每10ms查询一项轮状态/速度，持续监测四轮。当前r16在已建立的机构会话内允许±5RPM短时读数：首次非零打印告警，3000ms内回零则继续；连续3000ms非零或收到超过±5RPM的反馈立即停止。首次arm on的200ms严格零速要求和粗加工发车零速检查不变。失联、堵转、CAN错误或收包溢出仍会停止机构并请求底盘停车，锁仍保留，不自动恢复。
++`arm on`先要求底盘没有活动路线、待确认位置动作或导航流程，再下发四轮停车，轮询四轮的新使能/故障状态及零速反馈，连续保持200ms后启用5/7号机构电机。等待上限2秒，单项反馈时效500ms；缺少任一轮不能放行。此后每10ms查询一项轮状态/速度，持续监测四轮。当前r21在已建立的机构会话内允许±15RPM短时读数：首次非零打印告警，3000ms内回零则继续；连续3000ms非零或收到超过±15RPM的反馈立即停止。首次arm on的200ms严格零速要求和粗加工发车零速检查不变。失联、堵转、CAN错误或收包溢出仍会停止机构并请求底盘停车，锁仍保留，不自动恢复。
+ 
+ 手动机构会话期间，`go`、模式切换、平移和转向等底盘命令均拒绝；自动 `runimu` 仅在机构已声明、收拢且平台为1号位时允许启动，行驶和工位独占地使用四轮CAN反馈。`info`、`imu`、`feedback`、扫码查询/配置及按钮更新继续运行。机械动作每步检查5/7号的新状态、零速、编码器基线，发出指令后检查ACK、到位、零速及有符号编码器位移；不以延时或一份旧到位标志推进。机构位置命令不使用广播同步，CAN回包按1～4和5/7分流。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ docs/按任务码作业与暂存叠放.md
+@@ -1,6 +1,6 @@
+ # 按任务码作业与暂存叠放
+ 
+-版本：20261019-merge2-r20。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
++版本：20261019-merge2-r21。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
+ 
+ ## 任务码和盘位
+ 
+@@ -22,6 +22,8 @@
+ 最后回2号基准并视觉确认，在125°高位收回时把平台恢复1号，再回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；粗加工与暂存状态机使用带指定观察角检查的内部换盘接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
+ 
+ 例如第一批G1=314、G2=231：取1盘蓝放2号、取2盘红放3号、取3盘绿放1号；随后依次从2、3、1号抓回1、2、3盘。G4只影响第二批粗加工。
++
++r21将机构会话短时轮速容差调为±15RPM，3000ms回零期限保持；超过±15RPM立即停止，初次互锁/工位发车仍严格零速。
+ 
+ r20取消DISC成功回包的±5像素幅值门槛，格式及字段一致性正常且ok=1即放行；大偏差成功回包同样接受，停稳后继续抓放，ok=0及超时仍不放行。MOVE处理、纠偏方向及发送节拍保持。
+ 
+@@ -60,7 +62,7 @@
+ | 暂存平台取料 / 粗加工放回平台 | 35mm / 110mm / 256° | 现有ARM_PLACE_*，本次保持 |
+ | 两区索引 | 150mm，60RPM，符号-1 | 前1、中2、后3 |
+ | 两区视觉微调 | 观察125°，每步3mm，一次D直到成功DISC | 直接D-MOVE/DISC，上位机自行停止 |
+-| 会话内持续非零轮速延时 | ±5RPM范围内3000ms；超范围立即停 | 操作者本次要求 |
++| 会话内持续非零轮速延时 | ±15RPM范围内3000ms；超范围立即停 | 操作者本次要求 |
+ | 夹爪夹紧/松开 | 15° / 45° | 当前配置 |
+ | 物块高度STN_STORAGE_LAYER_LIFT_MM | 60mm | 用户实测 |
+ | 升降上限ARM_LIFT_MAX_MM | 135mm | 当前软件配置，新的实测行程未提供 |

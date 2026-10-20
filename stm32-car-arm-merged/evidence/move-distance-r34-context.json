@@ -1,0 +1,9 @@
+{
+  "snapshot": "evidence/move-distance-before-20261020T114243490896Z",
+  "preexistingManifestDifferences": {},
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "a6fb46cb78ce073a969db23150c885936cc47faba17b8eab19ebc1c9ae8019df",
+    "keil/OBJ/table_navigation.hex": "9ce6ebe9041b0e737760c718998f417ef8c3e6590431f87126ae912844c07c57",
+    "keil/OBJ/table_navigation.map": "29f54f35be935fe799653ea3f9d760e5d9fdd4ed0497eecda29dc277a8462cc4"
+  }
+}

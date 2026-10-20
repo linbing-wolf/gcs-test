@@ -1,0 +1,91 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r16",
+  "scope": "粗加工/暂存先高位收臂转125度，视觉对准2号基准、每个任务取放目标和离站2号；复用R/READY-D-MOVE/DISC，停稳新采样，每步3mm、三次确认、75mm/60秒上限。保留粗加工100/70及直接125/256；暂存观察125，取料110/放料105/131保持，作业内不回0。会话内±5RPM持续非零保护延时仅改为3000ms。",
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T090916921Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T091029945Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T090916986Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T090916986Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T090916842Z/result.json"
+  },
+  "exactReportSourceHashesMatch": true,
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T091036955Z/build.log",
+    "verification": "evidence/station-vision-r16-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448708,
+    "start": "0x8000000",
+    "endExclusive": "0x806d8c4",
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "c31184f5dc831b49b8be238624ac9838bf9eb3fd89f51fce2702718eb8cbaf28",
+      "keil/OBJ/table_navigation.hex": "5ae96e6d7bb6d86e902a9dfbe0289fba33fbadf71796519cfd26ba53e3c24db6",
+      "keil/OBJ/table_navigation.map": "5b4a5f44e71dd183bc17be6868fe799af778a7bb01f760d6b1e62e7b9eb7af81"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "vision": {
+    "verification": "evidence/station-vision-r16-verification.json",
+    "jobs": [
+      2,
+      3,
+      5,
+      6
+    ],
+    "alignYawDeg": 125,
+    "initialRing": 2,
+    "finalRing": 2,
+    "everyTargetRequiresVision": true,
+    "protocol": [
+      "R -> READY",
+      "D -> MOVE,dx or DISC,x,y,dx,ok",
+      "MOVE -> R -> READY -> move3mm -> stopped/relocked -> new R/D"
+    ],
+    "moveStepMm": 3,
+    "positivePixelMeans": "vehicle forward; physical polarity requires verification",
+    "independentConfirmationRequests": 3,
+    "maxCorrectionTravelMmPerTarget": 75,
+    "maxAlignMs": 60000,
+    "storagePlaceYawDegUnchanged": 131,
+    "storageTakeLiftMmUnchanged": 110,
+    "storageFirstPlaceLiftMmUnchanged": 105,
+    "ringIdentity": "D reports center only, no ring ID; initial ring2 vicinity and correct ROI are required",
+    "sideAnglePlatformSelection": true,
+    "hardwareVerified": false
+  },
+  "interlock": {
+    "verification": "evidence/station-vision-r16-verification.json",
+    "activeSessionOnly": true,
+    "toleranceRpm": 5,
+    "continuousNonzeroLimitMs": 3000,
+    "initialSpeedRequiredRpm": 0,
+    "initialZeroHoldMs": 200,
+    "roughChassisStartRequiredRpm": 0,
+    "feedbackTimeoutMsUnchanged": 500,
+    "largerSpeedStopsImmediatelyOnValidReply": true,
+    "independentPerWheelTimers": true,
+    "zeroFeedbackClearsTimer": true,
+    "physicalNoiseCauseConfirmed": false,
+    "storageChassisStartRequiredRpm": 0
+  },
+  "armConfigOnlyChangedNoiseTimer": true,
+  "preChangeSnapshot": "evidence/station-vision-before-20261019T090231395Z",
+  "sourceDiff": "evidence/station-vision-r16-source.diff",
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

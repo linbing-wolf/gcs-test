@@ -1,0 +1,88 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r24",
+  "scope": "每次进站仅对准2号基准一次：粗加工发D、暂存发E；后续各次放料、粗加工抓回及离站回2号均仅按150mm索引，不再请求视觉。一次D/E内连续MOVE至DISC ok=1的处理保持。两批各次访问分别请求一次，原料C/PICK、抓放参数及r23轮速日志策略保持。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T132254059Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T132254059Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T132254078Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T132254078Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T132253889Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      1542198,
+      1544581
+    ],
+    "hostArm": [
+      133200
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      3774162,
+      5593719,
+      1336516,
+      1336516,
+      3774241,
+      2813472,
+      5593263
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T132350945Z/build.log",
+    "verification": "evidence/station-once-r24-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448980,
+    "start": "0x8000000",
+    "endExclusive": "0x806d9d4",
+    "artifacts": {
+      "evidence/merged-keil-20261019T132350945Z/table_navigation.axf": "03dce9d9fa05062ff9235925eca125108f0d351793ec3cf4403235d7f679d4f7",
+      "evidence/merged-keil-20261019T132350945Z/table_navigation.hex": "524911adb70a5d2141ac6e19e7cb0524b556fb63ffc6935f10e7d07fd838733a",
+      "evidence/merged-keil-20261019T132350945Z/table_navigation.map": "e9848667e9cac7a1ec2b8bb811bc253517c7b7245eac839911ccd86856a2bf4b"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "commands": {
+    "rough": "D",
+    "storage": "E"
+  },
+  "requestsPerVisit": 1,
+  "onlyEntryRing2VisuallyAligned": true,
+  "noPerPlacementRetrievalOrReturnVision": true,
+  "simulatedPeerRejectsSecondRequestPerJob": true,
+  "bothBatchesAndAllRingPermutationsCovered": true,
+  "transportEFrameAndLargeOffsetSuccessTested": true,
+  "wheelLogOnlyPolicyAndArmParametersUnchanged": true,
+  "sourceDiff": "evidence/station-once-r24-source.diff",
+  "defaultKeilOutputPreserved": {
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "7624323064a65a217cfddf00cc78ccdf895443e810022df75e2070d6f54aad77",
+      "keil/OBJ/table_navigation.hex": "ce0974be47c91e03cf7e556062aeda85f64ab6fd47c9eda7b3f8e427bbd93f55",
+      "keil/OBJ/table_navigation.map": "d55b9157fd301d207416de6bb1170d0c5ca1ab1e8ec3b864d6faf8df888953a1"
+    },
+    "scope": "Keil default output untouched; current verified firmware is in the isolated build directory"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

@@ -1,0 +1,75 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r15",
+  "scope": "仅修正粗加工动作：高位收回保持125度先移到任务靶位，直接转256度以100mm取料，再直接转125度以70mm放下/抓回；作业内换盘保持125度，放回平台仍110mm，全部结束回2号/平台1后才回0度。原料、暂存及速度/停机保护保持本次修改前状态。",
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T084641643Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T084641650Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T084641650Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T084641650Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T084641449Z/result.json"
+  },
+  "exactReportSourceHashesMatch": true,
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T084703477Z/build.log",
+    "verification": "evidence/rough-direct-r15-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 447492,
+    "start": "0x8000000",
+    "endExclusive": "0x806d404",
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "c6d3786003625228e87569ba144e2920073e7e1dfc3166c49ecd3af25bd2d61e",
+      "keil/OBJ/table_navigation.hex": "50ac23f7f1662ebbe26904e1925ded86a227cec9e2c16cd46d27860adac7afd3",
+      "keil/OBJ/table_navigation.map": "dd01f8fcd3948e2667b3a3142ec5fa2b7740a425acaa8e2b2206540e377dccd8"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 552,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "flow": {
+    "verification": "evidence/rough-direct-r15-verification.json",
+    "workYawDeg": 125,
+    "platformYawDeg": 256,
+    "platformTakeLiftMm": 100,
+    "groundPlaceAndRetrieveLiftMm": 70,
+    "platformReturnLiftMm": 110,
+    "retractLiftMm": 135,
+    "retractSlideMm": 0,
+    "noIntermediateHomeYaw": true,
+    "moveBeforeTakingFromPlatform": true,
+    "sameOriginalCupMapping": true,
+    "finalRing": 2,
+    "finalPlatform": 1,
+    "departureYawDeg": 0,
+    "internalPlatformSelection": "arm_platform_at_yaw: arm_ready + high/retracted + expected work angle; same fresh axis preflight/interpolation",
+    "manualPlatformCommandStillRequiresHome0": true,
+    "rawAndStorageFlowUnchanged": true,
+    "speedAndProtectionConfigUnchanged": true,
+    "assertions": "both batches/all six permutations,14 completed yaw transitions ending0, independent physical ring at pickup100 and place/retrieve70, original cups, empty claw during index, high/retracted platform selection and missing-axis refusal",
+    "hardwareVerified": false
+  },
+  "preservedSpeedParameters": {
+    "ARM_AXIS_RPM": 600,
+    "ARM_SERVO_TIME_MS": 1000,
+    "ARM_CLAW_TIME_MS": 250
+  },
+  "armConfigSha256": "836ef2755e46ddb1a058bde84129bae3d71166c0c8323fffd31bf21643137b67",
+  "priorArtifactsSaved": true,
+  "preChangeSnapshot": "evidence/rough-direct-before-20261019T084339298Z",
+  "sourceDiff": "evidence/rough-direct-r15-source.diff",
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

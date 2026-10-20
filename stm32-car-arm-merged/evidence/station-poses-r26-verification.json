@@ -1,0 +1,94 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r26",
+  "scope": "粗加工地面抓回lift改为5mm（放料5mm、放回平台110mm保持）；暂存首批平台取料35/100/256度、放料55/5/125度，沿用粗加工；第二层共用放料平推/云台，lift=5+60=65mm，第二批平台取料110mm保持。每次进站一次D/E、路线及轮速日志策略不变。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T134845334Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T134845390Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T134845431Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T134845431Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T134845293Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      37247,
+      1542198,
+      37247,
+      1544581
+    ],
+    "hostArm": [
+      133200
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      5593648,
+      5593648,
+      3027119,
+      3027119,
+      3773801,
+      2812504,
+      5593730,
+      3774517
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T134910828Z/build.log",
+    "verification": "evidence/station-poses-r26-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 449004,
+    "start": "0x8000000",
+    "endExclusive": "0x806d9ec",
+    "artifacts": {
+      "evidence/merged-keil-20261019T134910828Z/table_navigation.axf": "51d0ae7637e465a5db633734542cc097bd47d3719e0b1058a343d90aff6ceb30",
+      "evidence/merged-keil-20261019T134910828Z/table_navigation.hex": "709cc047e85b45aed7727eace96b074916bb0ce154f790bef84a8a0f625c41b9",
+      "evidence/merged-keil-20261019T134910828Z/table_navigation.map": "0fecd63abf9b61696a057558ac239afec418c0aaf62e5548acb01bc8b700466a"
+    }
+  },
+  "stationPoses": {
+    "verification": "evidence/station-poses-r26-verification.json",
+    "roughPlaceLiftMm": 5,
+    "roughRetrieveLiftMm": 5,
+    "roughPlatformReturnLiftMm": 110,
+    "storageFirstTakeLiftMm": 100,
+    "storageSecondTakeLiftMm": 110,
+    "storagePlaceSlideMm": 55,
+    "storagePlaceYawDeg": 125,
+    "storageFirstPlaceLiftMm": 5,
+    "storageSecondPlaceLiftMm": 65,
+    "layerHeightMm": 60,
+    "configuredMaxLiftMmUnchanged": 135,
+    "bothBatchesCompleteInHostSimulation": true,
+    "physicalVerified": false
+  },
+  "staticStack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "snapshot": "evidence/station-poses-before-20261019T134831071551Z",
+  "unrelatedSourceHashesUnchanged": true,
+  "productionFullRouteBothPlansPassed": true,
+  "testVariants": 8,
+  "layerBoundaryMm": 130,
+  "overtravelLayerMm": 131,
+  "preexistingChangesPreserved": true,
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

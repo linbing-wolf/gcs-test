@@ -1,0 +1,906 @@
+--- before/src/station_job.c
++++ src/station_job.c
+@@ -7,7 +7,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ 
+-enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN };
++enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM, SS_VISION, SS_LOAD1, SS_CHASSIS };
+ typedef struct {
+     uint8_t kind;
+     int16_t value;
+@@ -29,9 +29,6 @@
+ static struct {
+     uint8_t phase, job, batch, cursor, count, issued, retries;
+     uint32_t step_ms;
+-    uint32_t align_ms, align_sample_ms;
+-    uint8_t align_stable, align_moving, align_pending;
+-    uint16_t align_travel;
+     char reason[192]; /* 中文UTF-8故障原因。 */
+ } stn;
+ static StationStep program[STN_STEP_MAX];
+@@ -90,19 +87,18 @@
+     push_retract();
+     push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f));
+ }
+-/* 从车载载物台当前杯位把物块夹起来，再让载物台转到下一个杯位。 */
++/* 到目标靶位后才从指定杯位取料；下一杯由作业表显式选择。 */
+ static void push_take_from_platform(void)
+ {
+     /* 先在高处转向杯位并张开爪子，再伸齿条、下降；避免闭爪贴着杯壁下降。 */
+-    push(SS_YAW, (int)(STN_PLATFORM_TAKE_YAW * 10.0f));
+-    push(SS_SLIDE, STN_PLATFORM_TAKE_SLIDE);
++    push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
++    push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
+     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+-    push(SS_LIFT, STN_PLATFORM_TAKE_LIFT);
++    push(SS_LIFT, ARM_PLACE_LIFT_MM);
+     push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+     push(SS_LIFT, ARM_LIFT_HOME_MM);
+     push(SS_SLIDE, ARM_SLIDE_HOME_MM);
+     push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f));
+-    push(SS_PLATFORM, 0); /* 0 = 自动转到下一个杯位 */
+ }
+ static void push_place_on_platform(void)
+ {
+@@ -148,37 +144,26 @@
+     }
+     return 1;
+ }
+-/* 粗加工取车上物块复用当前载物台放置几何，不改变暂存区原取料表。 */
+-static void push_rough_take_from_platform(void)
+-{
+-    push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
+-    push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
+-    push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+-    push(SS_LIFT, ARM_PLACE_LIFT_MM);
+-    push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+-    push_retreat_home();
+-}
+-
+-static int push_rough_index_step(int delta, uint8_t target, uint8_t *ring)
+-{
+-    if (!push(SS_CHASSIS, delta * STN_ROUGH_INDEX_SIGN * STN_ROUGH_INDEX_MM)) return 0;
++static int push_station_index_step(int delta, uint8_t target, uint8_t *ring, int sign, int mm)
++{
++    if (!push(SS_CHASSIS, delta * sign * mm)) return 0;
+     program[stn.count - 1u].ring = target;
+     *ring = target;
+     return 1;
+ }
+ 
+-static int push_rough_index(uint8_t target, uint8_t *ring)
++static int push_station_index(uint8_t target, uint8_t *ring, int sign, int mm)
+ {
+     if (*ring != 2u && *ring != target)
+-        if (!push_rough_index_step(2 - (int)*ring, 2u, ring)) return 0;
++        if (!push_station_index_step(2 - (int)*ring, 2u, ring, sign, mm)) return 0;
+     if (*ring != target)
+-        if (!push_rough_index_step((int)target - (int)*ring, target, ring)) return 0;
++        if (!push_station_index_step((int)target - (int)*ring, target, ring, sign, mm)) return 0;
+     return 1;
+ }
+ 
+ static int build_rough(void)
+ {
+-    uint8_t i, slot, target, ring = 2u, seen = 0;
++    uint8_t i, target, ring = 2u, seen = 0;
+     if (!STN_ROUGH_PLACE_READY || !STN_ROUGH_PLATFORM_TAKE_READY || (stn_rough_place.slide_mm == 0
+         && stn_rough_place.lift_mm == 0 && stn_rough_place.yaw_deg == 0.0f)) {
+         stn_fault("rough-process poses not calibrated (station_config.h)");
+@@ -188,7 +173,7 @@
+         stn_fault("platform must start at slot 1 before unloading");
+         return 0;
+     }
+-    /* 先完整验证本批环位，禁止同环重复导致覆盖物块；不改变原任务码解析契约。 */
++    /* 编排前验证完整批次，禁止同环重复导致覆盖物块。 */
+     for (i = 0; i < 3u; i++) {
+         uint8_t target = task_rings[stn.batch][i];
+         if (target < 1u || target > 3u || (seen & (1u << (target - 1u)))) {
+@@ -197,39 +182,36 @@
+         }
+         seen |= (uint8_t)(1u << (target - 1u));
+     }
+-    /* 先真实识别中间2号环，不再只根据路线停车点认定已对准。 */
++    /* 文档方案以停车点作为2号基准，工位不再依赖视觉反馈推进。 */
+     push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f));
+-    push(SS_ALIGN, 2);
+-    for (target = 1; target <= 3; target++) {
+-        if (!push_rough_index(target, &ring)) return 0;
+-        push(SS_ALIGN, target);
++    for (i = 0; i < 3u; i++) {
++        target = task_rings[stn.batch][i];
++        if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+         push_retreat_home();
+-        for (slot = 0; task_rings[stn.batch][slot] != target; slot++) {}
+-        push(SS_PLATFORM, slot + 1);
+-        push_rough_take_from_platform();
++        push(SS_PLATFORM, i + 1);
++        push_take_from_platform();
+         push_move_to(stn_rough_place.slide_mm, stn_rough_place.lift_mm, (int)(stn_rough_place.yaw_deg * 10.0f));
+         push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+         push_retract(); /* 保持125度，直接前后移动到下一环。 */
+     }
+-    /* 环位访问固定1/2/3，任务码仍决定物块原杯位；抓回不能打乱颜色映射。 */
+-    for (target = 1; target <= 3; target++) {
+-        if (!push_rough_index(target, &ring)) return 0;
+-        push(SS_ALIGN, target);
++    /* 按原装车颜色顺序抓回，即G2/G4靶位顺序，恢复原杯位。 */
++    for (i = 0; i < 3u; i++) {
++        target = task_rings[stn.batch][i];
++        if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+         push_grip_at(&stn_rough_place);
+-        for (slot = 0; task_rings[stn.batch][slot] != target; slot++) {}
+-        push(SS_PLATFORM, slot + 1);
++        push(SS_PLATFORM, i + 1);
+         push_place_on_platform();
+         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
+     }
+-    if (!push_rough_index(2u, &ring)) return 0;
+-    push(SS_ALIGN, 2);
++    if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+     push_retreat_home();
+     push(SS_PLATFORM, 1);
+     return 1;
+ }
+ static int build_storage(void)
+ {
+-    uint8_t i;
++    uint8_t i, j, ring = 2u, targets[3];
++    StationPose pose = stn_storage_place;
+     if (!STN_STORAGE_PLACE_READY || !STN_PLATFORM_TAKE_READY) {
+         stn_fault("storage poses not calibrated (station_config.h)");
+         return 0;
+@@ -238,10 +220,40 @@
+         stn_fault("platform must start at slot 1 before unloading");
+         return 0;
+     }
++    if (stn.batch) {
++        if (STN_STORAGE_LAYER_LIFT_MM <= 0) {
++            stn_fault("storage layer height not calibrated (STN_STORAGE_LAYER_LIFT_MM)");
++            return 0;
++        }
++        /* 先检查增量再相加，防止错误配置溢出或越过升降行程。 */
++        if (STN_STORAGE_LAYER_LIFT_MM > ARM_LIFT_MAX_MM - pose.lift_mm) {
++            stn_fault("storage second layer exceeds lift travel");
++            return 0;
++        }
++        pose.lift_mm += STN_STORAGE_LAYER_LIFT_MM;
++    }
+     for (i = 0; i < 3u; i++) {
++        j = i;
++        if (stn.batch) {
++            for (j = 0; j < 3u; j++)
++                if (task_colors[0][j] == task_colors[1][i]) break;
++            if (j == 3u) {stn_fault("storage color absent from first batch");return 0;}
++        }
++        targets[i] = task_rings[0][j]; /* 第二批暂存不用G4，沿用第一批同色的G2位置。 */
++        if (targets[i] < 1u || targets[i] > 3u) {
++            stn_fault("storage targets must be 1,2,3");return 0;
++        }
++    }
++    for (i = 0; i < 3u; i++) {
++        if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
++        push_retreat_home();
++        push(SS_PLATFORM, i + 1);
+         push_take_from_platform();
+-        push_release_at(&stn_storage_place[i]);
+-    }
++        push_release_at(&pose);
++    }
++    if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
++    push_retreat_home();
++    push(SS_PLATFORM, 1);
+     return 1;
+ }
+ 
+@@ -278,8 +290,8 @@
+         stn_text("[scan station] waiting for task code; scan QR at B or send task 134+123+314+231\r\n");
+         return 1;
+     }
+-    if ((job == 1u || job == 2u || job == 4u || job == 5u) && !task_ready) {
+-        stn_fault("task code not set; raw/rough work needs colors and ring numbers");
++    if (!task_ready) {
++        stn_fault("task code not set; station work needs colors and ring numbers");
+         return -1;
+     }
+     if (!arm_ready() || !arm_platform_slot()) {
+@@ -329,13 +341,6 @@
+     stn.step_ms = now;
+     line[0] = 0;
+     switch (s->kind) {
+-    case SS_ALIGN:
+-        stn.align_ms=now;stn.align_travel=0;stn.align_stable=0;
+-        stn.align_moving=0;stn.align_pending=1;stn.align_sample_ms=now;
+-        vision_request_align((uint8_t)s->value,now);
+-        snprintf(line,sizeof(line),"[rough align] ring=%u start\r\n",(unsigned)s->value);
+-        stn_text(line);
+-        return 1;
+     case SS_VISION:
+         vision_request_pick((uint8_t)s->value, now);
+         return 1;
+@@ -375,7 +380,7 @@
+     case SS_CHASSIS: {
+         char index_line[64];
+         if (!station_chassis_start(s->value)) {
+-            stn_fault("rough index refused: parked arm/fresh wheel stop/IMU required");
++            stn_fault("station index refused: retracted arm/fresh wheel stop/IMU required");
+             return 0;
+         }
+         snprintf(index_line, sizeof(index_line), "[station index] ring=%u move_mm=%d\r\n",
+@@ -404,55 +409,6 @@
+         return;
+     }
+     stn.issued = 0;
+-}
+-
+-/* 每次修正只使用一次新视觉测量；移动期间不发请求，停稳重取互锁后再采样。 */
+-static void rough_align_update(uint8_t ring, uint32_t now)
+-{
+-    int state, error, distance;
+-    if ((uint32_t)(now-stn.align_ms) >= STN_ROUGH_ALIGN_TIMEOUT_MS) {
+-        stn_fault("rough alignment timeout");return;
+-    }
+-    if (stn.align_moving) {
+-        if (station_chassis_failed()) {stn_fault("rough alignment motion failed");return;}
+-        if (station_chassis_busy()) return;
+-        stn.align_moving=0;stn.align_sample_ms=now;stn.align_pending=0;
+-    }
+-    if (!stn.align_pending) {
+-        if ((uint32_t)(now-stn.align_sample_ms) < 100u) return;
+-        vision_request_align(ring,now);stn.align_pending=1;
+-    }
+-    state=vision_align_state();
+-    if (state==VISION_PICK_FAULT || state==VISION_PICK_TIMEOUT) {
+-        stn_fault("rough vision missing/invalid MOVE/DISC reply; vehicle held");return;
+-    }
+-    if (state!=VISION_PICK_READY) return;
+-    error=vision_align_offset_px();
+-    vision_cancel_pick();stn.align_pending=0;stn.align_sample_ms=now;
+-    if (!error) {
+-        if (++stn.align_stable >= STN_ROUGH_ALIGN_SAMPLES) {
+-            char line[64];
+-            snprintf(line,sizeof(line),"[rough aligned] ring=%u DISC confirmed\r\n",(unsigned)ring);
+-            stn_text(line);step_finished();
+-        }
+-        return;
+-    }
+-    stn.align_stable=0;
+-    distance=STN_ROUGH_ALIGN_STEP_MM;
+-    if (stn.align_travel+distance > STN_ROUGH_ALIGN_TRAVEL_MM) {
+-        stn_fault("rough alignment travel limit; check vision scale/direction");return;
+-    }
+-    stn.align_travel=(uint16_t)(stn.align_travel+distance);
+-    if (!station_chassis_start((int16_t)((error < 0 ? -distance : distance)*STN_ROUGH_ALIGN_MOVE_SIGN))) {
+-        stn_fault("rough alignment motion refused; high/retracted arm and fresh zero wheels required");return;
+-    }
+-    {
+-        char line[96];
+-        snprintf(line,sizeof(line),"[rough correction] offset_px=%d move_mm=%d total_mm=%u\r\n",
+-                 error,(error < 0 ? -distance : distance)*STN_ROUGH_ALIGN_MOVE_SIGN,(unsigned)stn.align_travel);
+-        stn_text(line);
+-    }
+-    stn.align_moving=1;
+ }
+ 
+ void station_update(uint32_t now)
+@@ -485,7 +441,6 @@
+         }
+         return;
+     }
+-    if (s->kind==SS_ALIGN) {rough_align_update((uint8_t)s->value,now);return;}
+     if (s->kind == SS_VISION) {
+         int state = vision_pick_state();
+         if (state == VISION_PICK_READY) {
+@@ -510,10 +465,10 @@
+         return;
+     }
+     if (s->kind == SS_CHASSIS) {
+-        if (station_chassis_failed()) stn_fault("rough chassis index failed; vehicle held");
++        if (station_chassis_failed()) stn_fault("station chassis index failed; vehicle held");
+         else if (!station_chassis_busy()) step_finished();
+         else if ((uint32_t)(now - stn.step_ms) > STN_STEP_TIMEOUT_MS)
+-            stn_fault("rough chassis index timeout; vehicle held");
++            stn_fault("station chassis index timeout; vehicle held");
+         return;
+     }
+     if (!arm_busy()) {
+@@ -546,14 +501,15 @@
+ static int parse_task(const char *s)
+ {
+     uint8_t digits[12], colors[2][3]={{0}}, rings[2][3]={{1,2,3},{1,2,3}};
+-    uint8_t n=0, separators=0, i;
++    uint8_t n=0, separators=0, i, batch;
++    uint8_t color_masks[2]={0,0}, ring_mask;
+     while (*s) {
+         if (*s==' ' || *s=='\t' || *s=='\r' || *s=='\n') {s++;continue;}
+         if (*s=='+') {
+             if (n != (uint8_t)((separators+1u)*3u) || separators>=3u) return 0;
+             separators++;s++;continue;
+         }
+-        if (*s<'1' || *s>'5' || n>=12u) return 0;
++        if (*s<'1' || *s>'4' || n>=12u) return 0;
+         digits[n++]=(uint8_t)(*s++-'0');
+     }
+     if (n!=3u && n!=12u) return 0;
+@@ -563,6 +519,19 @@
+         colors[0][i]=digits[i];
+         if (n==12u) {colors[1][i]=digits[6u+i];rings[0][i]=digits[3u+i];rings[1][i]=digits[9u+i];}
+     }
++    /* 同色叠放要求每批颜色唯一、两批颜色集合相同；靶位只能是123的排列。
++     * 三位简码仍用于原料/第一批调试，不能据此执行第二批。 */
++    for (batch=0;batch<(n==12u ? 2u : 1u);batch++) {
++        ring_mask=0;
++        for (i=0;i<3u;i++) {
++            uint8_t color=colors[batch][i], ring=rings[batch][i];
++            if (color_masks[batch] & (1u<<color)) return 0;
++            color_masks[batch] |= (uint8_t)(1u<<color);
++            if (ring<1u || ring>3u || (ring_mask & (1u<<ring))) return 0;
++            ring_mask |= (uint8_t)(1u<<ring);
++        }
++    }
++    if (n==12u && color_masks[0]!=color_masks[1]) return 0;
+     /* 全部字段验证后才提交，坏任务码不能局部覆盖已存任务。 */
+     memcpy(task_colors,colors,sizeof(colors));memcpy(task_rings,rings,sizeof(rings));
+     task_ready=1;return 1;
+@@ -572,6 +541,11 @@
+ void station_status(void)
+ {
+     char line[160];
++    snprintf(line, sizeof(line), "[station] storage layer_mm=%d second_lift_mm=%d max_lift_mm=%d; second_batch=%s\r\n",
++             STN_STORAGE_LAYER_LIFT_MM, STN_STORAGE_LIFT_MM + STN_STORAGE_LAYER_LIFT_MM, ARM_LIFT_MAX_MM,
++             STN_STORAGE_LAYER_LIFT_MM <= 0 ? "needs_height" :
++             (STN_STORAGE_LAYER_LIFT_MM > ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM ? "exceeds_travel" : "configured"));
++    stn_text(line);
+     snprintf(line, sizeof(line), "[station] auto=%u phase=%u job=%u batch=%u step=%u/%u task_ready=%u\r\n",
+              (unsigned)automatic, (unsigned)stn.phase, (unsigned)stn.job, (unsigned)stn.batch,
+              (unsigned)stn.cursor, (unsigned)stn.count, (unsigned)task_ready);
+@@ -603,7 +577,7 @@
+     } else return 0;
+     if (station_active() && stn.count) {stn_text("[task rejected: station work active]\r\n");return 1;}
+     if (!parse_task(task)) {
+-        stn_text("[task rejected: need task 123 or four 3-digit groups; colors 1-4, rings 1-5]\r\n");
++        stn_text("[task rejected: need task 123 or four 3-digit groups; distinct colors 1-4, same set both batches, rings permutation 123]\r\n");
+         return 1;
+     }
+     stn_text("[task accepted for one full run, both batches; scan station resumes itself]\r\n");
+--- before/src/station_config.h
++++ src/station_config.h
+@@ -4,7 +4,7 @@
+ #define STN_SCAN_HEADING 1u
+ /* 粗加工区 / 暂存区的取放姿态标定表。
+  *
+- * 粗加工使用操作者2026-10-19指定参数；暂存及其平台取料仍未标定。
++ * 粗加工使用操作者2026-10-19指定参数；暂存单层使用同日提供的作业文档参数。
+  * 未启用对应READY或粗加工姿态全零时，拒绝动作并原地停车。
+  *
+  * 每项含义：slide=平推轴伸出量(mm)，lift=升降高度(mm)，yaw=云台角(°)。
+@@ -20,7 +20,8 @@
+ } StationPose;
+ 
+ /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
+- * 操作者确认：前1、中2、后3；先视觉确认2，再按1/2/3放下和抓回。
++ * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
++ * 以进站停车为2号基准；索引不再等待视觉，不具备自动纠正停车误差的能力。
+  * 2026-10-19指定粗加工复用原料平推/升降，云台125度；不等于实车验收。
+  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
+ #ifndef STN_ROUGH_PLACE_READY
+@@ -29,11 +30,6 @@
+ #define STN_ROUGH_INDEX_MM    150
+ #define STN_ROUGH_INDEX_SIGN   -1
+ #define STN_ROUGH_INDEX_RPM    60
+-#define STN_ROUGH_ALIGN_STEP_MM 3 /* 只采用MOVE偏差方向，每次3mm；不把像素当毫米。 */
+-#define STN_ROUGH_ALIGN_MOVE_SIGN 1 /* MOVE正号向前；若现场相机镜像应验证此方向。 */
+-#define STN_ROUGH_ALIGN_TRAVEL_MM 75 /* 每个环的累计修正路程上限，mm。 */
+-#define STN_ROUGH_ALIGN_SAMPLES 3 /* 停稳后连续独立请求确认到位。 */
+-#define STN_ROUGH_ALIGN_TIMEOUT_MS 60000u
+ #ifndef STN_ROUGH_SLIDE_MM
+ #define STN_ROUGH_SLIDE_MM     55
+ #endif
+@@ -46,37 +42,45 @@
+ static const StationPose stn_rough_place = {
+     STN_ROUGH_SLIDE_MM, STN_ROUGH_LIFT_MM, STN_ROUGH_YAW_DEG
+ };
+-/* 粗加工专用平台取料由操作者确认复用ARM_PLACE_*，不放行暂存旧取料表。 */
++/* 平台几何沿用当前已指定的ARM_PLACE_*，两个工位共用。 */
+ #ifndef STN_ROUGH_PLATFORM_TAKE_READY
+ #define STN_ROUGH_PLATFORM_TAKE_READY 1
+ #endif
+ #if (STN_ROUGH_INDEX_SIGN != 1 && STN_ROUGH_INDEX_SIGN != -1) || \
+     STN_ROUGH_INDEX_MM < 1 || STN_ROUGH_INDEX_MM > 300 || \
+-    STN_ROUGH_INDEX_RPM < 20 || STN_ROUGH_INDEX_RPM > 60 || \
+-    STN_ROUGH_ALIGN_STEP_MM < 3 || STN_ROUGH_ALIGN_STEP_MM > 20 || \
+-    (STN_ROUGH_ALIGN_MOVE_SIGN != 1 && STN_ROUGH_ALIGN_MOVE_SIGN != -1)
++    STN_ROUGH_INDEX_RPM < 20 || STN_ROUGH_INDEX_RPM > 60
+ #error Invalid_rough_station_index_configuration
+ #endif
+ 
+-/* ===== 暂存区 ===== 数组下标 0~4 对应 1~5 号环位。 */
++/* ===== 暂存区 ===== 同一侧向姿态，通过底盘索引覆盖1/2/3号靶位。
++ * 方向由操作者2026-10-19确认：前1、中2、后3，不能由工位航向推断。
++ * 第二层松爪高度=单层放料高度+物块高度；0表示层高未测，拒绝第二批暂存。
++ * 操作者实测物块60mm，105+60=165mm超过当前135mm行程，第二层仍拒绝执行。
++ * 配置值来自作业方案，并不等于实车标定或叠放验收。 */
+ #ifndef STN_STORAGE_PLACE_READY
+-#define STN_STORAGE_PLACE_READY 0
++#define STN_STORAGE_PLACE_READY 1
+ #endif
+-static const StationPose stn_storage_place[5] = {
+-    {0, 0, 0.0f},
+-    {0, 0, 0.0f},
+-    {0, 0, 0.0f},
+-    {0, 0, 0.0f},
+-    {0, 0, 0.0f}
++#define STN_STORAGE_INDEX_MM 150
++#define STN_STORAGE_INDEX_SIGN -1
++#define STN_STORAGE_INDEX_RPM 60
++#define STN_STORAGE_SLIDE_MM 55
++#define STN_STORAGE_LIFT_MM 105
++#define STN_STORAGE_YAW_DEG 131.0f
++#ifndef STN_STORAGE_LAYER_LIFT_MM
++#define STN_STORAGE_LAYER_LIFT_MM 60
++#endif
++static const StationPose stn_storage_place = {
++    STN_STORAGE_SLIDE_MM, STN_STORAGE_LIFT_MM, STN_STORAGE_YAW_DEG
+ };
+ 
+-/* 从车上载物台把物块夹起来的姿态，沿用已标定的载物台放置参数即可；
+- * 若实测发现爪子下不到杯里，只改这三项。 */
++/* 暂存平台取料复用arm_config.h中的ARM_PLACE_*，与粗加工共用。 */
+ #ifndef STN_PLATFORM_TAKE_READY
+-#define STN_PLATFORM_TAKE_READY 0
++#define STN_PLATFORM_TAKE_READY 1
+ #endif
+-#define STN_PLATFORM_TAKE_SLIDE 30
+-#define STN_PLATFORM_TAKE_LIFT 110
+-#define STN_PLATFORM_TAKE_YAW  254.0f
++#if (STN_STORAGE_INDEX_SIGN != 1 && STN_STORAGE_INDEX_SIGN != -1) || \
++    STN_STORAGE_INDEX_MM != 150 || STN_STORAGE_INDEX_RPM < 20 || STN_STORAGE_INDEX_RPM > 60 || \
++    STN_STORAGE_LAYER_LIFT_MM < 0
++#error Invalid_storage_station_configuration
++#endif
+ 
+ #endif
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -1118,7 +1118,7 @@
+     return 1;
+ }
+ 
+-/* 工位内仅允许高位收回；视觉微调允许云台保持粗加工观察角。
++/* 工位内仅允许高位收回；粗加工索引允许云台保持侧向作业角。
+  * 普通道路仍要求arm_parked()，不能把此例外用于整圈行驶。 */
+ static int station_chassis_pose_safe(void)
+ {
+@@ -1131,11 +1131,13 @@
+ int station_chassis_start(int16_t mm)
+ {
+     uint8_t i;
++    int storage = run.job == 3u || run.job == 6u;
++    int index_mm = storage ? STN_STORAGE_INDEX_MM : STN_ROUGH_INDEX_MM;
++    int index_rpm = storage ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
+     if (run_active || stop_pending || run.state != RUN_STATION || !run.station_phase
+-        || (run.job != 2u && run.job != 5u) || arm_lock.state != 2
++        || (run.job != 2u && run.job != 5u && !storage) || arm_lock.state != 2
+         || !station_chassis_pose_safe()
+-        || (mm != STN_ROUGH_INDEX_MM && mm != -STN_ROUGH_INDEX_MM
+-            && mm != STN_ROUGH_ALIGN_STEP_MM && mm != -STN_ROUGH_ALIGN_STEP_MM)) return 0;
++        || (mm != index_mm && mm != -index_mm)) return 0;
+     for (i = 0; i < MOTOR_COUNT; i++) {
+         MotorFeedback *f = &motor_feedback[i];
+         if (!f->speed_valid || f->speed_rpm != 0 || !(f->status_flags & MOTOR_FLAG_ENABLED)
+@@ -1144,7 +1146,7 @@
+             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
+     }
+     station_parent = run;
+-    if (!start_heading_shift(mm, STN_ROUGH_INDEX_RPM)) {run = station_parent;return 0;}
++    if (!start_heading_shift(mm, (uint16_t)index_rpm)) {run = station_parent;return 0;}
+     run.station_shift = run.station_enabled = 1;
+     run.travel_axis = BODY_FORWARD;
+     run.plan = station_parent.plan;run.edge = station_parent.edge;run.job = station_parent.job;
+@@ -1712,7 +1714,10 @@
+     if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
+     if (speed > (run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM))
+         speed = run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM;
+-    if (run.station_shift && speed > STN_ROUGH_INDEX_RPM) speed = STN_ROUGH_INDEX_RPM;
++    if (run.station_shift) {
++        float index_rpm = (run.job == 3u || run.job == 6u) ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
++        if (speed > index_rpm) speed = index_rpm;
++    }
+     if (run.encoder_ready != 15u && speed > CAR_ENCODER_LEARN_RPM) speed = CAR_ENCODER_LEARN_RPM;
+     return (int16_t)(speed * run.travel_sign);
+ }
+@@ -2616,7 +2621,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r13; bounded 5RPM chassis feedback tolerance; English console\r\n");
++    text("[drive] version=20261019-merge2-r14; task-ordered rough and color-stacked storage; English console\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/tests/verify_station_vision.c
++++ tests/verify_station_vision.c
+@@ -34,20 +34,22 @@
+ {
+     char status[1024];unsigned stops;
+     static const char *bad[]={"task 534+123+314+231","task 134+126+314+231","task 134+123+314",
+-        "task 134++123+314+231","task 134+123+314+231+","task 1341233142319","task 134+123314231"};
++        "task 134++123+314+231","task 134+123+314+231+","task 1341233142319","task 134+123314231",
++        "task 134+125+314+231","task 134+113+314+231","task 114+123+314+231",
++        "task 134+123+324+231","task 134+123+311+231","task 134+123+314+221"};
+     unsigned i;
+     reset_plant(0,1.0);station_init();CHECK(station_auto_enabled());
+-    send_line("task 134+125+314+251");CHECK(strstr(output,"[task accepted"));
++    send_line("task 134+231+314+312");CHECK(strstr(output,"[task accepted"));
+     stops=stop_count;send_line("station");CHECK(stop_count==stops);
+-    CHECK(strstr(output,"colors=134 rings=125") && strstr(output,"colors=314 rings=251"));
++    CHECK(strstr(output,"colors=134 rings=231") && strstr(output,"colors=314 rings=312"));
+     CHECK(strlen(output)<sizeof(status));strcpy(status,output);
+     for(i=0;i<sizeof(bad)/sizeof(bad[0]);i++) {
+         send_line(bad[i]);CHECK(strstr(output,"[task rejected"));send_line("station");CHECK(!strcmp(output,status));
+     }
+-    send_line("task 134125314251");CHECK(strstr(output,"[task accepted"));send_line("station");CHECK(!strcmp(output,status));
++    send_line("task 134231314312");CHECK(strstr(output,"[task accepted"));send_line("station");CHECK(!strcmp(output,status));
+     send_line("test");send_line("f");CHECK(drive.state==MOTION_RUNNING);
+     send_line("s");firmware_step();CHECK(drive.state==MOTION_IDLE && !run_active);
+-    puts("PASS task/stop: compact and separated groups, rings 4/5, invalid atomic rollback, station command does not trigger s shortcut; newline s and immediate ! retained");
++    puts("PASS task/stop: compact/separated groups; unique same-set colors, rings permutation123, invalid atomic rollback; newline s and immediate ! retained");
+ }
+ static void vision_tests(void)
+ {
+@@ -328,7 +330,7 @@
+             plant_step();
+             if(run.job!=last_job) {last_job=run.job;arm_positions=0;} /* 单工位保留完整轴轨迹，避免跨工位填满测试记录。 */
+         }
+-#if STN_ROUGH_PLACE_READY && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY
++#if STN_ROUGH_PLACE_READY && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY && STN_STORAGE_LAYER_LIFT_MM > 0 && STN_STORAGE_LAYER_LIFT_MM <= 30
+         if(run.state!=RUN_DONE)fprintf(stderr,"MOCK FLOW job=%u state=%u: %s\n",run.job,run.state,output);
+         CHECK(sent && waiting>=1000 && replies==6 && clock_ms<deadline);
+         CHECK(run.state==RUN_DONE && !run_active && run.job==8 && run.edge==16);
+@@ -344,10 +346,17 @@
+         CHECK(run_active && run.job==1 && run.edge==1);
+         stop_request();
+ #else
+-        CHECK(sent && waiting>=1000 && replies==3 && clock_ms<deadline);
++        CHECK(sent && waiting>=1000 && clock_ms<deadline);
+ #if STN_ROUGH_PLACE_READY && STN_ROUGH_PLATFORM_TAKE_READY && (STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM)
++#if STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY
++        CHECK(replies==6 && run.state==RUN_FAULT && !run_active && run.job==6 && run.edge==13);
++        CHECK(strstr(output,"layer height not calibrated") || strstr(output,"second layer exceeds"));
++#else
++        CHECK(replies==3);
+         CHECK(run.state==RUN_FAULT && !run_active && run.job==3 && run.edge==7);
++#endif
+ #else
++        CHECK(replies==3);
+         CHECK(run.state==RUN_FAULT && !run_active && run.job==2 && run.edge==5);
+ #endif
+         CHECK(!arm_pose_known() && !arm_platform_known());
+@@ -355,10 +364,10 @@
+ #endif
+         send_line("station");CHECK(strstr(output,"task_ready=0") && strstr(output,"colors=000 rings=000"));
+     }
+-#if STN_ROUGH_PLACE_READY && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY
+-    puts("PASS automatic A/C full mock flow: 8 jobs, 13960mm and three uninterrupted E passes retained; test-only READY overrides with placeholder poses, NOT calibration or hardware acceptance");
++#if STN_ROUGH_PLACE_READY && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY && STN_STORAGE_LAYER_LIFT_MM > 0 && STN_STORAGE_LAYER_LIFT_MM <= 30
++    puts("PASS automatic A/C full mock flow: both batches and storage stacking, 8 jobs, 13960mm and three uninterrupted E passes; test-only layer height, NOT hardware acceptance");
+ #else
+-    puts("PASS automatic A/C: raw loading retained; configured rough completes before protected storage; disabled rough refuses before job advance");
++    puts("PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance");
+ #endif
+ }
+ static void automatic_fault_tests(void)
+@@ -445,27 +454,23 @@
+         return;
+     }
+     for(batch=0;batch<2;batch++)for(variant=0;variant<6;variant++) {
+-        char task[48];uint32_t deadline;unsigned offset=0,events=0,expected_count=0,placed=0,taken=0;
++        char task[48];uint32_t deadline;unsigned events=0,expected_count=0,placed=0,taken=0,returned=0;
+         uint8_t targets[16],ring=2;int moves[16];float prior_claw=ARM_CLAW_OPEN_DEG;
+-        unsigned positions_during_index=0,was_index=0,initial_aligned=0;
+-        uint16_t index_yaw_pwm=0,initial_yaw_pwm=0;
++        unsigned positions_during_index=0,was_index=0;
++        uint16_t index_yaw_pwm=0;
+         const uint8_t *order=permutations[variant];
+         snprintf(task,sizeof(task),"task 134+%u%u%u+314+%u%u%u",order[0],order[1],order[2],order[0],order[1],order[2]);
+         prepare_rough(batch,task);
+         for(i=0;i<7;i++) {
+-            uint8_t target=i==6 ? 2u : (uint8_t)(i%3+1);
++            uint8_t target=i==6 ? 2u : order[i%3];
+             if(ring!=2 && ring!=target) {targets[expected_count]=2;moves[expected_count++]=(2-(int)ring)*STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN;ring=2;}
+             if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN;ring=target;}
+         }
+         deadline=clock_ms+400000;
+         while(run.state!=RUN_FAULT && run.job==(batch ? 5 : 2) && clock_ms<deadline) {
+             int slide,lift;float yaw,claw;
+-            serve_peer(&offset);
+             plant_step();
+-            if(!events && strstr(output,"[rough aligned] ring=2")) {
+-                initial_aligned=1;initial_yaw_pwm=arm_yaw_us;
+-            }
+-            if(initial_aligned && !events)CHECK(arm_yaw_us==initial_yaw_pwm);
++            CHECK(!vision_tx_count); /* 工位不依赖视觉板，原料颜色核验仍单独测试。 */
+             if(strstr(output,"[station index] ring=")) {
+                 unsigned target;int mm;
+                 CHECK(sscanf(strstr(output,"[station index] ring="),"[station index] ring=%u move_mm=%d",&target,&mm)==2);
+@@ -491,25 +496,24 @@
+                 RoadPoint point;double physical_ring;CHECK(road_point(NODE_D,&point));
+                 physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+                 if(claw==ARM_CLAW_OPEN_DEG) {
+-                    CHECK(placed<3 && taken==0 && fabs(physical_ring-(placed+1))<0.15);
+-                    for(i=0;order[i]!=placed+1;i++){}
+-                    CHECK(arm_platform_slot()==(int)i+1);placed++;
+-                } else if(claw==ARM_CLAW_CLOSE_DEG) {CHECK(placed==3 && taken<3 && fabs(physical_ring-(taken+1))<0.15);taken++;}
++                    CHECK(placed<3 && taken==0 && fabs(physical_ring-order[placed])<0.15);
++                    CHECK(arm_platform_slot()==(int)placed+1);placed++;
++                } else if(claw==ARM_CLAW_CLOSE_DEG) {CHECK(placed==3 && taken<3 && fabs(physical_ring-order[taken])<0.15);taken++;}
++            }
++            if(claw!=prior_claw && claw==ARM_CLAW_OPEN_DEG && yaw==ARM_PLACE_YAW_DEG
++                && slide==ARM_PLACE_SLIDE_MM && lift==ARM_PLACE_LIFT_MM) {
++                CHECK(returned<3 && taken==returned+1 && arm_platform_slot()==(int)returned+1);
++                returned++;
+             }
+             prior_claw=claw;
+         }
+         if(run.state==RUN_FAULT)fprintf(stderr,"ROUGH batch=%u permutation=%u: %s\n",batch,variant,output);
+         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==(batch ? 6 : 3));
+-        CHECK(initial_aligned && placed==3 && taken==3 && events==expected_count && arm_parked() && arm_platform_slot()==1);
++        CHECK(placed==3 && taken==3 && returned==3 && events==expected_count && arm_parked() && arm_platform_slot()==1);
+         CHECK(run.distance_mm==4567 && run.completed_roads==0x123);
+         {RoadPoint point;CHECK(road_point(NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
+         send_line("station");CHECK(strstr(output,"task_ready=1"));
+         stop_request();
+-    }
+-    /* 非排列/超界环号不得执行任何机械或底盘动作，任务码解析接口本身保持兼容。 */
+-    for(variant=0;variant<2;variant++) {
+-        prepare_rough(0,variant ? "task 134+125+314+231" : "task 134+113+314+231");
+-        firmware_step();CHECK(run.state==RUN_FAULT && !arm_positions && !velocity_batches);
+     }
+     /* 索引接口不能绕开已收臂、零速、工位类型和新鲜IMU限制。 */
+     for(variant=0;variant<7;variant++) {
+@@ -553,7 +557,7 @@
+         diagnostic_auto_reply=status_auto_reply=0;tick(2500);
+         CHECK(run.state==RUN_FAULT && arm_lock.state==3 && arm_positions==positions);
+     }
+-    puts("PASS rough indexing: both batches/all six task permutations; fixed 1/2/3 visit order, original cup mapping, front1/rear3, initial/final ring2 vision, route state and strict zero interlock retained; fault coverage");
++    puts("PASS rough indexing: both batches/all six task permutations; task-ordered place/retrieve, original cups, front1/rear3, final ring2, no vision dependency, route state and strict zero interlock retained; fault coverage");
+ }
+ 
+ static void align_transport_tests(void)
+@@ -590,63 +594,103 @@
+     puts("PASS rough vision transport: actual R/READY-D-MOVE/DISC frames; MOVE requires cancellation READY, old/bad/malformed/un-aligned replies, bounds/UART/timeouts/wrap rejected");
+ }
+ 
+-static void rough_alignment_tests(void)
+-{
+-    unsigned variant;
+-    if(!STN_ROUGH_PLACE_READY || !STN_ROUGH_PLATFORM_TAKE_READY
+-        || !(STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_YAW_DEG))return;
+-    for(variant=0;variant<2;variant++) {
+-        unsigned offset=0,positions=0,micro=0,was_shift=0;uint32_t deadline;uint16_t move_yaw_pwm=0;
+-        prepare_rough(0,"task 134+231+314+123");
+-        field_x+=variant ? -9.0 : 9.0;peer_geometry=1;deadline=clock_ms+500000;
+-        while(run.state!=RUN_FAULT && run.job==2 && clock_ms<deadline) {
+-            serve_peer(&offset);plant_step();
+-            if(run.station_shift && !was_shift) {
+-                positions=arm_positions;move_yaw_pwm=arm_yaw_us;
+-                if(run.remaining_mm==STN_ROUGH_ALIGN_STEP_MM) {
+-                    micro++;
+-                    peer_reply("DISC,320,240,0,1",0);peer_reply("MOVE,-30",0);
+-                }
+-            }
+-            if(run.station_shift)CHECK(station_chassis_pose_safe() && arm_positions==positions && arm_yaw_us==move_yaw_pwm);
++static void prepare_storage(unsigned batch, const char *task)
++{
++    RoadPoint point;
++    prepare_arm_auto(batch & 1u);send_line(task);
++    CHECK(road_point(NODE_H,&point));
++    field_x=planned_x=point.x;field_y=planned_y=point.y;initial_field_heading=HEAD_Y_POS;
++    physical_yaw=origin_yaw=0;sample_yaw(0);
++    run.state=RUN_STATION;run.station_enabled=1;run.plan=(uint8_t)(batch & 1u);
++    run.job=(uint8_t)(batch ? 6 : 3);run.edge=(uint8_t)(batch ? 13 : 7);
++    run.heading=run.target_heading=HEAD_Y_POS;run.yaw_zero_cdeg=0;
++    run.distance_mm=4567;run.steps=19;run.completed_roads=0x123;
++    CHECK(road_plan(NODE_G,NODE_H,&run.road));checked_job=run.job;
++}
++
++static void storage_index_tests(void)
++{
++    static const uint8_t permutations[6][3]={{1,2,3},{1,3,2},{2,1,3},{2,3,1},{3,1,2},{3,2,1}};
++    unsigned batch,variant,color_variant,i;
++    for(batch=0;batch<2;batch++)for(variant=0;variant<6;variant++)for(color_variant=0;color_variant<(batch ? 6u : 1u);color_variant++) {
++        char task[64];uint32_t deadline;uint8_t ring=2,targets[8],colors[3];
++        unsigned expected_count=0,events=0,taken=0,placed=0,positions=0,was_shift=0;
++        int moves[8],can_run=STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY;
++        int height=STN_STORAGE_LIFT_MM+(batch ? STN_STORAGE_LAYER_LIFT_MM : 0);
++        float previous=ARM_CLAW_OPEN_DEG;uint16_t yaw_pwm=0;
++        const uint8_t *order=permutations[variant],*color_order=permutations[color_variant];
++        static const uint8_t first_colors[3]={1,3,4};
++        for(i=0;i<3;i++)colors[i]=first_colors[color_order[i]-1];
++        snprintf(task,sizeof(task),"task 134+%u%u%u+%u%u%u+312",order[0],order[1],order[2],colors[0],colors[1],colors[2]);
++        prepare_storage(batch,task);
++        if(batch && (STN_STORAGE_LAYER_LIFT_MM<=0 || height>ARM_LIFT_MAX_MM))can_run=0;
++        if(!can_run) {
++            firmware_step();CHECK(run.state==RUN_FAULT && !run_active && !arm_positions && !velocity_batches);
++            CHECK(strstr(output,"not calibrated") || strstr(output,"second layer exceeds"));
++            continue;
++        }
++        for(i=0;i<4;i++) {
++            uint8_t target=i==3 ? 2u : order[batch ? color_order[i]-1u : i];
++            if(ring!=2 && ring!=target) {targets[expected_count]=2;moves[expected_count++]=(2-(int)ring)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN;ring=2;}
++            if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN;ring=target;}
++        }
++        deadline=clock_ms+250000;
++        while(run.state!=RUN_FAULT && run.job==(batch ? 6 : 3) && clock_ms<deadline) {
++            int slide,lift;float yaw,claw;
++            plant_step();CHECK(!vision_tx_count);
++            arm_pose_now(&slide,&lift,&yaw,&claw);
++            if(strstr(output,"[station index] ring=")) {
++                unsigned target;int mm;
++                CHECK(sscanf(strstr(output,"[station index] ring="),"[station index] ring=%u move_mm=%d",&target,&mm)==2);
++                CHECK(events<expected_count && target==targets[events] && mm==moves[events]);events++;
++                CHECK(abs(mm)==150 && arm_parked() && claw==ARM_CLAW_OPEN_DEG);
++                positions=arm_positions;yaw_pwm=arm_yaw_us;
++            }
++            if(run.station_shift) {
++                CHECK(arm_parked() && arm_positions==positions && arm_yaw_us==yaw_pwm && claw==ARM_CLAW_OPEN_DEG);
++                CHECK(abs(run.forward_cmd_rpm)<=STN_STORAGE_INDEX_RPM);
++            } else if(was_shift) {
++                CHECK(run.state==RUN_STATION && run.station_relock && arm_lock.state==1);
++                CHECK(run.distance_mm==4567 && run.steps==19 && run.completed_roads==0x123);
++                CHECK(run.edge==(batch ? 13 : 7));
++            }
+             was_shift=run.station_shift;
+-        }
+-        if(run.state==RUN_FAULT)fprintf(stderr,"ALIGN variant=%u: %s\n",variant,output);
+-        CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==3);
+-        CHECK(micro>=2 && peer_move_count==micro && peer_disc_count>=24+micro);
+-        CHECK(arm_parked() && arm_platform_slot()==1 && run.distance_mm==4567 && run.completed_roads==0x123);
++            if(claw!=previous && yaw==ARM_PLACE_YAW_DEG && slide==ARM_PLACE_SLIDE_MM && lift==ARM_PLACE_LIFT_MM) {
++                CHECK(claw==ARM_CLAW_CLOSE_DEG && taken==placed && taken<3 && arm_platform_slot()==(int)taken+1);taken++;
++            }
++            if(claw!=previous && yaw==STN_STORAGE_YAW_DEG && slide==STN_STORAGE_SLIDE_MM && lift==height) {
++                RoadPoint point;double actual;
++                uint8_t target;
++                CHECK(placed<3);target=order[batch ? color_order[placed]-1u : placed];
++                CHECK(road_point(NODE_H,&point));
++                actual=2+(field_y-point.y)/(STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN);
++                CHECK(claw==ARM_CLAW_OPEN_DEG && taken==placed+1 && placed<3);
++                CHECK(fabs(actual-target)<0.15 && arm_platform_slot()==(int)placed+1);placed++;
++            }
++            previous=claw;
++        }
++        if(run.state==RUN_FAULT)fprintf(stderr,"STORAGE batch=%u rings=%u colors=%u: %s\n",batch,variant,color_variant,output);
++        CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==(batch ? 7 : 4));
++        CHECK(placed==3 && taken==3 && events==expected_count && arm_parked() && arm_platform_slot()==1);
++        CHECK(run.distance_mm==4567 && run.completed_roads==0x123);
++        {RoadPoint point;CHECK(road_point(NODE_H,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
+         stop_request();
+     }
+-    for(variant=0;variant<5;variant++) {
+-        unsigned offset=0,positions;uint32_t deadline;
+-        prepare_rough(0,"task 134+123+314+231");field_x+=9;peer_geometry=1;deadline=clock_ms+30000;
+-        while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline) {serve_peer(&offset);plant_step();}
+-        CHECK(run.station_shift && run.remaining_mm==STN_ROUGH_ALIGN_STEP_MM);
+-        positions=arm_positions;
+-        if(variant==0)stop_request();
+-        else if(variant==1)send_line("obstacle");
+-        else if(variant==2)send_line("arm stop");
+-        else if(variant==3)missing_feedback_motor=4;
+-        else {frozen_imu=1;heading_sensor_invalidate(&heading_sensor);}
+-        while(run_active && clock_ms<deadline)plant_step();
+-        CHECK(!run_active && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
+-        tick(500);CHECK(!station_active() && arm_positions==positions);
+-    }
+-    prepare_rough(0,"task 134+123+314+231");tick(8000);
+-    CHECK(run.state==RUN_FAULT && !velocity_batches); /* 无READY不能移动。 */
+-    {
+-        unsigned offset=0;uint32_t deadline;
+-        prepare_rough(0,"task 134+123+314+231");peer_geometry=2;deadline=clock_ms+90000;
+-        while(run.state!=RUN_FAULT && clock_ms<deadline) {serve_peer(&offset);plant_step();}
+-        CHECK(run.state==RUN_FAULT && clock_ms<deadline && !arm_positions && peer_move_count<=26);
+-        CHECK(strstr(output,"alignment travel limit") || strstr(output,"alignment timeout"));
+-        CHECK(!station_active() && !run_active);
+-    }
+-    puts("PASS rough closed loop: independent simulated geometry +/-9mm converges using 3mm steps and fresh observations; no arm motion during chassis movement; stop/obstacle/arm/IMU/CAN feedback faults and missing camera hold vehicle");
+-}
++    /* 暂存区同样拒绝未收回、低位、忙碌和非零速，不能绕过工位联锁。 */
++    for(variant=0;variant<4;variant++) {
++        prepare_storage(0,"task 134+231+314+123");run.station_phase=1;
++        if(variant==0)CHECK(arm_command("arm pose 1 135 0 45",clock_ms));
++        if(variant==1)CHECK(arm_command("arm pose 0 105 0 45",clock_ms));
++        if(variant==2)motor_feedback[0].speed_rpm=1;
++        if(variant==3)CHECK(arm_command("arm yaw 10",clock_ms));
++        CHECK(!station_chassis_start(STN_STORAGE_INDEX_MM) && !run_active && !velocity_batches);
++    }
++    puts("PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150mm segments and final ring2, empty retracted arm while moving");
++}
++
+ int main(void)
+ {
+-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();rough_alignment_tests();
++    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();
+     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
+     return 0;
+ }
+--- before/tools/verify-station-vision.ps1
++++ tools/verify-station-vision.ps1
+@@ -9,11 +9,14 @@
+ try {
+     $env:PATH=(Split-Path -Parent $checkCompiler)+';'+$env:PATH
+     $checkVariants=@()
+-    foreach($flowMock in @(0,1,2,3)) {
++    foreach($flowMock in @(0,1,2,3,4,5,6)) {
+         $checkDefines=@()
+-        if($flowMock -eq 1){$checkDefines=@('-DSTN_ROUGH_PLACE_READY=1','-DSTN_ROUGH_SLIDE_MM=40','-DSTN_ROUGH_LIFT_MM=90','-DSTN_ROUGH_YAW_DEG=120.0f','-DSTN_STORAGE_PLACE_READY=1','-DSTN_PLATFORM_TAKE_READY=1')}
++        if($flowMock -eq 1){$checkDefines=@('-DSTN_STORAGE_LAYER_LIFT_MM=20')}
+         if($flowMock -eq 2){$checkDefines=@('-DSTN_ROUGH_SLIDE_MM=0','-DSTN_ROUGH_LIFT_MM=0','-DSTN_ROUGH_YAW_DEG=0.0f')}
+         if($flowMock -eq 3){$checkDefines=@('-DSTN_ROUGH_PLATFORM_TAKE_READY=0')}
++        if($flowMock -eq 4){$checkDefines=@('-DSTN_STORAGE_LAYER_LIFT_MM=0')}
++        if($flowMock -eq 5){$checkDefines=@('-DSTN_STORAGE_PLACE_READY=0')}
++        if($flowMock -eq 6){$checkDefines=@('-DSTN_STORAGE_LAYER_LIFT_MM=30')}
+         $checkExe='evidence/'+(Split-Path -Leaf $checkOut)+'/verify_station_vision_'+$flowMock+'.exe'
+         & $checkCompiler -DARM_HOST_TEST @checkDefines -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
+             tests/verify_station_vision.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c `
+@@ -23,7 +26,7 @@
+         $checkExit=$LASTEXITCODE
+         $checkText | Tee-Object -FilePath (Join-Path $checkOut ('result-'+$flowMock+'.log'))
+         if($checkExit -ne 0){throw 'Station/vision behavior test failed'}
+-        $checkVariants+=@{testOnlyReadyFlagsEnabled=[bool]$flowMock;configuration=@('production_rough_enabled_storage_disabled','mock_calibrated_rough_full_flow','ready_without_pose','rough_platform_take_not_ready')[$flowMock];defines=$checkDefines;exitCode=$checkExit;output=$checkText}
++        $checkVariants+=@{testOnlyOverrides=[bool]$flowMock;configuration=@('production_layer60_exceeds_travel','mock_layer20_full_flow','ready_without_pose','rough_platform_take_not_ready','layer_height_unknown','storage_not_ready','mock_layer30_upper_boundary')[$flowMock];defines=$checkDefines;exitCode=$checkExit;output=$checkText}
+     }
+     $checkHashes=[ordered]@{}
+     foreach($name in @('src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','src/arm_control.c','src/arm_control.h','src/arm_config.h','tests/vision_host_io.h','src/main_table_nav.c','src/car_config.h','src/full_route.h','src/structure.h',
+@@ -31,7 +34,7 @@
+         'tests/verify_station_vision.c','tools/verify-station-vision.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+     }
+-    [ordered]@{passed=$true;exitCode=$checkExit;scope='production rough parameters with protected storage; actual MaixCAM2 R/READY D MOVE/DISC protocol and simulated +/-9mm closed loop; test-only overrides also cover full route and calibration guards; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
++    [ordered]@{passed=$true;exitCode=$checkExit;scope='document task-ordered rough and same-color storage stacking; production layer60 exceeds 135mm travel and refuses second storage; layer20/layer30 mocks complete full route; independent simulated positions/cup mapping, height and motion guards; raw vision and standalone MaixCAM transport retained; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
+         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $checkOut 'result.json') -Encoding UTF8
+     Write-Output $checkOut
+ } finally {$env:PATH=$checkOldPath;Pop-Location}
+--- before/README.md
++++ README.md
+@@ -1,6 +1,6 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r13。机构作业会话新增±5RPM短时轮速容差，300ms仍非零或超5RPM停车；初始互锁和粗加工发车仍严格零速。原料区末块放完升高收回后直接回车头0°，不再先回131°；粗加工前后索引及微调保持125°观察角，离站才回0°。粗加工D接入MaixCAM2现有 `R/READY`、`D`、`MOVE`、`DISC` 视觉协议：先确认中间2号环，前1中2后3，按1→2→3放下、再1→2→3抓回原杯位，最后视觉对准2号基准并去暂存。粗加工使用操作者指定55mm / 105mm / yaw125°，平台取料复用35mm / 110mm / yaw256°；每次视觉修正3mm并重新确认四轮严格零速。暂存姿态及其旧平台取料READY仍为0，到H会保护停车；视觉缺失/未对准也停车。[粗加工配置与操作](docs/粗加工环位作业合并.md)。保留当前底盘闭环、路线、原料区取放参数、暂存区及原机械参数。r8增加起步编码器方向确认，r9使任务码只对一整轮两批作业有效，返程过B不重扫，整轮完成或取消后需新任务。机械臂两轴300RPM、夹爪0.5秒、云台/平台2秒插值，英文串口及原抓放参数保持。[完整操作与标定要求](docs/merged2功能合并与自动作业.md)。全程只使用 `runimu A/C`；同向直行节点不停，串口 `obstacle` 可在普通道路退回上一已记录节点并停等，工位作业/索引中遇障碍直接取消停车。尚无自动障碍输入，保留 `CAR_RUN_RPM=3000`。[连续直行与退回边界](docs/连续直行与障碍退回.md)。构建和电脑回归通过不代表烧录或实车验收。**
++**当前版本：20261019-merge2-r14。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；不再逐环等待视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/105/125°、暂存55/105/131°，平台取料共用35/110/256°。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±5RPM/300ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -9,14 +9,14 @@
+ - 保留底盘原有IMU闭环、A/C全程路线、地图/查表、扫码和PC9按钮行为。
+ - 新增 `arm ...` / `claw ...` 串口命令。底盘运动与机械机构会话互斥，四轮反馈确认停稳后才启用机械机构。
+ - `!`始终提出全系统停止请求，不沿用独立测试程序的夹取快捷键。上电不启动路线、不使能5/7号机械电机、不输出三路舵机PWM。
+-- `runimu A/C` 默认自动到站作业；粗加工按本次指定参数和视觉确认执行；暂存及其平台取料表未标定，仍拒绝暂存动作。`station auto off` 可仅跑底盘，串口屏未在本次接入。
++- `runimu A/C` 默认自动到站作业；粗加工及第一批暂存按任务码和150mm索引执行；第二批暂存因165mm目标超过135mm行程而拒绝。`station auto off` 可仅跑底盘，串口屏未在本次接入。
+ 
+ ## 1. 打开、编译和下载
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+ 3. 下载本目录 `keil/OBJ/table_navigation.hex`，或下载自己刚编译的固件。源码改过就重新编译，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r13`。只显示发送记录不代表板子已回复。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r14`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -2,9 +2,11 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r10支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r14支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
+ 
+-r10只增加粗加工D的逐环放下/同序抓回：每次调用当前底盘闭环索引150mm，1↔3经2号分两段，最后回2号基准。原料区、暂存区、机械参数、路线及r9任务码有效期保持。粗加工姿态仍未标定、READY=0；配置和边界见 [粗加工环位作业合并](粗加工环位作业合并.md)。
++r14以用户提供的《智能搬运赛项物料放置方案总结_已加入暂存区动作》为作业依据。粗加工按盘位顺序查G2/G4放下、同序抓回；不再逐环等视觉，进站停车点就是2号基准。暂存第一批查G2，第二批按颜色回查第一批G1/G2后叠放。两区方向都已确认前1、中2、后3，1↔3拆成两段150mm，作业结束回2号基准。原料视觉颜色确认保留。完整规则、参数和例子见[按任务码作业与暂存叠放](按任务码作业与暂存叠放.md)。
++
++暂存单层参数按文档为55mm平推、105mm升降、131°云台；平台取料复用当前35mm/110mm/256°。用户实测物块高60mm，第二层目标165mm超过当前135mm行程。因此本版可编排并执行第一批暂存，第二批暂存仍在取料前报 `storage second layer exceeds lift travel`。实车可达的两层放料姿态未测，不能通过增大软件行程或把165mm截到135mm放行。
+ 
+ r9任务码只对一整轮 `runimu A/C` 有效：第一批和第二批作业共用该任务，工位间交接及返程经过B均不清除、不重复要求扫码。完成两批并返回启停区、整轮完成时清空任务码；急停或故障取消本轮时也清空。下一轮可重新手输任务，或在首个B点等待重新扫码。扫码模块只有在首个B点扫码等待时才向任务解析器提交，闲置及整轮结束后的连续扫码只显示结果，不重新缓存旧任务。`station` 的 `task_ready=0`、两批 `colors=000 rings=000` 表示已失效；不影响同一轮两批作业的任务复用。
+ 

@@ -15,10 +15,7 @@
 #define VISION_HALF_FRAME_MS    200u
 #define VISION_PICK_TIMEOUT_MS 20000u
 #define VISION_ALIGN_TIMEOUT_MS 25000u
-#define VISION_ALIGN_RESET_MS 2000u
-#define VISION_ALIGN_TOL_PX 5 /* 与MaixCAM2 ALIGN_TOL一致，对外640x480口径。 */
-#define VISION_ALIGN_MAX_MOVE_PX 40
-enum { ALIGN_IDLE, ALIGN_RESET, ALIGN_MEASURE, ALIGN_CANCEL };
+enum { ALIGN_IDLE = 0, ALIGN_MEASURE = 2 };
 
 static volatile uint8_t rx_ring[VISION_RX_RING];
 static volatile uint16_t rx_head, rx_tail;
@@ -32,17 +29,35 @@ static struct {
     uint32_t last_byte_ms;
     uint8_t pick_state;
     uint8_t request_color, pick_color;
-    uint8_t align_state, align_stage; /* 1握手，2测量，3取消MOVE任务等待READY。 */
+    uint8_t stack_state, stack_color;
+    int16_t stack_x, stack_y;
+    uint32_t stack_warning_ms;
+    uint8_t align_state, align_stage, align_move_pending; /* MOVE为过程反馈，DISC才结束D/E任务。 */
     int16_t align_error;
-    uint32_t align_ms;
+    uint32_t align_ms, align_move_ms;
     int16_t pick_x, pick_y;
-    uint32_t request_ms;
+    uint32_t request_ms, pick_warning_ms, align_warning_ms;
     uint8_t busy_reported, mismatch_reported;
+    uint8_t display_known,display_color;
+    int16_t display_dx,display_dy;
+    uint32_t display_ms;
     char message[VISION_PAYLOAD_MAX + 1u];
     uint32_t frames, crc_errors, bad_frames, overflows, timeouts;
     char line[256]; /* 中文UTF-8状态和最长协议原文。 */
 } vision;
 
+void vision_display(uint32_t now,int32_t *color,int32_t *dx,int32_t *dy,int32_t *age)
+{
+    uint32_t elapsed=now-vision.display_ms;
+    *age=vision.display_known ? (elapsed>0x7fffffffu ? 0x7fffffff : (int32_t)elapsed) : -1;
+    *color=vision.display_known && elapsed<=1000u ? vision.display_color : 0;
+    *dx=vision.display_dx;*dy=vision.display_dy;
+}
+static void vision_observed(uint8_t color,int x,int y,uint32_t now)
+{
+    vision.display_known=1;vision.display_color=color;
+    vision.display_dx=(int16_t)x;vision.display_dy=(int16_t)y;vision.display_ms=now;
+}
 static uint8_t vision_crc8(const uint8_t *data, uint16_t length)
 {
     uint8_t crc = 0;
@@ -98,7 +113,7 @@ static int vision_number(const char **cursor, int *value)
     if (*s != ',') return 0;
     s++;
     while (*s == ' ') s++;
-    if (*s == '-') {sign = -1;s++;}
+    if (*s == '-' || *s == '+') {if (*s == '-') sign = -1;s++;}
     while (*s >= '0' && *s <= '9') {
         if (result > 3276 || (result == 3276 && *s - '0' > (sign < 0 ? 8 : 7))) return 0;
         result = result * 10 + (*s++ - '0');found = 1;
@@ -112,32 +127,44 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
 {
     char message[VISION_PAYLOAD_MAX + 1u];
     const char *cursor;
-    int value, x = 0, y = 0;
+    int value, x = 0, y = 0, has_coordinates = 0;
     if (memchr(payload,0,length)) {vision.bad_frames++;return;}
     memcpy(message, payload, length);
     message[length] = 0;
     memcpy(vision.message, message, (size_t)length + 1u);
     vision.frames++;
+    if (!strncmp(message,"STACK,",6)) {
+        if (vision.stack_state!=VISION_PICK_WAITING || tx_offset<tx_length) return;
+        cursor=message+5;
+        if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y) || *cursor
+            || x<0 || x>=640 || y<0 || y>=480) {
+            vision.bad_frames++;arm_output("[vision warning] invalid STACK; request retained\r\n");return;
+        }
+        vision.stack_x=(int16_t)x;vision.stack_y=(int16_t)y;
+        vision.stack_state=VISION_PICK_READY;
+        vision_observed(vision.stack_color,x-320,y-240,now);
+        snprintf(vision.line,sizeof(vision.line),"[vision] STACK color=%u x=%d y=%d; height supplied by STM32\r\n",
+                 (unsigned)vision.stack_color,x,y);
+        arm_output(vision.line);return;
+    }
+    if (vision.stack_state==VISION_PICK_WAITING) {
+        /* F只返回中心，不发送MOVE；其他任务的终包不能完成这次F。 */
+        if (!strcmp(message,"BUSY") || !strncmp(message,"NONE",4) || !strncmp(message,"ERR",3))
+            arm_output("[vision warning] STACK target unavailable/busy; request retained\r\n");
+        return;
+    }
     if (vision.align_state==VISION_PICK_WAITING) {
-        if ((uint32_t)(now-vision.align_ms) >= (vision.align_stage==ALIGN_MEASURE ? VISION_ALIGN_TIMEOUT_MS : VISION_ALIGN_RESET_MS)) {
-            vision.align_state=VISION_PICK_TIMEOUT;return;
-        }
-        if (!strcmp(message,"READY")) {
-            if (vision.align_stage==ALIGN_RESET) {
-                vision.align_stage=ALIGN_MEASURE;vision.align_ms=now;
-                if (!vision_send("D")) vision.align_state=VISION_PICK_FAULT;
-            } else if (vision.align_stage==ALIGN_CANCEL) vision.align_state=VISION_PICK_READY;
-            return;
-        }
-        if (vision.align_stage!=ALIGN_MEASURE) return; /* R围栏之前的MOVE/DISC全部丢弃。 */
+        /* D/E尚未发完时不接受测量；READY不推进流程，也不触发额外请求。 */
+        if (tx_offset<tx_length || !strcmp(message,"READY")) return;
         if (!strncmp(message,"MOVE,",5)) {
             int offset;
             cursor=message+4;
-            if (!vision_number(&cursor,&offset) || *cursor || offset < -VISION_ALIGN_MAX_MOVE_PX || offset > VISION_ALIGN_MAX_MOVE_PX
-                || (offset >= -VISION_ALIGN_TOL_PX && offset <= VISION_ALIGN_TOL_PX)) {vision.align_state=VISION_PICK_FAULT;return;}
+            if (!vision_number(&cursor,&offset) || *cursor) {
+                vision.bad_frames++;arm_output("[vision warning] invalid MOVE; request retained\r\n");return;
+            }
+            vision_observed(0,offset,0,now);
             vision.align_error=(int16_t)offset;
-            vision.align_stage=ALIGN_CANCEL;vision.align_ms=now;
-            if (!vision_send("R")) vision.align_state=VISION_PICK_FAULT;
+            vision.align_move_ms=now;vision.align_move_pending=1;
             return;
         }
         if (!strncmp(message,"DISC,",5)) {
@@ -145,14 +172,17 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
             cursor=message+4;
             if (!vision_number(&cursor,&cx) || !vision_number(&cursor,&cy)
                 || !vision_number(&cursor,&dx) || !vision_number(&cursor,&ok) || *cursor
-                || cx<0 || cx>=640 || cy<0 || cy>=480 || dx!=cx-320
-                || dx < -VISION_ALIGN_TOL_PX || dx > VISION_ALIGN_TOL_PX || ok!=1) {
-                vision.align_state=VISION_PICK_FAULT;return;
+                || cx<0 || cx>=640 || cy<0 || cy>=480
+                || ok!=1) {
+                vision.bad_frames++;arm_output("[vision warning] DISC not successful/valid; request retained\r\n");return;
             }
+            /* 上位机ok=1即确认对准；不重算dx，也不要求它与cx/320一致。 */
+            vision_observed(0,dx,cy-240,now);
+            vision.align_move_pending=0;
             vision.align_error=0;vision.align_state=VISION_PICK_READY;return;
         }
         if (!strncmp(message,"NONE",4) || !strncmp(message,"ERR",3)) {
-            vision.align_state=VISION_PICK_FAULT;return;
+            arm_output("[vision warning] target unavailable; request retained\r\n");return;
         }
     }
     if (!strncmp(message, "PICK,", 5)) {
@@ -179,10 +209,13 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
             if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y) || *cursor) {
                 vision.bad_frames++;return;
             }
+            has_coordinates=1;
         }
-        if ((uint32_t)(now - vision.request_ms) >= VISION_PICK_TIMEOUT_MS) return;
         vision.pick_x = (int16_t)x;vision.pick_y = (int16_t)y;
         vision.pick_color = vision.request_color;
+        if(has_coordinates && x>=0 && x<640 && y>=0 && y<480)
+            vision_observed(vision.pick_color,x-320,y-240,now);
+        else vision_observed(0,0,0,now);
         vision.pick_state = VISION_PICK_READY;
         snprintf(vision.line, sizeof(vision.line),
                  "[vision] PICK color=%u x=%d y=%d at fixed pick port; %lu ms\r\n",
@@ -277,13 +310,19 @@ void vision_update(uint32_t now)
     __enable_irq();
     if (fault) {
         vision.length = 0;vision.overflows++;
-        if (vision.pick_state == VISION_PICK_WAITING) vision.pick_state = VISION_PICK_FAULT;
-        if (vision.align_state == VISION_PICK_WAITING) vision.align_state = VISION_PICK_FAULT;
+        arm_output("[vision warning] UART/receive overflow; discard incomplete frame, requests retained\r\n");
     }
     vision_transmit();
     if (vision.align_state == VISION_PICK_WAITING
-        && (uint32_t)(now-vision.align_ms) >= (vision.align_stage==ALIGN_MEASURE ? VISION_ALIGN_TIMEOUT_MS : VISION_ALIGN_RESET_MS))
-        vision.align_state=VISION_PICK_TIMEOUT;
+        && (uint32_t)(now-vision.align_warning_ms) >= VISION_ALIGN_TIMEOUT_MS) {
+        vision.align_warning_ms=now;vision.timeouts++;
+        arm_output("[vision warning] alignment reply delayed; keep same D/E request active\r\n");
+    }
+    if (vision.stack_state==VISION_PICK_WAITING
+        && (uint32_t)(now-vision.stack_warning_ms)>=VISION_ALIGN_TIMEOUT_MS) {
+        vision.stack_warning_ms=now;vision.timeouts++;
+        arm_output("[vision warning] STACK reply delayed; same F request retained\r\n");
+    }
     if (vision.length && (uint32_t)(now - vision.last_byte_ms) > VISION_HALF_FRAME_MS) {
         vision.length = 0;
         vision.bad_frames++;
@@ -294,11 +333,11 @@ void vision_update(uint32_t now)
         vision_byte(byte, now);
     }
     if (vision.pick_state == VISION_PICK_WAITING
-        && (uint32_t)(now - vision.request_ms) >= VISION_PICK_TIMEOUT_MS) {
-        vision.pick_state = VISION_PICK_TIMEOUT;
+        && (uint32_t)(now - vision.pick_warning_ms) >= VISION_PICK_TIMEOUT_MS) {
+        vision.pick_warning_ms = now;
         vision.timeouts++;
         snprintf(vision.line, sizeof(vision.line),
-                 "[vision] PICK timeout after %lu ms; color=%u\r\n",
+                 "[vision warning] PICK delayed %lu ms; color=%u; request retained\r\n",
                  (unsigned long)VISION_PICK_TIMEOUT_MS, (unsigned)vision.request_color);
         arm_output(vision.line);
     }
@@ -308,13 +347,14 @@ void vision_request_pick(uint8_t color, uint32_t now)
 {
     char payload[8];
     vision.align_state=VISION_PICK_IDLE;vision.align_stage=ALIGN_IDLE;
+    vision.stack_state=VISION_PICK_IDLE;vision.stack_color=0;
     if (color < 1u || color > 4u)
         return;
     snprintf(payload, sizeof(payload), "C,%u", (unsigned)color);
     vision.pick_state = VISION_PICK_WAITING;
     vision.request_color = color;
     vision.pick_color = 0;
-    vision.request_ms = now;
+    vision.request_ms = vision.pick_warning_ms = now;
     vision.busy_reported = 0;
     vision.mismatch_reported = 0;
     vision.length = 0;
@@ -341,24 +381,53 @@ void vision_cancel_pick(void)
 {
     vision.pick_state = VISION_PICK_IDLE;
     vision.request_color = 0;
+    vision.stack_state=VISION_PICK_IDLE;vision.stack_color=0;
     vision.align_state = VISION_PICK_IDLE;
-    vision.align_stage = ALIGN_IDLE;
+    vision.align_stage = ALIGN_IDLE;vision.align_move_pending=0;
     tx_length = tx_offset = 0;vision.length = 0;
     __disable_irq();rx_tail = rx_head;rx_fault = 0;__enable_irq();
 }
 
-void vision_request_align(uint8_t ring, uint32_t now)
+void vision_request_stack(uint8_t color,uint32_t now)
 {
+    char payload[8];
     vision_cancel_pick();
-    if (ring < 1 || ring > 3) {
+    if(color<1u || color>4u){vision.stack_state=VISION_PICK_FAULT;return;}
+    vision.stack_state=VISION_PICK_WAITING;vision.stack_color=color;vision.stack_warning_ms=now;
+    snprintf(payload,sizeof(payload),"F,%u",(unsigned)color);
+    if(!vision_send(payload)){vision.stack_state=VISION_PICK_FAULT;return;}
+    snprintf(vision.line,sizeof(vision.line),"[vision] queued request %s; wait for STACK,x,y\r\n",payload);
+    arm_output(vision.line);
+}
+int vision_stack_state(void){return vision.stack_state;}
+void vision_stack_result(int16_t *x,int16_t *y)
+{
+    if(x)*x=vision.stack_x;
+    if(y)*y=vision.stack_y;
+}
+
+void vision_request_align(char command, uint8_t ring, uint32_t now)
+{
+    char payload[2];
+    vision_cancel_pick();
+    if ((command!='D' && command!='E') || ring < 1 || ring > 3) {
         vision.align_state=VISION_PICK_FAULT;return;
     }
-    vision.align_stage=ALIGN_RESET;vision.align_ms=now;
+    vision.align_stage=ALIGN_MEASURE;vision.align_ms=vision.align_warning_ms=now;
     vision.align_state=VISION_PICK_WAITING;
-    if (!vision_send("R")) vision.align_state=VISION_PICK_FAULT;
+    payload[0]=command;payload[1]=0;
+    if (!vision_send(payload)) vision.align_state=VISION_PICK_FAULT;
 }
 int vision_align_state(void) {return vision.align_state;}
 int16_t vision_align_offset_px(void) {return vision.align_error;}
+int vision_align_take_move(int16_t *offset, uint32_t *received_ms)
+{
+    if (vision.align_state!=VISION_PICK_WAITING || !vision.align_move_pending) return 0;
+    vision.align_move_pending=0;
+    if (offset) *offset=vision.align_error;
+    if (received_ms) *received_ms=vision.align_move_ms;
+    return 1;
+}
 
 const char *vision_last_message(void) { return vision.message; }
 
@@ -379,13 +448,16 @@ int vision_command(const char *s, uint32_t now)
         snprintf(vision.line,sizeof(vision.line),"[vision rough] state=%u phase=%u offset_px=%d\r\n",
                  (unsigned)vision.align_state,(unsigned)vision.align_stage,(int)vision.align_error);
         arm_output(vision.line);
+        snprintf(vision.line,sizeof(vision.line),"[vision stack] state=%u color=%u x=%d y=%d\r\n",
+                 (unsigned)vision.stack_state,(unsigned)vision.stack_color,(int)vision.stack_x,(int)vision.stack_y);
+        arm_output(vision.line);
         snprintf(vision.line, sizeof(vision.line), "[vision] last=\"%s\"\r\n", vision.message);
         arm_output(vision.line);
         return 1;
     }
     if (!strcmp(s, "vision ping")) {
         if (!vision_send("D")) {arm_output("[vision rejected: transmit busy]\r\n");return 1;}
-        arm_output("[vision] queued D; expect R frame\r\n");
+        arm_output("[vision] queued D; expect MOVE/DISC frame\r\n");
         return 1;
     }
     if (!strcmp(s, "vision range")) {

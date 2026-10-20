@@ -1,4 +1,4 @@
-﻿#include "arm_control.h"
+#include "arm_control.h"
 #include "arm_config.h"
 #include <string.h>
 #include <stdio.h>
@@ -33,7 +33,8 @@ static struct {
     uint8_t platform_known, platform_slot; /* slot：1..3，0=未知。 */
     ArmStep target, single;
     ArmAxis axis[2]; /* 0=平推7号，1=升降5号。 */
-    uint32_t phase_ms, move_ms, pwm_ms, poll_ms, query_ms, servo_ms;
+    uint32_t phase_ms, move_ms, pwm_ms, poll_ms, query_ms, servo_ms, warning_ms;
+    uint8_t warning_seen;
     uint8_t query_axis, query_kind, waiting, poll;
     float start_yaw, start_claw, start_platform;
     uint16_t claw_us, yaw_us, platform_us; /* 最后实际提交给PWM的脉宽，不是位置反馈。 */
@@ -128,6 +129,15 @@ static uint8_t load1_count;
 #define PLACE_COUNT (sizeof(place_steps)/sizeof(place_steps[0]))
 #define LOAD3_COUNT (sizeof(load3_steps)/sizeof(load3_steps[0]))
 static uint8_t axis_address(unsigned i) { return i ? ARM_LIFT_ADDRESS : ARM_SLIDE_ADDRESS; }
+/* 5/7号轴速仅用于诊断；动作推进依据驱动器到位状态与位置反馈。 */
+static void arm_log_axis_speed(unsigned axis, const char *stage)
+{
+    static char message[112];
+    if (!arm.axis[axis].rpm) return;
+    snprintf(message, sizeof(message), "[arm axis] stage=%s addr=%u speed_rpm=%ld; logged only\r\n",
+             stage, (unsigned)axis_address(axis), (long)arm.axis[axis].rpm);
+    arm_output(message);
+}
 static float axis_ppm(unsigned i) { return i ? ARM_LIFT_PULSES_PER_MM : ARM_SLIDE_PULSES_PER_MM; }
 static float platform_angle_of(uint8_t slot)
 {
@@ -241,6 +251,14 @@ int arm_busy(void)
 }
 int arm_failed(void) { return arm.state==ARM_FAULT; }
 int arm_pose_known(void) { return arm.referenced; }
+void arm_target_now(int *slide,int *lift,float *yaw,float *claw)
+{
+    int moving=arm_busy() && arm.state!=ARM_YAW_TEST;
+    if(slide)*slide=moving ? arm.target.slide : arm.slide;
+    if(lift)*lift=moving ? arm.target.lift : arm.lift;
+    if(yaw)*yaw=moving ? arm.target.yaw : arm.yaw;
+    if(claw)*claw=moving ? arm.target.claw : arm.claw;
+}
 int arm_platform_known(void) { return arm.platform_known; }
 float arm_platform_angle(void) { return arm.platform; }
 /* 自动工位用：已使能、姿态与载物台角度都已人工声明，且当前空闲。 */
@@ -285,6 +303,15 @@ void arm_stop(void)
      * 舵机没有位置反馈，停止插值并不保证轴已物理停稳。 */
     arm_output("[arm stopped: pose invalid; PWM held; inspect before resuming; arm pose required for normal motion]\r\n");
 }
+static void arm_warning(const char *reason, uint32_t now)
+{
+    static char message[144];
+    if (arm.warning_seen && (uint32_t)(now-arm.warning_ms)<1000u) return;
+    arm.warning_seen=1;arm.warning_ms=now;
+    snprintf(message,sizeof(message),"[arm warning] %s; addr=%u query=%u; task retained\r\n",
+             reason,(unsigned)axis_address(arm.query_axis),(unsigned)arm.query_kind);
+    arm_output(message);
+}
 static void arm_fail(const char *reason)
 {
     arm_stop(); arm_output("[arm fault] "); arm_output(reason); arm_output("\r\n");
@@ -299,7 +326,7 @@ void arm_can_rx(uint32_t id,uint8_t ide,uint8_t rtr,uint8_t length,const uint8_t
         || (length==5 && data[0]==0x35 && data[1]<=1)
         || (length==7 && data[0]==0x36 && data[1]<=1)) || data[length-1]!=0x6b) return;
     next=(uint8_t)((arm_head+1u)%ARM_RX_SIZE);
-    if (next==arm_tail) {arm_rx_fault=1;return;}
+    if (next==arm_tail) {arm_rx_fault|=128u;return;}
     arm_rx[arm_head].axis=(uint8_t)(address==ARM_LIFT_ADDRESS);
     arm_rx[arm_head].length=length; arm_rx[arm_head].ms=now;
     for (i=0;i<length;i++) arm_rx[arm_head].data[i]=data[i];
@@ -338,8 +365,9 @@ static void arm_poll(uint32_t now)
 {
     static const SysParams_t params[3]={S_FLAG,S_VEL,S_CPOS};
     if (arm.waiting) {
-        if((uint32_t)(now-arm.query_ms)>ARM_FEEDBACK_TIMEOUT_MS) arm_fail("feedback timeout");
-        return;
+        if((uint32_t)(now-arm.query_ms)<=ARM_FEEDBACK_TIMEOUT_MS) return;
+        arm_warning("feedback reply timeout; continue polling",now);
+        arm.waiting=0;
     }
     if((uint32_t)(now-arm.poll_ms)<ARM_POLL_MS)return;
     arm.query_axis=(uint8_t)(arm.poll/3u); arm.query_kind=(uint8_t)(arm.poll%3u);
@@ -407,7 +435,7 @@ static void begin_step(uint32_t now)
     }
     memset(arm.axis,0,sizeof(arm.axis)); clear_arm_rx(0);
     arm.state=ARM_PREFLIGHT;arm.phase_ms=now;arm.poll_ms=now-ARM_POLL_MS;
-    /* 两轴到位由ACK、位置、速度和状态反馈确认，不附加无关的舵机等待。
+    /* 两轴到位由ACK、位置和状态反馈确认；速度读数仅记录，不作为停机或完成门槛。
      * 云台与载物台同时动作时仍等完整插值；夹爪使用独立的短行程时间。 */
     arm.servo_ms=0;
     if(s->mask&(YAW|PLATFORM)) arm.servo_ms=ARM_SERVO_TIME_MS;
@@ -418,6 +446,27 @@ static void begin_step(uint32_t now)
 static void start_single(ArmStep s,uint32_t now)
 {
     arm.single=s;arm.sequence=arm.step=0;arm.count=1;begin_step(now);
+}
+int arm_platform_at_yaw(uint8_t slot,float work_yaw,uint32_t now)
+{
+    static const float angles[3]={ARM_PLATFORM_FIRST_DEG,ARM_PLATFORM_SECOND_DEG,ARM_PLATFORM_THIRD_DEG};
+    ArmStep step={0,0,0,0,0,PLATFORM};
+    if(slot<1u || slot>3u || !arm_ready()
+        || arm.slide!=ARM_SLIDE_HOME_MM || arm.lift!=ARM_LIFT_HOME_MM || arm.yaw!=work_yaw
+        || !pose_valid(arm.slide,arm.lift,work_yaw,arm.claw)) return 0;
+    step.platform=angles[slot-1u];
+    start_single(step,now);
+    return arm_busy() && !arm_failed();
+}
+int arm_platform_with_yaw(uint8_t slot,float target_yaw,uint32_t now)
+{
+    ArmStep step={0,0,0,0,0,YAW|PLATFORM};
+    if(slot<1u || slot>3u || !arm_ready()
+        || arm.slide!=ARM_SLIDE_HOME_MM || arm.lift!=ARM_LIFT_HOME_MM
+        || !pose_valid(arm.slide,arm.lift,target_yaw,arm.claw)) return 0;
+    step.yaw=target_yaw;step.platform=platform_angle_of(slot);
+    start_single(step,now);
+    return arm_busy() && !arm_failed();
 }
 static void arm_status(void)
 {
@@ -434,8 +483,8 @@ static void arm_status(void)
 }
 /* 视觉确认后的单块循环：抓当前取料口 -> 放到载物台当前空杯位 ->
  * 离开杯壁、云台回抓取角，同时载物台转到下一个空位。
- * 起始若不在抓取预备位，自动补回默认位；动作参数与 load3 完全相同。 */
-static int build_load_one(void)
+ * 起始若不在抓取预备位，自动补回默认位；last仅改变末尾云台目标为车头0度。 */
+static int build_load_one(uint8_t last)
 {
     uint8_t slot;
     float next;
@@ -461,10 +510,10 @@ static int build_load_one(void)
     if (!append_step(ARM_PLACE_SLIDE_MM, 0, 0, 0, 0, SLIDE)) return 0;
     if (!append_step(0, ARM_PLACE_LIFT_MM, 0, 0, 0, LIFT)) return 0;
     if (!append_step(0, 0, 0, ARM_CLAW_OPEN_DEG, 0, CLAW)) return 0;
-    /* 升高离开杯壁、收齿条；云台回抓取角和载物台换位并行。 */
+    /* 升高离开杯壁、收齿条；末块直接回车头，其余回抓取角，均并行换杯。 */
     if (!append_step(0, ARM_LIFT_HOME_MM, 0, 0, 0, LIFT)) return 0;
     if (!append_step(ARM_SLIDE_HOME_MM, 0, 0, 0, 0, SLIDE)) return 0;
-    if (!append_step(0, 0, ARM_PICK_YAW_DEG, 0, next, YAW | PLATFORM)) return 0;
+    if (!append_step(0, 0, last ? ARM_YAW_HOME_DEG : ARM_PICK_YAW_DEG, 0, next, YAW | PLATFORM)) return 0;
     return load1_count;
 }
 int arm_command(const char *s,uint32_t now)
@@ -551,7 +600,7 @@ int arm_command(const char *s,uint32_t now)
         arm.sequence=5;arm.count=(uint8_t)LOAD3_COUNT;arm.step=0;begin_step(now);return 1;
     }
     /* 原料区每次只装一块：视觉确认颜色到位后由主流程调用。 */
-    if(!strcmp(s,"arm load1") || !strcmp(s,"arm load 1")) {
+    if(!strcmp(s,"arm load1") || !strcmp(s,"arm load 1") || !strcmp(s,"arm load1 last")) {
         uint8_t built;
         if(!arm.referenced) {
             arm_output("[arm rejected: actual pose unknown; arm pose SLIDE LIFT YAW CLAW required]\r\n");return 1;
@@ -559,7 +608,7 @@ int arm_command(const char *s,uint32_t now)
         if(!arm.platform_known) {
             arm_output("[arm rejected: declare actual platform angle with arm platform pose DEG]\r\n");return 1;
         }
-        built=(uint8_t)build_load_one();
+        built=(uint8_t)build_load_one((uint8_t)!strcmp(s,"arm load1 last"));
         if(!built) {
             arm_output("[arm rejected: load1 needs a known platform slot 1..3]\r\n");return 1;
         }
@@ -612,21 +661,25 @@ void arm_update(uint32_t now)
     }
     if(arm.state==ARM_IDLE && !arm.referenced)return;
 #ifdef ARM_HOST_TEST
-    if(entry_host_can_bus_off())arm_rx_fault=1;
+    if(entry_host_can_bus_off())arm_rx_fault|=4u;
 #else
-    if(CAN1->ESR & 4u)arm_rx_fault=1;
+    if(CAN1->ESR & 4u)arm_rx_fault|=4u;
 #endif
-    if(arm_rx_fault){arm_fail("CAN error/receive overflow");return;}
+    if(arm_rx_fault & 129u){clear_arm_rx(0);arm_rx_fault&=126u;arm.waiting=0;arm_warning("CAN receive overflow; continue polling",now);}
+    if(arm_rx_fault){arm_fail("CAN transmit/bus fault");return;}
     arm_receive();
     if(arm.state==ARM_IDLE || arm.state==ARM_FAULT)return;
-    if((uint32_t)(now-arm.phase_ms)>ARM_ACTION_TIMEOUT_MS){arm_fail("action timeout");return;}
+    if((uint32_t)(now-arm.phase_ms)>ARM_ACTION_TIMEOUT_MS){arm_warning("action deadline exceeded; wait for position",now);arm.phase_ms=now;}
     if(arm.state==ARM_PREFLIGHT) {
-        for(i=0;i<2;i++)if(arm.axis[i].samples!=7)complete=0;
+        for(i=0;i<2;i++)if(arm.axis[i].samples!=7
+            || (uint32_t)(now-arm.axis[i].status_ms)>ARM_FEEDBACK_TIMEOUT_MS
+            || (uint32_t)(now-arm.axis[i].speed_ms)>ARM_FEEDBACK_TIMEOUT_MS
+            || (uint32_t)(now-arm.axis[i].position_ms)>ARM_FEEDBACK_TIMEOUT_MS)complete=0;
         if(complete){
             for(i=0;i<2;i++) {
                 ArmAxis *a=&arm.axis[i];
                 int delta=i ? arm.target.lift-arm.lift : arm.target.slide-arm.slide;
-                if(a->rpm){arm_fail("axis moving before action; inspect pose");return;}
+                arm_log_axis_speed(i, "preflight");
                 a->baseline=a->position;a->dir=(uint8_t)(delta>0?0:1);
                 if(i ? ARM_LIFT_DIR_INVERT : ARM_SLIDE_DIR_INVERT)a->dir^=1u;
                 a->pulses=(uint32_t)((delta<0?-delta:delta)*axis_ppm(i)+0.5f);
@@ -664,14 +717,15 @@ void arm_update(uint32_t now)
             int sign=i?ARM_LIFT_ENCODER_SIGN:ARM_SLIDE_ENCODER_SIGN;
             if(a->dir)expected=-expected;
             expected*=sign;
-            if(!a->ack && elapsed>ARM_ACK_TIMEOUT_MS){arm_fail("position ACK timeout");return;}
-            if(a->samples!=7 || !a->ack || !(a->flags&2u) || a->rpm
+            if(!a->ack && elapsed>ARM_ACK_TIMEOUT_MS)arm_warning("position ACK missing; completion uses measured position/arrived",now);
+            if(a->samples!=7 || !(a->flags&2u)
                 || (uint32_t)(now-a->status_ms)>ARM_FEEDBACK_TIMEOUT_MS
                 || (uint32_t)(now-a->speed_ms)>ARM_FEEDBACK_TIMEOUT_MS
                 || (uint32_t)(now-a->position_ms)>ARM_FEEDBACK_TIMEOUT_MS
                 || delta<expected-tolerance || delta>expected+tolerance)complete=0;
         }
         if(complete){
+            for(i=0;i<2;i++) arm_log_axis_speed(i, "complete");
             servo_pose((float)arm.target.claw,(float)arm.target.yaw);
             if(arm.platform_known){platform_pose(arm.target.platform);arm.platform=arm.target.platform;}
             arm.slide=arm.target.slide;arm.lift=arm.target.lift;arm.yaw=arm.target.yaw;arm.claw=arm.target.claw;

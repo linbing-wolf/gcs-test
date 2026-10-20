@@ -1,0 +1,466 @@
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -136,6 +136,7 @@
+     uint8_t imu_mode;         /* 已建立闭环会话，供诊断和中断采样故障检查。 */
+     uint8_t turn_only, translation_only;
+     uint8_t station_enabled, station_phase, scan_turn_stage;
++    uint8_t station_departing, station_speed_logged; /* 工位离站预检范围及每轮日志去重。 */
+     uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
+     uint8_t transition_ready; /* 仅本段通过距离/航向/四轮停稳后，可向下一段传递一次。 */
+     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
+@@ -393,6 +394,22 @@
+     number(value < 0 ? 0u - (uint32_t)value : (uint32_t)value);
+ }
+ 
++/* 工位轮速只作诊断；道路/手动会话仍使用原停稳检查。 */
++static int station_speed_log_only(void)
++{
++    return run.station_enabled && (run.state==RUN_STATION || run.station_shift || run.station_departing);
++}
++static void station_log_wheel_speed(uint8_t wheel, const char *stage)
++{
++    uint8_t bit=(uint8_t)(1u<<wheel);
++    int32_t rpm=motor_feedback[wheel].speed_rpm;
++    if (!rpm) {run.station_speed_logged &= (uint8_t)~bit;return;}
++    if (run.station_speed_logged & bit) return;
++    run.station_speed_logged |= bit;
++    text("[station wheel] stage=");text(stage);text(" wheel=");number(wheel+1u);
++    text(" speed_rpm=");signed_number(rpm);text("; logged only\r\n");
++}
++
+ /* XM1601按照片中的指令设置CRLF，再切连续模式；不保存Flash或恢复出厂。 */
+ static const uint8_t scanner_commands[2][9] = {
+     {0x7e,0x00,0x08,0x01,0x00,0x60,0x21,0x4b,0xf0},
+@@ -968,7 +985,7 @@
+         run.state = RUN_STATION;
+         run.station_relock = 1;
+         arm_lock_begin();
+-        text("[station index done] encoder+IMU stopped; reacquiring four-wheel zero-speed interlock\r\n");
++        text("[station index done] encoder+IMU complete; zero commands confirmed; reacquiring fresh wheel status\r\n");
+         return;
+     }
+     run.state = RUN_DONE;
+@@ -1141,9 +1158,8 @@
+         || (mm != index_mm && mm != -index_mm && mm != STN_ALIGN_STEP_MM && mm != -STN_ALIGN_STEP_MM)) return 0;
+     for (i = 0; i < MOTOR_COUNT; i++) {
+         MotorFeedback *f = &motor_feedback[i];
+-        /* 工位发车与已建立会话共用轮速容差，避免两处检查口径不一致。 */
+-        if (!f->speed_valid || f->speed_rpm < -ARM_CHASSIS_SPEED_NOISE_RPM
+-            || f->speed_rpm > ARM_CHASSIS_SPEED_NOISE_RPM || !(f->status_flags & MOTOR_FLAG_ENABLED)
++        station_log_wheel_speed(i,"launch");
++        if (!f->speed_valid || !(f->status_flags & MOTOR_FLAG_ENABLED)
+             || (f->status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))
+             || (uint32_t)(clock_ms - f->speed_ms) > ARM_FEEDBACK_TIMEOUT_MS
+             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
+@@ -1221,7 +1237,7 @@
+     {
+         if (run.station_enabled && run.job < 7u) {
+             run_active=0;run.state=RUN_STATION;run.turning=0;run.transition_ready=0;run.station_phase=0;
+-            text("[run station] waiting for fresh four-wheel stop; job=");number(run.job);text("\r\n");
++            text("[run station] waiting for fresh four-wheel status; job=");number(run.job);text("\r\n");
+             arm_lock_begin();return;
+         }
+         run.job++;
+@@ -1250,6 +1266,7 @@
+ static void run_station_handoff(void)
+ {
+     run_active=1;run.state=RUN_PREFLIGHT;run.segment_ms=clock_ms;
++    run.station_departing=1;
+     run.station_phase=0;run.pending=run.velocity_waiting=run.velocity_sent=0;
+     run.velocity_query_index=0;run.last_query_ms=clock_ms-CAR_VELOCITY_QUERY_MS;
+     run.transition_ready=0;run.zero_ms=run.stopped_ms=0;
+@@ -1303,6 +1320,7 @@
+     run.velocity_phase = VELOCITY_BASELINE;
+     run.phase_ms = clock_ms;
+     run.baseline_after_ms = run.stopped_ms;
++    run.station_departing = 0;
+     run.stopped_ms = 0;
+ }
+ 
+@@ -1410,7 +1428,8 @@
+     memset(&turn_postcheck, 0, sizeof(turn_postcheck));
+     arm_lock.started_ms = clock_ms;
+     arm_lock.poll_ms = clock_ms - ARM_POLL_MS;
+-    text("[arm interlock: waiting for fresh four-wheel zero-speed/status feedback]\r\n");
++    text(station_speed_log_only() ? "[arm interlock: waiting for fresh four-wheel status; speed logged only]\r\n"
++                                : "[arm interlock: waiting for fresh four-wheel zero-speed/status feedback]\r\n");
+ }
+ 
+ /* 独占会话期间持续查询四轮；估时、旧反馈或单轮回复均不能放行。 */
+@@ -1437,7 +1456,10 @@
+             || (int32_t)(frame.received_ms - arm_lock.query_ms[i][kind]) < 0
+             || !run_record_frame(&frame)) continue;
+         arm_lock.seen[i] |= (uint8_t)(1u << kind);
+-        if (kind && arm_lock.state==2 && motor_feedback[i].speed_rpm!=0
++        if (kind && station_speed_log_only()) {
++            station_log_wheel_speed(i,"interlock");
++            arm_lock.speed_noise[i]=0;
++        } else if (kind && arm_lock.state==2 && motor_feedback[i].speed_rpm!=0
+             && motor_feedback[i].speed_rpm >= -ARM_CHASSIS_SPEED_NOISE_RPM
+             && motor_feedback[i].speed_rpm <= ARM_CHASSIS_SPEED_NOISE_RPM) {
+             if (!arm_lock.speed_noise[i]) {
+@@ -1459,8 +1481,8 @@
+     }
+     for (i = 0; i < MOTOR_COUNT; i++) {
+         MotorFeedback *f = &motor_feedback[i];
+-        uint8_t speed_ok=(uint8_t)(f->speed_rpm==0);
+-        if (arm_lock.state==2 && arm_lock.speed_noise[i]) {
++        uint8_t speed_ok=(uint8_t)(station_speed_log_only() || f->speed_rpm==0);
++        if (!station_speed_log_only() && arm_lock.state==2 && arm_lock.speed_noise[i]) {
+             if ((uint32_t)(clock_ms-arm_lock.speed_noise_ms[i]) >= ARM_CHASSIS_SPEED_NOISE_MS) {
+                 text("[arm interlock] persistent nonzero wheel=");number(i+1u);
+                 text(" speed_rpm=");signed_number(f->speed_rpm);text("\r\n");
+@@ -1586,7 +1608,8 @@
+     for (i = 0; i < MOTOR_COUNT; i++) {
+         MotorFeedback *f = &motor_feedback[i];
+         uint32_t after_zero = f->speed_ms - run.zero_ms;
+-        if (f->speed_rpm > CAR_VELOCITY_STOP_RPM || f->speed_rpm < -CAR_VELOCITY_STOP_RPM
++        if (station_speed_log_only()) station_log_wheel_speed(i,"stop");
++        if ((!station_speed_log_only() && (f->speed_rpm > CAR_VELOCITY_STOP_RPM || f->speed_rpm < -CAR_VELOCITY_STOP_RPM))
+             || after_zero < CAR_HEADING_SETTLE_MS || after_zero > 0x7fffffffu) {
+             run.stopped_ms = 0;
+             return 0;
+@@ -1930,10 +1953,12 @@
+         run_return_next();return;
+     }
+     if (run.state == RUN_PREFLIGHT) {
+-        for (i = 0; i < MOTOR_COUNT; i++)
+-            if (motor_feedback[i].speed_rpm > CAR_VELOCITY_STOP_RPM || motor_feedback[i].speed_rpm < -CAR_VELOCITY_STOP_RPM) {
++        for (i = 0; i < MOTOR_COUNT; i++) {
++            if (station_speed_log_only()) station_log_wheel_speed(i,"preflight");
++            else if (motor_feedback[i].speed_rpm > CAR_VELOCITY_STOP_RPM || motor_feedback[i].speed_rpm < -CAR_VELOCITY_STOP_RPM) {
+                 run_fault("preflight wheels not stopped");return;
+             }
++        }
+         if (run.turn_only || run.translation_only) {
+             run.velocity_phase = VELOCITY_TURN;run.phase_ms = clock_ms;run.turning = 1;
+             run.state = RUN_ALIGN;drive.state = MOTION_RUNNING;run.steps++;
+@@ -2040,7 +2065,8 @@
+         && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS) {
+         run.heading = run.target_heading;
+         if (run.velocity_phase == VELOCITY_TURN) {
+-            text("[heading aligned; four wheels stopped]\r\n");
++            text(station_speed_log_only() ? "[heading aligned; zero commands confirmed; wheel speed logged only]\r\n"
++                                         : "[heading aligned; four wheels stopped]\r\n");
+             run.log_ms = clock_ms - CAR_CONTROL_LOG_MS;
+             run_velocity_log();
+             if (run.station_align_pending) {
+@@ -2624,7 +2650,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r22; station launch +/-15rpm; DISC ok=1; wheel guard3000ms\r\n");
++    text("[drive] version=20261019-merge2-r23; station wheel speed logged only; DISC ok=1\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/src/station_job.c
++++ src/station_job.c
+@@ -414,7 +414,7 @@
+     case SS_CHASSIS: {
+         char index_line[64];
+         if (!station_chassis_start(s->value)) {
+-            stn_fault("station index refused: retracted arm/fresh wheels within speed tolerance/IMU required");
++            stn_fault("station index refused: retracted arm/fresh healthy wheel feedback/IMU required");
+             return 0;
+         }
+         snprintf(index_line, sizeof(index_line), "[station index] ring=%u move_mm=%d\r\n",
+@@ -480,7 +480,7 @@
+     }
+     stn.align_travel=(uint16_t)(stn.align_travel+distance);
+     if (!station_chassis_start((int16_t)((error < 0 ? -distance : distance)*STN_ALIGN_MOVE_SIGN))) {
+-        stn_fault("station alignment motion refused; high/retracted arm and fresh wheels within speed tolerance required");return;
++        stn_fault("station alignment motion refused; high/retracted arm and fresh healthy wheel feedback required");return;
+     }
+     {
+         char line[128];
+--- before/src/arm_config.h
++++ src/arm_config.h
+@@ -43,8 +43,8 @@
+ #define ARM_PLATFORM_THIRD_DEG       256.0f
+ #define ARM_CHASSIS_STOP_HOLD_MS     200u
+ #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u
+-#define ARM_CHASSIS_SPEED_NOISE_RPM    15 /* 操作者指定：已停稳会话容许的短时轮速读数，±RPM。 */
+-#define ARM_CHASSIS_SPEED_NOISE_MS   3000u /* 操作者指定：会话内非零读数持续3000ms仍停车。 */
++#define ARM_CHASSIS_SPEED_NOISE_RPM    15 /* 手动机构会话短时轮速容差，±RPM；自动工位仅读数日志。 */
++#define ARM_CHASSIS_SPEED_NOISE_MS   3000u /* 手动会话非零读数持续3000ms停车；自动工位不使用该门槛。 */
+ #define ARM_SERVO_TIME_MS           700u /* 云台/载物台插值时间，ms；舵机无到位反馈。 */
+ #define ARM_CLAW_TIME_MS             200u /* 夹爪开合插值时间，ms；当前45/15度，需实车复核夹持。 */
+ #define ARM_YAW_TEST_TIME_MS        8000u /* 全行程诊断单次插值时间，不改变夹取动作速度。 */
+--- before/tests/verify_entry.c
++++ tests/verify_entry.c
+@@ -43,6 +43,7 @@
+ static uint32_t diagnostic_queries;
+ static uint8_t diagnostic_auto_reply;
+ static int16_t simulated_wheel_rpm[4], staged_wheel_rpm[4], reported_wheel_rpm[4];
++static int16_t wheel_feedback_bias[4]; /* 仅影响报告轮速，不改变独立物理位置/转速模型。 */
+ static int64_t simulated_encoder[4];
+ static uint8_t velocity_ack_enabled, position_auto_reply, speed_auto_reply;
+ static uint8_t missing_velocity_ack, missing_feedback_motor, moving_at_stop_motor;
+@@ -135,7 +136,9 @@
+         CHECK(parameter==S_PERR || parameter==S_VEL || parameter==S_CPOS);diagnostic_queries++;
+         if(run.imu_mode) {
+             int64_t value=parameter==S_CPOS ? simulated_encoder[addr-1u] : reported_wheel_rpm[addr-1u];
+-            uint32_t magnitude=(uint32_t)(value<0?-value:value);
++            uint32_t magnitude;
++            if(parameter==S_VEL)value+=wheel_feedback_bias[addr-1u];
++            magnitude=(uint32_t)(value<0?-value:value);
+             if(missing_feedback_motor==addr)return;
+             if(parameter==S_VEL && moving_at_stop_motor==addr && !value)magnitude=16;
+             reply[0]=parameter==S_CPOS ? 0x36 : 0x35;
+@@ -218,6 +221,7 @@
+     memset(simulated_wheel_rpm,0,sizeof(simulated_wheel_rpm));
+     memset(staged_wheel_rpm,0,sizeof(staged_wheel_rpm));memset(simulated_encoder,0,sizeof(simulated_encoder));
+     memset(reported_wheel_rpm,0,sizeof(reported_wheel_rpm));
++    memset(wheel_feedback_bias,0,sizeof(wheel_feedback_bias));
+     memset(motor_flags,3,sizeof(motor_flags));
+     CHECK(motion_init(&drive,&io,&config));CHECK(nav_init(&nav,NODE_A,HEAD_Y_POS,&port));
+ }
+--- before/tests/verify_heading.c
++++ tests/verify_heading.c
+@@ -153,7 +153,7 @@
+     }
+     output_size=0;output[0]=0;firmware_step();
+     if(strstr(output,"[heading reused; four wheels stopped]"))heading_reuses++;
+-    if(strstr(output,"[heading aligned; four wheels stopped]") || strstr(output,"[heading reused; four wheels stopped]"))
++    if(strstr(output,"[heading aligned; four wheels stopped]") || strstr(output,"[heading aligned; zero commands confirmed;") || strstr(output,"[heading reused; four wheels stopped]"))
+         aligned_ms=motion_after_align_ms=clock_ms;
+     if(aligned_ms && run.velocity_phase==VELOCITY_FORWARD) {
+         uint32_t elapsed=clock_ms-aligned_ms;
+--- before/tests/verify_station_vision.c
++++ tests/verify_station_vision.c
+@@ -385,6 +385,37 @@
+     puts("PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance");
+ #endif
+ }
++static void raw_wheel_log_only_tests(void)
++{
++    unsigned mode,wheel;
++    for(mode=0;mode<4;mode++) {
++        uint32_t deadline;unsigned positions;
++        prepare_arm_auto(0);send_line("task 134+123+314+231");send_line("runimu A");
++        deadline=clock_ms+60000u;
++        while(!(run.state==RUN_STATION && run.job==1) && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
++        CHECK(run.state==RUN_STATION && run.job==1 && clock_ms<deadline);
++        for(wheel=0;wheel<4;wheel++)wheel_feedback_bias[wheel]=(int16_t)(wheel&1u ? -40 : 40);
++        tick(6000); /* 超过旧3000ms门槛；不能取消仍在等待中的C/PICK。 */
++        CHECK(run.state==RUN_STATION && arm_lock.state==2 && station_active());
++        CHECK(vision_pick_state()==VISION_PICK_WAITING && !arm_positions);
++        positions=arm_positions;
++        if(mode==0) {
++            peer_reply("PICK,1,262,176",0);
++            deadline=clock_ms+2000u;
++            while(!arm_busy() && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
++            CHECK(run.state!=RUN_FAULT && arm_busy() && clock_ms<deadline);
++            stop_request();
++        } else {
++            if(mode==1)motor_flags[2]=7;
++            if(mode==2)speed_auto_reply=0;
++            if(mode==3){frozen_imu=1;heading_sensor_invalidate(&heading_sensor);}
++            tick(700);
++            CHECK(run.state==RUN_FAULT && !run_active && arm_positions==positions);
++        }
++    }
++    puts("PASS raw speed logging: +/-40RPM persists6s without cancelling C/PICK, received PICK starts loading; driver stall, missing speed feedback and IMU loss still stop work");
++}
++
+ static void automatic_fault_tests(void)
+ {
+     unsigned fault;
+@@ -396,11 +427,11 @@
+         if(fault==0)stop_request();
+         else if(fault==1)send_line("obstacle");
+         else if(fault==2)send_line("arm stop");
+-        else {moving_at_stop_motor=4;tick(2500);}
++        else {motor_flags[3]=7;tick(2500);}
+         CHECK(!run_active && !arm_positions && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
+         tick(100);CHECK(!run_active && !station_active());
+     }
+-    puts("PASS station failures: emergency, obstacle during work, arm stop and wheel-4 motion stop all work with no automatic resume");
++    puts("PASS station failures: emergency, obstacle during work, arm stop and wheel-4 stall stop all work with no automatic resume");
+ }
+ static void raw_preparation_fault_tests(void)
+ {
+@@ -446,7 +477,7 @@
+     CHECK(road_point(NODE_D,&point));
+     field_x=planned_x=point.x;field_y=planned_y=point.y;initial_field_heading=HEAD_X_POS;
+     physical_yaw=origin_yaw=0;sample_yaw(0);
+-    run.state=RUN_STATION;run.station_enabled=1;run.plan=(uint8_t)(batch & 1u);
++    run.turn_rpm=CAR_TURN_CLOSED_LOOP_RPM;run.imu_mode=1;run.state=RUN_STATION;run.station_enabled=1;run.plan=(uint8_t)(batch & 1u);
+     run.job=(uint8_t)(batch ? 5 : 2);run.edge=(uint8_t)(batch ? 11 : 5);
+     run.heading=run.target_heading=HEAD_X_POS;run.yaw_zero_cdeg=-9000;
+     run.distance_mm=4567;run.steps=19;run.completed_roads=0x123;
+@@ -562,7 +593,7 @@
+         prepare_rough(0,"task 134+123+314+231");run.station_phase=1;
+         if(variant==0)CHECK(arm_command("arm pose 1 135 0 45",clock_ms));
+         if(variant==1)heading_sensor_invalidate(&heading_sensor);
+-        if(variant==2)motor_feedback[3].speed_rpm=16;
++        if(variant==2)motor_feedback[3].status_flags=0;
+         if(variant==3)motor_feedback[3].speed_ms=clock_ms-ARM_FEEDBACK_TIMEOUT_MS-1u;
+         if(variant==4)arm_lock.state=1;
+         if(variant==5)run.job=1;
+@@ -679,7 +710,7 @@
+     CHECK(road_point(NODE_H,&point));
+     field_x=planned_x=point.x;field_y=planned_y=point.y;initial_field_heading=HEAD_Y_POS;
+     physical_yaw=origin_yaw=0;sample_yaw(0);
+-    run.state=RUN_STATION;run.station_enabled=1;run.plan=(uint8_t)(batch & 1u);
++    run.turn_rpm=CAR_TURN_CLOSED_LOOP_RPM;run.imu_mode=1;run.state=RUN_STATION;run.station_enabled=1;run.plan=(uint8_t)(batch & 1u);
+     run.job=(uint8_t)(batch ? 6 : 3);run.edge=(uint8_t)(batch ? 13 : 7);
+     run.heading=run.target_heading=HEAD_Y_POS;run.yaw_zero_cdeg=0;
+     run.distance_mm=4567;run.steps=19;run.completed_roads=0x123;
+@@ -769,7 +800,7 @@
+         prepare_storage(0,"task 134+231+314+123");run.station_phase=1;
+         if(variant==0)CHECK(arm_command("arm pose 1 135 0 45",clock_ms));
+         if(variant==1)CHECK(arm_command("arm pose 0 105 0 45",clock_ms));
+-        if(variant==2)motor_feedback[0].speed_rpm=-16;
++        if(variant==2)motor_feedback[0].status_flags=7;
+         if(variant==3)CHECK(arm_command("arm yaw 10",clock_ms));
+         CHECK(!station_chassis_start(STN_STORAGE_INDEX_MM) && !run_active && !velocity_batches);
+     }
+@@ -798,31 +829,33 @@
+                     variant==1 ? (wheel&1u ? -15 : 15) : variant==2 ? (wheel&1u ? 15 : -15) : 0;
+             }
+             if(variant>=3)motor_feedback[(variant-3u)/2u].speed_rpm=(variant&1u) ? 16 : -16;
+-            if(variant<3) {
+-                CHECK(station_chassis_start((int16_t)distances[move]));
+-                CHECK(run_active && run.station_shift && run.travel_axis==BODY_FORWARD);
+-                CHECK(run.travel_sign==(distances[move]>0 ? 1 : -1));
+-                CHECK(!arm_positions && !velocity_batches);
+-                stop_request();
+-            } else {
+-                CHECK(!station_chassis_start((int16_t)distances[move]));
+-                CHECK(!run_active && !run.station_shift && !velocity_batches && !arm_positions);
+-            }
+-        }
+-    }
+-    puts("PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM refused; fresh/status/pose/IMU gates retained");
++            CHECK(station_chassis_start((int16_t)distances[move]));
++            CHECK(run_active && run.station_shift && run.travel_axis==BODY_FORWARD);
++            CHECK(run.travel_sign==(distances[move]>0 ? 1 : -1));
++            CHECK(!arm_positions && !velocity_batches);
++            stop_request();
++        }
++    }
++    puts("PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM logged only; fresh/status/pose/IMU gates retained");
+ }
+ 
+ static void station_alignment_tests(void)
+ {
+     unsigned storage,variant;
+-    for(storage=0;storage<2;storage++)for(variant=0;variant<3;variant++) {
++    for(storage=0;storage<2;storage++)for(variant=0;variant<5;variant++) {
+         uint32_t deadline;unsigned offset=0,micro=0,was_shift=0,positions=0;uint16_t yaw_pwm=0;
+         RoadPoint point;uint8_t job=(uint8_t)(storage ? 3 : 2);
+         if(!alignment_station_enabled(storage))continue;
+         if(storage)prepare_storage(0,"task 134+231+314+123");else prepare_rough(0,"task 134+231+314+123");
+         if(variant<2) {
+             if(storage)field_y+=variant ? -9.0 : 9.0;else field_x+=variant ? -9.0 : 9.0;
++        }
++        if(variant>=3) {
++            static const int16_t bias[2][4]={{5,3,-3,5},{16,-16,40,-40}};
++            unsigned wheel;
++            for(wheel=0;wheel<4;wheel++)wheel_feedback_bias[wheel]=bias[variant-3u][wheel];
++            arm_lock_begin(); /* 自动进站也要能获取新鲜状态，不受持续非零轮速阻塞。 */
++            if(storage)field_y+=9.0;else field_x+=9.0;
+         }
+         peer_geometry=variant==2 ? 3u : 1u;deadline=clock_ms+500000;
+         while(run.state!=RUN_FAULT && run.job==job && clock_ms<deadline) {
+@@ -850,6 +883,12 @@
+         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==job+1u && (variant==2 ? !micro && !peer_move_count : micro>=2 && peer_move_count>=micro) && peer_disc_count==(storage ? 5u : 8u));
+         CHECK(arm_parked() && arm_platform_slot()==1 && run.distance_mm==4567 && run.completed_roads==0x123);
+         CHECK(road_point(storage ? NODE_H : NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);
++        if(variant>=3) {
++            CHECK(clock_ms<deadline && run.station_departing && arm_lock.state==2);
++            while(run.state!=RUN_MOVING && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
++            if(run.state!=RUN_MOVING || run.station_departing)fprintf(stderr,"DEPART storage=%u variant=%u state=%u departing=%u: %s\n",storage,variant,run.state,run.station_departing,output);
++            CHECK(run.state==RUN_MOVING && clock_ms<deadline && !run.station_departing);
++        }
+         stop_request();
+     }
+     for(storage=0;storage<2;storage++) {
+@@ -900,12 +939,12 @@
+         CHECK(run.state==RUN_FAULT && clock_ms<deadline && !arm_positions && peer_disc_count==1 && peer_move_count>0);
+         CHECK(strstr(output,"alignment travel limit") || strstr(output,"alignment timeout") || strstr(output,"station vision missing"));
+     }
+-    puts("PASS station vision: rough/storage initial2 and target gates at125, direct D-MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stopped; missing camera, drift limit, emergency/obstacle/axis/IMU/wheel faults cannot continue");
++    puts("PASS station vision: rough/storage initial2 and target gates at125, direct D-MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in fresh3mm steps, in-motion MOVE discarded and terminal DISC retained until stop commands confirmed; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera, drift limit, emergency/obstacle/axis/IMU/wheel faults cannot continue");
+ }
+ 
+ int main(void)
+ {
+-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
++    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
+     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
+     return 0;
+ }
+--- before/README.md
++++ README.md
+@@ -1,6 +1,6 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r22。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±15RPM/3000ms容差，3mm微调及150mm索引启动共用±15RPM、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261019-merge2-r23。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话仍使用原停稳检查。急停、驱动器状态、CAN/IMU及轴反馈保护保持。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -15,8 +15,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已验证r22固件为 `evidence/merged-keil-20261019T125312938Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r22`。只显示发送记录不代表板子已回复。
++3. 本次已验证r23固件为 `evidence/merged-keil-20261019T131306034Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r23`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -2,7 +2,9 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r22支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r23支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++
++r23按操作者本轮要求，将自动工位链路的轮速读数统一改为日志：进站互锁、作业等待、3mm/150mm启动、底层PREFLIGHT、停车确认、移车后重取互锁和离站预检均不再由轮速幅值或持续时间拒绝/停机。停车推进仍要求零速命令ACK、既有稳定等待、新鲜CAN反馈及IMU/编码器条件；日志不证明实物车轮零速。急停、驱动器失能/堵转/保护、通信及IMU失联、机构姿态与轴反馈保护保持。手动机构会话及普通道路的原检查保持。
+ 
+ r22将工位3mm视觉微调及150mm索引启动的轮速检查统一为±15RPM，复用ARM_CHASSIS_SPEED_NOISE_RPM；日志中的0/4/2/-2RPM不再直接拒绝启动。反馈须有效且500ms内，使能/堵转/保护状态及高位收臂、IMU等检查保持。首次arm on及移车完成后的互锁重新获取仍要求严格零速，已建立会话的3000ms非零期限保持。没有扩大未涉及的参数。
+ 
+@@ -42,7 +44,7 @@
+ 
+ ## 互锁和停止
+ 
+-`arm on`先要求底盘没有活动路线、待确认位置动作或导航流程，再下发四轮停车，轮询四轮的新使能/故障状态及零速反馈，连续保持200ms后启用5/7号机构电机。等待上限2秒，单项反馈时效500ms；缺少任一轮不能放行。此后每10ms查询一项轮状态/速度，持续监测四轮。当前r22在已建立的机构会话内允许±15RPM短时读数：首次非零打印告警，3000ms内回零则继续；连续3000ms非零或收到超过±15RPM的反馈立即停止。首次arm on的200ms严格零速要求保留；工位微调/索引发车轮速改用±15RPM容差。失联、堵转、CAN错误或收包溢出仍会停止机构并请求底盘停车，锁仍保留，不自动恢复。
++`arm on`先要求底盘没有活动路线、待确认位置动作或导航流程，再下发四轮停车，轮询四轮的新使能/故障状态及零速反馈，连续保持200ms后启用5/7号机构电机。等待上限2秒，单项反馈时效500ms；缺少任一轮不能放行。此后每10ms查询一项轮状态/速度，持续监测四轮。当前手动机构会话内允许±15RPM短时读数：首次非零打印告警，3000ms内回零则继续；连续3000ms非零或收到超过±15RPM的反馈立即停止。手动arm on的200ms严格零速要求保留；自动工位轮速仅记录日志。失联、堵转、CAN错误或收包溢出仍会停止机构并请求底盘停车，锁仍保留，不自动恢复。
+ 
+ 手动机构会话期间，`go`、模式切换、平移和转向等底盘命令均拒绝；自动 `runimu` 仅在机构已声明、收拢且平台为1号位时允许启动，行驶和工位独占地使用四轮CAN反馈。`info`、`imu`、`feedback`、扫码查询/配置及按钮更新继续运行。机械动作每步检查5/7号的新状态、零速、编码器基线，发出指令后检查ACK、到位、零速及有符号编码器位移；不以延时或一份旧到位标志推进。机构位置命令不使用广播同步，CAN回包按1～4和5/7分流。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ docs/按任务码作业与暂存叠放.md
+@@ -1,6 +1,6 @@
+ # 按任务码作业与暂存叠放
+ 
+-版本：20261019-merge2-r22。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
++版本：20261019-merge2-r23。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
+ 
+ ## 任务码和盘位
+ 
+@@ -22,6 +22,8 @@
+ 最后回2号基准并视觉确认，在125°高位收回时把平台恢复1号，再回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；粗加工与暂存状态机使用带指定观察角检查的内部换盘接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
+ 
+ 例如第一批G1=314、G2=231：取1盘蓝放2号、取2盘红放3号、取3盘绿放1号；随后依次从2、3、1号抓回1、2、3盘。G4只影响第二批粗加工。
++
++r23取消自动工位各层轮速幅值和持续时间门槛，仅记录轮速日志；覆盖进站互锁、取放等待、3mm/150mm启动及底层预检、零速命令确认后的停车推进、重取互锁和离站预检。仍验证零速命令ACK、时序、新鲜反馈、驱动器状态、机构姿态、IMU/编码器与急停。手动及道路检查保持。
+ 
+ r22将粗加工/暂存3mm微调和150mm索引的启动轮速检查统一为±15RPM，包含正负边界；每轮超过±15RPM仍拒绝。首次互锁及移车结束后重新获取互锁仍严格零速，反馈时效、机构姿态、IMU等检查保持。
+ 
+@@ -64,7 +66,7 @@
+ | 暂存平台取料 / 粗加工放回平台 | 35mm / 110mm / 256° | 现有ARM_PLACE_*，本次保持 |
+ | 两区索引 | 150mm，60RPM，符号-1 | 前1、中2、后3 |
+ | 两区视觉微调 | 观察125°，每步3mm，一次D直到成功DISC | 直接D-MOVE/DISC，上位机自行停止 |
+-| 会话内持续非零轮速延时 | ±15RPM范围内3000ms；超范围立即停 | 操作者本次要求 |
++| 自动工位轮速读数 | 仅记录日志，不设幅值/持续时间停机门槛 | r23操作者本次要求 |
+ | 夹爪夹紧/松开 | 15° / 45° | 当前配置 |
+ | 物块高度STN_STORAGE_LAYER_LIFT_MM | 60mm | 用户实测 |
+ | 升降上限ARM_LIFT_MAX_MM | 135mm | 当前软件配置，新的实测行程未提供 |

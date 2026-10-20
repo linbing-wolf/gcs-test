@@ -1,0 +1,14 @@
+{
+  "snapshot": "evidence/station-poses-before-20261019T134831071551Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "actual": "e5c68d9d353b40cace4972785128c16911fe1da15bc48f661a0ec7be60cc36e9",
+      "manifest": "dc2d0805cfe47a3917148afed2cbfe0ef609c45cc1981c779fe8bcbfa7a09dea"
+    }
+  },
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "e5c68d9d353b40cace4972785128c16911fe1da15bc48f661a0ec7be60cc36e9",
+    "keil/OBJ/table_navigation.hex": "751b418cea11648a3e10a3ee00d44cb95ec8051bfa2a4878530d786dd7e6b60e",
+    "keil/OBJ/table_navigation.map": "748369e07a7264c87cf4385f71fbcb316e0b9eee0353b67c5a91d3d849bba85c"
+  }
+}

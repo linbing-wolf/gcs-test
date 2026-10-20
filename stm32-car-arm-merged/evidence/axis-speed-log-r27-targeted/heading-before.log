@@ -1,0 +1,24 @@
+Plant failure phase=3 progress=1692 error=-81: [run fault] encoder distance overrun/reversed; stopped; no automatic retry
+
+[shift closed-loop] FAULT travel=LEFT distance_mm=1692 target_mm=1670 error_cdeg=-81 rpm_limit=60 ack=15 ready=15; physical_path=unconfirmed
+
+[feedback] invalid=0 rejected_shape=0 can_rx_fault=0
+
+[motor] addr=1 replies=180 status_replies=44 action_status_replies=44 command_dec=246 value_dec=2 flags_dec=1 flags_valid=1 enabled=1 arrived=0 stalled=0 protected=0 arrival_notices=0 age_ms=13 status_age_ms=29 error_valid=0 error_counts=0 error_age_ms=2629 speed_valid=1 speed_rpm=-214 speed_age_ms=34 position_valid=1 position_counts=642368 position_age_ms=39
+
+[motor] addr=2 replies=180 status_replies=44 action_status_replies=44 command_dec=246 value_dec=2 flags_dec=1 flags_valid=1 enabled=1 arrived=0 stalled=0 protected=0 arrival_notices=0 age_ms=12 status_age_ms=14 error_valid=0 error_counts=0 error_age_ms=2629 speed_valid=1 speed_rpm=210 speed_age_ms=19 position_valid=1 position_counts=-638925 position_age_ms=24
+
+[motor] addr=3 replies=178 status_replies=43 action_status_replies=43 command_dec=54 value_dec=0 flags_dec=1 flags_valid=1 enabled=1 arrived=0 stalled=0 protected=0 arrival_notices=0 age_ms=9 status_age_ms=59 error_valid=0 error_counts=0 error_age_ms=2629 speed_valid=1 speed_rpm=218 speed_age_ms=64 position_valid=1 position_counts=1363597 position_age_ms=9
+
+[motor] addr=4 replies=177 status_replies=43 action_status_replies=43 command_dec=246 value_dec=2 flags_dec=1 flags_valid=1 enabled=1 arrived=0 stalled=0 protected=0 arrival_notices=0 age_ms=10 status_age_ms=44 error_valid=0 error_counts=0 error_age_ms=2629 speed_valid=1 speed_rpm=-215 speed_age_ms=49 position_valid=1 position_counts=-1354111 position_age_ms=54
+
+[imu] uart_enabled=0 fresh=1 yaw_cdeg=81 age_ms=8 samples=263 checksum_errors=0
+
+
+FAIL line 231: run.state==RUN_DONE && !run_active && clock_ms<deadline
+PASS body coordinates: independent drawing vectors, four headings, forward/backward/left/right, stored-road encoding preserved
+PASS removed run: old A/C route, raw turns and pulse setters rejected in nav/test/turn without motion; retained diagnostic help
+PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, test mode and stop priority; no motion triggered
+PASS XM1601: exact CRLF/continuous packets, fragmented ACK, no premature READY, QR line assembly, burst results, UART/queue/line overflow recovery, invalid ACK timeout, explicit baud/reinit, timer wrap and stop priority; no motion or Flash writes
+PASS entry: 37247 assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/removed-run checks
+PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap

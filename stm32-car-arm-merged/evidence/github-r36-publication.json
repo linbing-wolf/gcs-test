@@ -1,0 +1,19 @@
+{
+  "version": "20261020-merge2-r36",
+  "baseRemoteCommit": "64e9187078760266dfd8cb113a2db1a5e62737ac",
+  "sourceManifestSha256": "29c754fbf4f121869fd5e0b2fc23d3ed2b2a4539745701c76bc3be21aed86061",
+  "sourceSnapshot": "r36 saved before concurrent r37 edits",
+  "sourceCodeIdentitiesMatchExistingPassedReports": true,
+  "defaultOutputsSynchronizedFrom": "evidence/merged-keil-20261020T122953074Z",
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "3267f646699c3789e71e3459098d6f368536be14c2911ba34cc2b4e01c394f3a",
+    "keil/OBJ/table_navigation.hex": "e6104415f047bc86c65d98dc135df65dfbf8ee405a36fff40caeb953b203d471",
+    "keil/OBJ/table_navigation.map": "34743fd26123839ce1d0bee4949b8a484d532a7a9a671c29ef19ac275863ab72"
+  },
+  "upstreamVisionFilesPreserved": true,
+  "primaryWorkingTreeHeadAndIndexUntouched": true,
+  "parentWorkspaceDefaultOutputsUntouched": true,
+  "r37EditsExcluded": true,
+  "flashed": false,
+  "physicalVerified": false
+}

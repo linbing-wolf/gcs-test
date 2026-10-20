@@ -1,0 +1,95 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r21",
+  "scope": "按操作者要求将已停稳机械臂会话的短时轮速容差从±5RPM调为±15RPM，3000ms等待回零时间保持；超±15RPM立即停止，初次互锁/工位发车仍严格零速。视觉、纠偏方向、抓放和轴速度参数保持。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T124441502Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T124441361Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T124441502Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T124441502Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T124441334Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      1542198,
+      1544581
+    ],
+    "hostArm": [
+      133200
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      3195896,
+      5026768,
+      1003787,
+      1003787,
+      3196263,
+      2408195,
+      5026312
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T124507580Z/build.log",
+    "verification": "evidence/wheel-tolerance-r21-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448616,
+    "start": "0x8000000",
+    "endExclusive": "0x806d868",
+    "artifacts": {
+      "evidence/merged-keil-20261019T124507580Z/table_navigation.axf": "9f4518eac703091fd8bdfc71463f8cfd13d1d9d47b8e9365ca97a4bc172110e2",
+      "evidence/merged-keil-20261019T124507580Z/table_navigation.hex": "f55dd0d212a740f6916c357a307d439ccfaee02ae3afd5971129e6fe9e428dda",
+      "evidence/merged-keil-20261019T124507580Z/table_navigation.map": "ca9ccd97ee06779fb23a7ec75a323dc49e8c207c353a9aa272054f9fcb675a2d"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "toleranceRpm": 15,
+  "nonzeroLimitMs": 3000,
+  "transientSignedSpeedsTested": [
+    1,
+    -1,
+    6,
+    -6,
+    15,
+    -15
+  ],
+  "allFourWheelBoundaryAndBeyondTested": true,
+  "immediateFaultSpeedsTested": [
+    16,
+    -16
+  ],
+  "initialAndMoveLaunchStrictZeroRetained": true,
+  "visionAndStationSourcesUnchanged": true,
+  "armConfigOnlyWheelToleranceChanged": true,
+  "sourceDiff": "evidence/wheel-tolerance-r21-source.diff",
+  "defaultKeilOutputPreserved": {
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "8df946dd2abbdcc70310ae84e824df427c155c16ee2ad580ef30b61e61af17f5",
+      "keil/OBJ/table_navigation.hex": "f55dd0d212a740f6916c357a307d439ccfaee02ae3afd5971129e6fe9e428dda",
+      "keil/OBJ/table_navigation.map": "3a66f3edf30e112e5cb02385de47d92974afe3e826dc03c9fc178e87a7952422"
+    },
+    "scope": "Keil default output untouched; current verified firmware is in the isolated build directory"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

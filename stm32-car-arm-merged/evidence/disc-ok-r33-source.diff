@@ -1,0 +1,152 @@
+--- before/src/vision_link.c
++++ r33/src/vision_link.c
+@@ -150,11 +150,11 @@
+             cursor=message+4;
+             if (!vision_number(&cursor,&cx) || !vision_number(&cursor,&cy)
+                 || !vision_number(&cursor,&dx) || !vision_number(&cursor,&ok) || *cursor
+-                || cx<0 || cx>=640 || cy<0 || cy>=480 || dx!=cx-320
++                || cx<0 || cx>=640 || cy<0 || cy>=480
+                 || ok!=1) {
+                 vision.bad_frames++;arm_output("[vision warning] DISC not successful/valid; request retained\r\n");return;
+             }
+-            /* 对准是否成功由视觉ok决定；不再用像素偏差幅值二次否决。 */
++            /* 上位机ok=1即确认对准；不重算dx，也不要求它与cx/320一致。 */
+             vision_observed(0,dx,cy-240,now);
+             vision.align_move_pending=0;
+             vision.align_error=0;vision.align_state=VISION_PICK_READY;return;
+--- before/src/vision_link.h
++++ r33/src/vision_link.h
+@@ -26,7 +26,7 @@
+ int vision_pick_state(void);
+ void vision_pick_result(uint8_t *color, int16_t *x, int16_t *y);
+ void vision_cancel_pick(void);
+-/* 每次进入作业区只请求一次（粗加工D、暂存E）：持续接收MOVE,dx，格式正确的DISC,x,y,dx,1置READY，不设偏差幅值门槛。
++/* 每次进入作业区只请求一次（粗加工D、暂存E）：持续接收MOVE,dx，格式正确的DISC,x,y,dx,1置READY，不设偏差幅值或dx与cx的一致性门槛。
+  * 自动对准不发R、不等READY；ring仅用于本地环位编排。 */
+ void vision_request_align(char command, uint8_t ring, uint32_t now);
+ int vision_align_state(void);
+--- before/src/main_table_nav.c
++++ r33/src/main_table_nav.c
+@@ -2746,7 +2746,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261020-merge2-r32; USART6 read-only status display; storage take100\r\n");
++    text("[drive] version=20261020-merge2-r33; DISC trusts vision ok; USART6 status; take100\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/tests/verify_station_vision.c
++++ r33/tests/verify_station_vision.c
+@@ -750,7 +750,7 @@
+         } else if(variant==2) {peer_reply("NONE,D",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+         else if(variant==3) {peer_reply("DISC,320,240,0,0",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+         else if(variant==4) {peer_reply("MOVE,41",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+-        else if(variant==5) {peer_reply("DISC,340,240,0,1",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
++        else if(variant==5) {peer_reply("DISC,340,240,0,1",0);tick(1);CHECK(vision_align_state()==VISION_PICK_READY);}
+         else if(variant==6) {peer_reply("MOVE,-20",1);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);clock_ms+=25000;vision_update(clock_ms);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+         else if(variant==7) {vision_receive_byte(0,1);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+         else {peer_reply("ERR,camera",0);tick(1);CHECK(vision_align_state()==VISION_PICK_WAITING);}
+@@ -771,6 +771,21 @@
+             CHECK(vision_tx_count==6);
+             vision_cancel_pick();
+         }
++    }
++    {
++        static const char *const replies[]={"DISC,386,177,71,1","DISC,386,177,420,1","DISC,386,177,620,1","DISC,300,177,-71,1"};
++        unsigned area,i;
++        for(area=0;area<2;area++)for(i=0;i<4;i++) {
++            int32_t color,dx,dy,age;int16_t move;
++            reset_plant(0,1.0);vision_request_align(area ? 'E' : 'D',2,clock_ms);tick(8);
++            peer_reply(replies[i],0);tick(1);
++            CHECK(vision_align_state()==VISION_PICK_READY && vision_tx_count==6);
++            CHECK(!vision_align_take_move(&move,NULL));
++            vision_display(clock_ms,&color,&dx,&dy,&age);
++            CHECK(dx==(i==0 ? 71 : i==1 ? 420 : i==2 ? 620 : -71));
++            send_line("vision status");CHECK(strstr(output,"bad=0"));
++        }
++        puts("PASS DISC reference independence: D/E accept386,177,71,1 and signed/420/620 offsets; no cx-320 veto, no bad-frame increment, no repeated request");
+     }
+     reset_plant(0,1.0);clock_ms=UINT32_MAX-100u;vision_request_align('D',2,clock_ms);tick(8);
+     clock_ms+=24900u;peer_reply("MOVE,20",0);vision_update(clock_ms);
+@@ -976,13 +991,21 @@
+         peer_geometry=2;deadline=clock_ms+30000;
+         while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline){serve_peer(&offset);plant_step();}
+         CHECK(run.station_shift && peer_disc_count==1);positions=arm_positions;
+-        peer_session_active=0;peer_reply("DISC,411,183,91,1",0);tick(1);
++        peer_session_active=0;peer_reply("DISC,386,177,71,1",0);tick(1);
+         CHECK(vision_align_state()==VISION_PICK_READY && arm_positions==positions);
+         while(station_chassis_busy() && run.state!=RUN_FAULT && clock_ms<deadline) {
+             CHECK(arm_positions==positions);plant_step();
+         }
+         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && arm_lock.state==2);
+         CHECK(strstr(output,"[station aligned]") && peer_disc_count==1 && run.job==job);
++        {
++            int slide,lift;float yaw,claw;int closed=0;
++            while(run.state!=RUN_FAULT && clock_ms<deadline) {
++                plant_step();arm_pose_now(&slide,&lift,&yaw,&claw);
++                if(slide==35 && lift==100 && yaw==256.0f && claw==ARM_CLAW_CLOSE_DEG){closed=1;break;}
++            }
++            CHECK(closed && arm_positions>positions && run.job==job && peer_disc_count==1);
++        }
+         stop_request();
+     }
+     for(storage=0;storage<2;storage++)for(variant=0;variant<5;variant++) {
+--- before/tools/verify-station-vision.ps1
++++ r33/tools/verify-station-vision.ps1
+@@ -35,7 +35,7 @@
+         'tests/verify_station_vision.c','tools/verify-station-vision.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+     }
+-    [ordered]@{passed=$true;exitCode=$checkExit;scope='simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup100/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
++    [ordered]@{passed=$true;exitCode=$checkExit;scope='DISC coordinate consistency veto removed: D/E accept reported ok1 despite dx!=cx-320, including386/177/71 and420/620 offsets; in-motion terminal reply waits for completion then reaches platform100 grip; simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup100/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
+         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $checkOut 'result.json') -Encoding UTF8
+     Write-Output $checkOut
+ } finally {$env:PATH=$checkOldPath;Pop-Location}
+--- before/README.md
++++ r33/README.md
+@@ -1,4 +1,6 @@
+ # 底盘＋机械机构独立合并工程
++
++r33：删除DISC回包的dx=cx−320一致性校验；DISC,386,177,71,1现在按上位机ok=1接受，不重算或改写上位机偏差。格式/CRC、坐标范围和ok字段解析保持；每区一次D/E、原纠偏方向、r31取料100mm和r32串口屏保持。未烧录或实车验证。
+ 
+ r32：接入USART6/PC6、9600波特率的既有只读状态屏，显示四组任务码、阶段、计时和已知调试数据；非阻塞发送，原运动/视觉流程和r31平台夹取100mm保持。使用screen main/chassis/arm/sensors切页，详见[串口屏接入](docs/串口屏接入.md)。未连接、下载或验收真实屏幕。
+ 
+@@ -25,7 +27,7 @@
+ 历史r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
+ 
+ 
+-**当前版本：20261020-merge2-r32。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/100/256°。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261020-merge2-r33。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/100/256°。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -40,8 +42,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已核对r32固件为 `evidence/merged-keil-20261020T085820091Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r32`。只显示发送记录不代表板子已回复。
++3. 本次已核对r33固件为 `evidence/merged-keil-20261020T113708301Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r33`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ r33/docs/合并与串口操作.md
+@@ -1,4 +1,6 @@
+ # 合并范围与串口操作
++
++r33：删除DISC回包的dx=cx−320一致性校验；DISC,386,177,71,1现在按上位机ok=1接受，不重算或改写上位机偏差。格式/CRC、坐标范围和ok字段解析保持；每区一次D/E、原纠偏方向、r31取料100mm和r32串口屏保持。未烧录或实车验证。
+ 
+ r32：接入USART6/PC6、9600波特率的既有只读状态屏，显示四组任务码、阶段、计时和已知调试数据；非阻塞发送，原运动/视觉流程和r31平台夹取100mm保持。使用screen main/chassis/arm/sensors切页，详见[串口屏接入](串口屏接入.md)。未连接、下载或验收真实屏幕。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ r33/docs/按任务码作业与暂存叠放.md
+@@ -1,4 +1,6 @@
+ # 按任务码作业与暂存叠放
++
++r33：删除DISC回包的dx=cx−320一致性校验；DISC,386,177,71,1现在按上位机ok=1接受，不重算或改写上位机偏差。格式/CRC、坐标范围和ok字段解析保持；每区一次D/E、原纠偏方向、r31取料100mm和r32串口屏保持。未烧录或实车验证。
+ 
+ r31：仅把第二次暂存作业从车载平台夹取的lift由110改为100mm，与第一次相同。平台放回110mm、第二层地面放料65mm、视觉对准与方向、其余抓放和r30节拍参数保持。未烧录或实车验收。
+ 

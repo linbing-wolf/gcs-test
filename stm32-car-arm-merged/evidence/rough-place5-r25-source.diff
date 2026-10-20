@@ -1,0 +1,174 @@
+--- before/docs/合并与串口操作.md
++++ after/docs/合并与串口操作.md
+@@ -1,8 +1,11 @@
+ # 合并范围与串口操作
++
++r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
++
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r24支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r25支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
+ 
+ r24按操作者要求改为每次进站只请求一次视觉：粗加工D、暂存E，125°观察姿态对准中间2号基准；后续放料、粗加工抓回及最终回2号只用现有150mm索引，不再发D/E。一次请求中连续MOVE至成功DISC的处理保持。两批各自进站各请求一次；其余动作及r23轮速日志策略保持。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ after/docs/按任务码作业与暂存叠放.md
+@@ -1,6 +1,9 @@
+ # 按任务码作业与暂存叠放
+ 
+-版本：20261019-merge2-r24。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
++r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
++
++
++版本：20261019-merge2-r25。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
+ 
+ ## 任务码和盘位
+ 
+@@ -62,7 +65,8 @@
+ 
+ | 参数 | 当前值 | 来源 |
+ | --- | --- | --- |
+-| 粗加工落位/抓回平推/升降/云台 | 55mm / 70mm / 125° | 用户本次确认 |
++| 粗加工放料平推/升降/云台 | 55mm / 5mm / 125° | 用户本次确认 |
++| 粗加工抓回平推/升降/云台 | 55mm / 70mm / 125° | 沿用原值 |
+ | 暂存第一层平推/升降/云台 | 55mm / 105mm / 131° | 本次作业文档 |
+ | 粗加工平台取料 | 35mm / 100mm / 256° | 用户本次确认取料高度100mm |
+ | 暂存平台取料 / 粗加工放回平台 | 35mm / 110mm / 256° | 现有ARM_PLACE_*，本次保持 |
+@@ -80,7 +84,7 @@
+ 
+ ## 验证边界
+ 
+-工位测试使用独立车辆位置模拟和夹爪动作，覆盖两批全部六种粗加工靶位排列、暂存全部靶位/颜色排列、原盘位恢复、第二批不依赖G4、150mm分段、移车时空爪收臂、原路线状态恢复，以及零速、急停、反馈和层高边界。测试专用20mm/30mm层高验证两批全路线与上限；0mm验证未标定拒绝，生产60mm验证超程拒绝。本版还检查粗加工全程只有125/256°交替、末尾才回0°，以及到目标后才在100mm夹取、70mm放下/抓回、高位换盘与缺轴反馈拒绝。测试覆盖不等于真实基准停车、抓取成功、叠放稳定或实车精度。
++工位测试使用独立车辆位置模拟和夹爪动作，覆盖两批全部六种粗加工靶位排列、暂存全部靶位/颜色排列、原盘位恢复、第二批不依赖G4、150mm分段、移车时空爪收臂、原路线状态恢复，以及零速、急停、反馈和层高边界。测试专用20mm/30mm层高验证两批全路线与上限；0mm验证未标定拒绝，生产60mm验证超程拒绝。本版还检查粗加工全程只有125/256°交替、末尾才回0°，以及到目标后才在100mm夹取、5mm放下、70mm抓回、高位换盘与缺轴反馈拒绝。测试覆盖不等于真实基准停车、抓取成功、叠放稳定或实车精度。
+ 
+ 
+ r16新增验证覆盖两区沿各自车体系轴的±9mm初始偏差收敛、移动期间旧回包围栏、相机缺失不能先取料、累计漂移上限，以及微调中急停/障碍/机构/轮反馈/IMU异常。轮速保护覆盖2500ms内恢复、每轮正负5RPM在3000ms边界停车、异号不刷新计时、超5RPM立即停和时间回绕。
+--- before/README.md
++++ after/README.md
+@@ -1,6 +1,9 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r24。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话仍使用原停稳检查。急停、驱动器状态、CAN/IMU及轴反馈保护保持。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
++
++
++**当前版本：20261019-merge2-r25。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话仍使用原停稳检查。急停、驱动器状态、CAN/IMU及轴反馈保护保持。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -15,8 +18,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已验证r24固件为 `evidence/merged-keil-20261019T132350945Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r24`。只显示发送记录不代表板子已回复。
++3. 本次已验证r25固件为 `evidence/merged-keil-20261019T133240918Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r25`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/src/main_table_nav.c
++++ after/src/main_table_nav.c
+@@ -2650,7 +2650,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r24; rough D once / storage E once; wheel speed logged only\r\n");
++    text("[drive] version=20261019-merge2-r25; rough place lift5 / retrieve70; D/E once per visit\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/src/station_config.h
++++ after/src/station_config.h
+@@ -27,8 +27,8 @@
+ 
+ /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
+  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
+- * 进站先视觉对准2号基准，每次到目标位后视觉微调，再进行取放。
+- * 2026-10-19指定粗加工平推55mm、落位/抓回高度70mm、平台取料高度100mm。
++ * 进站先视觉对准2号基准一次，此后按150mm索引进行取放。
++ * 2026-10-19指定粗加工平推55mm、放料高度5mm、抓回高度70mm、平台取料高度100mm。
+  * 作业内云台只在125/256度间直转，离站回0度；不等于实车验收。
+  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
+ #ifndef STN_ROUGH_PLACE_READY
+@@ -40,6 +40,9 @@
+ #ifndef STN_ROUGH_SLIDE_MM
+ #define STN_ROUGH_SLIDE_MM     55
+ #endif
++#ifndef STN_ROUGH_PLACE_LIFT_MM
++#define STN_ROUGH_PLACE_LIFT_MM 5 /* 放料松爪高度，mm；抓回高度独立保持70mm。 */
++#endif
+ #ifndef STN_ROUGH_LIFT_MM
+ #define STN_ROUGH_LIFT_MM      70
+ #endif
+@@ -47,6 +50,9 @@
+ #define STN_ROUGH_YAW_DEG     125.0f
+ #endif
+ static const StationPose stn_rough_place = {
++    STN_ROUGH_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_YAW_DEG
++};
++static const StationPose stn_rough_grip = {
+     STN_ROUGH_SLIDE_MM, STN_ROUGH_LIFT_MM, STN_ROUGH_YAW_DEG
+ };
+ /* 粗加工仅覆盖平台取料高度，平推/云台和放回平台高度仍用ARM_PLACE_*。 */
+--- before/src/station_job.c
++++ after/src/station_job.c
+@@ -204,7 +204,7 @@
+     for (i = 0; i < 3u; i++) {
+         target = task_rings[stn.batch][i];
+         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+-        push_grip_at(&stn_rough_place);
++        push_grip_at(&stn_rough_grip);
+         push(SS_PLATFORM, i + 1);
+         push_place_on_platform();
+         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
+--- before/tests/verify_station_vision.c
++++ after/tests/verify_station_vision.c
+@@ -564,13 +564,15 @@
+                 physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+                 CHECK(fabs(physical_ring-order[loaded])<0.15);loaded++;
+             }
+-            if(claw!=prior_claw && slide==STN_ROUGH_SLIDE_MM && lift==STN_ROUGH_LIFT_MM && yaw==STN_ROUGH_YAW_DEG) {
++            if(claw!=prior_claw && slide==STN_ROUGH_SLIDE_MM && yaw==STN_ROUGH_YAW_DEG) {
+                 RoadPoint point;double physical_ring;CHECK(road_point(NODE_D,&point));
+                 physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+                 if(claw==ARM_CLAW_OPEN_DEG) {
++                    CHECK(lift==STN_ROUGH_PLACE_LIFT_MM);
+                     CHECK(placed<3 && taken==0 && fabs(physical_ring-order[placed])<0.15);
+                     CHECK(arm_platform_slot()==(int)placed+1);placed++;
+                 } else if(claw==ARM_CLAW_CLOSE_DEG) {
++                    CHECK(lift==STN_ROUGH_LIFT_MM);
+                     CHECK(placed==3 && taken<3 && aligned==1 && fabs(physical_ring-order[taken])<0.15);taken++;
+                 }
+             }
+@@ -632,7 +634,7 @@
+         diagnostic_auto_reply=status_auto_reply=0;tick(2500);
+         CHECK(run.state==RUN_FAULT && arm_lock.state==3 && arm_positions==positions);
+     }
+-    puts("PASS rough indexing: both batches/all six permutations; move before pickup100, place/retrieve70, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained");
++    puts("PASS rough indexing: both batches/all six permutations; move before pickup100, place5/retrieve70, direct125/256 with no intermediate0, empty retracted index, original cups, final ring2 and departure0; strict feedback/fault gates retained");
+ }
+ 
+ static void align_transport_tests(void)
+--- before/tools/verify-station-vision.ps1
++++ after/tools/verify-station-vision.ps1
+@@ -12,7 +12,7 @@
+     foreach($flowMock in @(0,1,2,3,4,5,6)) {
+         $checkDefines=@()
+         if($flowMock -eq 1){$checkDefines=@('-DSTN_STORAGE_LAYER_LIFT_MM=20')}
+-        if($flowMock -eq 2){$checkDefines=@('-DSTN_ROUGH_SLIDE_MM=0','-DSTN_ROUGH_LIFT_MM=0','-DSTN_ROUGH_YAW_DEG=0.0f')}
++        if($flowMock -eq 2){$checkDefines=@('-DSTN_ROUGH_SLIDE_MM=0','-DSTN_ROUGH_LIFT_MM=0','-DSTN_ROUGH_PLACE_LIFT_MM=0','-DSTN_ROUGH_YAW_DEG=0.0f')}
+         if($flowMock -eq 3){$checkDefines=@('-DSTN_ROUGH_PLATFORM_TAKE_READY=0')}
+         if($flowMock -eq 4){$checkDefines=@('-DSTN_STORAGE_LAYER_LIFT_MM=0')}
+         if($flowMock -eq 5){$checkDefines=@('-DSTN_STORAGE_PLACE_READY=0')}
+@@ -34,7 +34,7 @@
+         'tests/verify_station_vision.c','tools/verify-station-vision.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+     }
+-    [ordered]@{passed=$true;exitCode=$checkExit;scope='rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough100/70 and 3000ms tolerance retained; layer20/30 mocks complete routes, production layer60 refuses second storage; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
++    [ordered]@{passed=$true;exitCode=$checkExit;scope='rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough pickup100/place5/retrieve70; wheel log-only policy retained; layer20/30 mocks complete routes, production layer60 refuses second storage; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
+         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $checkOut 'result.json') -Encoding UTF8
+     Write-Output $checkOut
+ } finally {$env:PATH=$checkOldPath;Pop-Location}

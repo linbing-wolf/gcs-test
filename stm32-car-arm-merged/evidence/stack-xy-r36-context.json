@@ -1,0 +1,22 @@
+{
+  "snapshot": "evidence/stack-xy-before-20261020T122457153829Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "manifest": "a6fb46cb78ce073a969db23150c885936cc47faba17b8eab19ebc1c9ae8019df",
+      "actual": "c74191235c7efe3f0689809aefdebfe32edc9a65f3a92b03103e366955994074"
+    },
+    "keil/OBJ/table_navigation.hex": {
+      "manifest": "9ce6ebe9041b0e737760c718998f417ef8c3e6590431f87126ae912844c07c57",
+      "actual": "209e92adbddaa709bffd916e930afeab37e2122b46fedf4e38e9af9af1cfb827"
+    },
+    "keil/OBJ/table_navigation.map": {
+      "manifest": "29f54f35be935fe799653ea3f9d760e5d9fdd4ed0497eecda29dc277a8462cc4",
+      "actual": "7ed6a8ab231d5d593578f552ebc90f64055243207c50ca690798e4d68a6ae9dd"
+    }
+  },
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "c74191235c7efe3f0689809aefdebfe32edc9a65f3a92b03103e366955994074",
+    "keil/OBJ/table_navigation.hex": "209e92adbddaa709bffd916e930afeab37e2122b46fedf4e38e9af9af1cfb827",
+    "keil/OBJ/table_navigation.map": "7ed6a8ab231d5d593578f552ebc90f64055243207c50ca690798e4d68a6ae9dd"
+  }
+}

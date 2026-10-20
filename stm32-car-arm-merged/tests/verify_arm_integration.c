@@ -64,6 +64,44 @@ static void manual_and_recipe_tests(void)
     send_line("test");send_line("f");CHECK(position_count==4 && sync_count==1);
     puts("PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis");
 }
+static void station_platform_tests(void)
+{
+    unsigned variant;
+    reset_fixture();declare_pose();send_line("arm platform pose 20");
+    send_line("arm pose 0 135 125 45");
+    send_line("arm platform 2");CHECK(strstr(output,"arm home pose") && !arm_busy());
+    CHECK(arm_platform_at_yaw(2,125.0f,clock_ms));advance_arm(2400);
+    CHECK(arm_ready() && arm_platform_slot()==2 && arm_platform_us==1530);
+    expect_pose(0,135,125,45);
+    CHECK(arm_platform_at_yaw(3,125.0f,clock_ms));advance_arm(2400);
+    CHECK(arm_platform_slot()==3 && arm_platform_us==2396);expect_pose(0,135,125,45);
+    for(variant=0;variant<8;variant++) {
+        unsigned before_pwm;
+        reset_fixture();declare_pose();
+        if(variant!=4)send_line("arm platform pose 20");
+        send_line("arm pose 0 135 125 45");
+        if(variant==0)send_line("arm pose 1 135 125 45");
+        if(variant==1)send_line("arm pose 0 134 125 45");
+        if(variant==2)send_line("arm pose 0 135 124 45");
+        if(variant==3)send_line("arm yaw 126");
+        if(variant==5)arm_stop();
+        before_pwm=arm_platform_us;
+        CHECK(!arm_platform_at_yaw((uint8_t)(variant==6 ? 0 : variant==7 ? 4 : 2),125.0f,clock_ms));
+        CHECK(arm_platform_us==before_pwm);
+    }
+    for(variant=0;variant<2;variant++) {
+        uint16_t held;
+        reset_fixture();declare_pose();send_line("arm platform pose 20");
+        send_line("arm pose 0 135 125 45");held=arm_platform_us;
+        arm_missing_motor=(uint8_t)(variant ? 7 : 5);
+        CHECK(arm_platform_at_yaw(2,125.0f,clock_ms));advance_arm(600);
+        CHECK(!arm_failed() && arm_pose_known() && arm_busy() && arm_platform_us==held);
+        arm_missing_motor=0;advance_arm(1500);
+        CHECK(!arm_busy() && arm_ready() && arm_platform_slot()==2);
+    }
+    puts("PASS station platform: high/retracted125 internal selection holds yaw; manual command still requires home0; extended/low/wrong-angle/busy/unknown/fault/invalid-slot rejected");
+}
+
 static void mutual_exclusion_tests(void)
 {
     static const char *blocked[]={"runimu A","runimu C","run A","run C","test","turn","nav","go B","f","b","l","r","left90","tl"};
@@ -91,44 +129,46 @@ static void mutual_exclusion_tests(void)
 }
 static void wheel_lock_failures(void)
 {
-    unsigned mode;
-    for(mode=0;mode<5;mode++) {
+    unsigned mode,wheel;
+    for(mode=0;mode<2;mode++) {
         reset_fixture();
-        if(mode==0)diagnostic_auto_reply=0;
-        if(mode==1)status_auto_reply=0;
-        if(mode==2)motor_flags[3]=0;
-        if(mode==3)bus_off=1;
-        if(mode==4){run.imu_mode=1;moving_at_stop_motor=4;}
-        send_line("arm on");advance_arm(2400);
-        CHECK(!arm_enables && !arm_enabled() && arm_lock.state==3);
-        CHECK(!arm_positions && strstr(output,"interlock fault"));
+        if(mode)status_auto_reply=0;else diagnostic_auto_reply=0;
+        send_line("arm on");advance_arm(2600);
+        CHECK(arm_lock.state==1 && !arm_enabled() && !arm_positions);
+        status_auto_reply=diagnostic_auto_reply=1;advance_arm(500);
+        CHECK(arm_lock.state==2 && arm_enabled());
     }
-    for(mode=0;mode<5;mode++) {
-        reset_fixture();declare_pose();send_line("arm slide 30");advance_arm(200);
-        if(mode==0)diagnostic_auto_reply=0;
-        if(mode==1)status_auto_reply=0;
-        if(mode==2)motor_flags[3]=7;
-        if(mode==3)bus_off=1;
-        if(mode==4){run.imu_mode=1;moving_at_stop_motor=4;}
-        advance_arm(650);
-        CHECK(arm_stops==2 && arm_lock.state==3 && !position_count && !sync_count);
-        send_line("runimu C");CHECK(strstr(output,"arm session owns motion"));
+    for(wheel=0;wheel<4;wheel++)for(mode=0;mode<2;mode++) {
+        reset_fixture();declare_pose();run.imu_mode=1;
+        reported_wheel_rpm[wheel]=(int16_t)(mode ? -40 : 40);
+        send_line("arm yaw 125");advance_arm(4200);
+        CHECK(arm_lock.state==2 && !arm_stops && !arm_busy() && arm_pose_known());
+    }
+    for(mode=0;mode<2;mode++) {
+        reset_fixture();declare_pose();
+        if(mode)status_auto_reply=0;else diagnostic_auto_reply=0;
+        advance_arm(1200);CHECK(arm_lock.state==2 && !arm_stops && arm_pose_known());
+        status_auto_reply=diagnostic_auto_reply=1;advance_arm(500);
+        CHECK(arm_lock.state==2 && !arm_stops);
+    }
+    for(mode=0;mode<2;mode++) {
+        reset_fixture();declare_pose();
+        if(mode)bus_off=1;else motor_flags[3]=7;
+        advance_arm(650);CHECK(arm_stops==2 && arm_lock.state==3);
     }
     reset_fixture();declare_pose();
     {uint8_t frame[3]={0x3a,3,0x6b};unsigned i;
         for(i=0;i<40;i++)route_test_can_rx(1u<<8,4,0,3,frame);
-        advance_arm(1);CHECK(arm_lock.state==3 && arm_stops==2);
+        advance_arm(500);CHECK(arm_lock.state==2 && !arm_stops);
     }
-    reset_fixture();clock_ms=UINT32_MAX-100;declare_pose();CHECK(arm_lock.state==2);
-    /* 复现现场的1RPM停机条件；这次不放宽底盘静止互锁。 */
-    for(mode=0;mode<2;mode++) {
-        reset_fixture();declare_pose();send_line("arm yaw 131");advance_arm(200);
-        run.imu_mode=1;reported_wheel_rpm[1]=mode ? -1 : 1;
-        advance_arm(100);
-        CHECK(arm_lock.state==3 && arm_stops==2 && strstr(output,"wheel moving/disabled/stalled"));
+    reset_fixture();declare_pose();send_line("arm slide 55");advance_arm(20);
+    {uint8_t frame[3]={0x3a,3,0x6b};unsigned i;
+        for(i=0;i<40;i++)route_test_can_rx(5u<<8,4,0,3,frame);
+        advance_arm(1000);CHECK(!arm_failed() && arm_pose_known() && !arm_busy() && !arm_stops);
     }
-    puts("PASS four-wheel interlock: missing status/speed, disabled/stalled wheel 4, moving wheel 4, bus off, queue overflow, active-session watchdog and timestamp wrap");
+    puts("PASS wheel monitoring: delayed acquisition/stale replies and receive overflow retain session and recover; signed40RPM persists without stop; driver stall and bus-off still stop");
 }
+
 static void arm_faults_and_stop_tests(void)
 {
     unsigned mode;
@@ -144,18 +184,21 @@ static void arm_faults_and_stop_tests(void)
         if(mode==7)arm_inject_stop=1;
         if(mode==8)arm_inject_can_error=1;
         send_line("arm slide 1");advance_arm(16000);
-        CHECK(arm_stops>=2 && !strstr(output,"[arm done") && !position_count && !sync_count);
+        if(mode<6) {
+            CHECK(!arm_failed() && arm_pose_known() && !arm_stops);
+            if(mode!=3)CHECK(arm_busy());
+            arm_auto_reply=arm_ack=1;arm_missing_motor=arm_freeze=arm_bad_direction=0;
+            if(mode==4 || mode==5)arm_encoder[0]=-(int64_t)25*65536u/3200u;
+            advance_arm(1500);CHECK(!arm_busy() && !arm_failed() && arm_pose_known());
+        } else CHECK(arm_stops>=2 && !strstr(output,"[arm done") && !position_count && !sync_count);
     }
-    reset_fixture();declare_pose();
-    send_line("arm platform pose 20");send_line("arm platform 3");advance_arm(800);
-    {uint16_t held=arm_platform_us;CHECK(held>648 && held<2396);
-        stop_request();advance_arm(3000);CHECK(arm_platform_us==held);
-    }
-    reset_fixture();declare_pose();send_line("arm yawtest 0");advance_arm(8400);
-    CHECK(arm_yaw_us==2500 && arm_claw_us==826 && !arm_positions);
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm platform 3");advance_arm(ARM_SERVO_TIME_MS/2u);
+    {uint16_t held=arm_platform_us;stop_request();advance_arm(3000);CHECK(arm_platform_us==held);}
+    reset_fixture();declare_pose();send_line("arm yawtest 0");advance_arm(8400);CHECK(arm_yaw_us==2500 && arm_claw_us==826 && !arm_positions);
     send_line("arm yawtest 360");advance_arm(8400);CHECK(arm_yaw_us==500);
-    puts("PASS arm failure paths: either axis missing, ACK missing, frozen/reversed encoder, stall, stop/CAN fault during submission; platform PWM holds at stop; full-stroke yaw diagnostic");
+    puts("PASS arm monitoring: feedback/ACK/action deadlines retain pose and recover on actual position; explicit stop, driver fault and failed CAN submission still stop");
 }
+
 static void bounds_and_shared_service_tests(void)
 {
     static const char *bad[]={"arm slide -1","arm slide 188","arm lift 136","arm lift 1.2",
@@ -200,13 +243,13 @@ static void speed_and_feedback_gates_tests(void)
     CHECK(arm_trace_address[0]==7 && arm_trace_pulses[0]==1401 && clock_ms-started<1000u);
     send_line("arm lift 105");advance_arm(350);
     CHECK(!arm_busy() && !arm_failed() && arm_trace_address[1]==5 && arm_trace_pulses[1]==2400);
-    started=clock_ms;send_line("arm close");advance_arm(250);CHECK(arm_busy());
+    started=clock_ms;send_line("arm close");advance_arm(ARM_CLAW_TIME_MS/2u);CHECK(arm_busy());
     advance_arm(500);CHECK(!arm_busy() && !arm_failed() && arm_claw_us==604);
     CHECK(clock_ms-started>=ARM_CLAW_TIME_MS);
-    send_line("arm yaw 256");advance_arm(1000);CHECK(arm_busy() && arm_yaw_us>553);
+    send_line("arm yaw 256");advance_arm(ARM_SERVO_TIME_MS/2u);CHECK(arm_busy() && arm_yaw_us>553);
     advance_arm(1400);CHECK(!arm_busy() && arm_yaw_us==553);
 
-    /* 即使已取消2秒下限，迟到的位置反馈、缺失ACK和非零轴速也不能放行。 */
+    /* 即使已取消2秒下限，迟到的位置反馈和缺失ACK仍不能放行，非零轴速单独验证为只记日志。 */
     reset_fixture();declare_pose();arm_freeze=1;
     send_line("arm slide 55");advance_arm(700);CHECK(arm_busy());
     arm_encoder[0]-=(int64_t)1401*65536u/3200u;
@@ -217,17 +260,76 @@ static void speed_and_feedback_gates_tests(void)
         if(missing==1)arm_missing_motor=5;
         if(missing==2)arm_missing_motor=7;
         send_line("arm slide 55");advance_arm(2000);
-        CHECK(arm_failed() && !arm_pose_known() && !strstr(output,"[arm done"));
+        CHECK(!arm_failed() && arm_pose_known());
+        if(missing==0)CHECK(!arm_busy());
+        else {CHECK(arm_busy());arm_missing_motor=0;advance_arm(1500);CHECK(!arm_busy() && !arm_failed());}
     }
-    reset_fixture();declare_pose();arm_moving_motor=7;
-    send_line("arm slide 55");advance_arm(350);
-    CHECK(arm_failed() && !arm_positions);
-    puts("PASS arm speed: axes finish on fresh verified feedback without 2s floor; claw keeps 500ms interpolation, yaw keeps 2s; delayed position/missing ACK/either axis/nonzero axis speed cannot complete early");
+
+    printf("PASS arm speed: axes use fresh verified feedback; claw_ms=%u yaw_platform_ms=%u; position/status must arrive; missing ACK or RPM magnitude alone cannot cancel or gate measured completion\n",
+        ARM_CLAW_TIME_MS,ARM_SERVO_TIME_MS);
 }
+static void axis_speed_log_only_tests(void)
+{
+    static const int16_t speeds[]={-3000,-15,-1,1,15,3000};
+    unsigned axis,variant;
+    for(axis=0;axis<2;axis++)for(variant=0;variant<sizeof(speeds)/sizeof(speeds[0]);variant++) {
+        char expected[96];
+        reset_fixture();declare_pose();arm_speed_bias[axis]=speeds[variant];
+        send_line(axis ? "arm lift 100" : "arm slide 55");advance_arm(600);
+        CHECK(!arm_busy() && !arm_failed() && !arm_stops && arm_positions==1);
+        CHECK(arm_trace_address[0]==(axis ? 5 : 7));
+        snprintf(expected,sizeof(expected),"stage=preflight addr=%u speed_rpm=%d; logged only",axis ? 5u : 7u,(int)speeds[variant]);
+        CHECK(strstr(output,expected));
+        snprintf(expected,sizeof(expected),"stage=complete addr=%u speed_rpm=%d; logged only",axis ? 5u : 7u,(int)speeds[variant]);
+        CHECK(strstr(output,expected));
+        send_line("arm yaw 125");advance_arm(1400);
+        CHECK(!arm_busy() && !arm_failed() && !arm_stops); /* 舵机步骤也会检查两轴，不能被静止轴速读数拦截。 */
+    }
+    reset_fixture();declare_pose();arm_speed_bias[0]=15;arm_speed_bias[1]=-15;arm_freeze=1;
+    send_line("arm slide 55");advance_arm(700);CHECK(arm_busy() && !arm_failed());
+    arm_encoder[0]-=(int64_t)1401*65536u/3200u;
+    advance_arm(350);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
+    reset_fixture();declare_pose();arm_speed_bias[0]=-15;arm_speed_bias[1]=15;arm_flags=1;
+    send_line("arm lift 100");advance_arm(700);CHECK(arm_busy() && !arm_failed());
+    arm_flags=3;advance_arm(350);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
+    puts("PASS arm axis speed log-only: both5/7 signed1/15/3000RPM pass preflight, position completion and servo steps; both nonzero axes still wait for actual target position and arrived flag");
+}
+static void parallel_platform_yaw_tests(void)
+{
+    uint32_t start,serial_ms;uint16_t yaw_start,platform_start,claw_start;unsigned positions;
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 45");
+    start=clock_ms;CHECK(arm_platform_at_yaw(2,125,clock_ms));
+    while(arm_busy() && clock_ms-start<2u*ARM_SERVO_TIME_MS)advance_arm(1);
+    send_line("arm yaw 256");
+    while(arm_busy() && clock_ms-start<3u*ARM_SERVO_TIME_MS)advance_arm(1);
+    CHECK(arm_ready());serial_ms=clock_ms-start;
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 45");
+    yaw_start=arm_yaw_us;platform_start=arm_platform_us;claw_start=arm_claw_us;positions=arm_positions;
+    CHECK(!arm_platform_with_yaw(0,256,clock_ms) && !arm_platform_with_yaw(4,256,clock_ms));
+    CHECK(!arm_platform_with_yaw(2,361,clock_ms));
+    start=clock_ms;CHECK(arm_platform_with_yaw(2,256,clock_ms));
+    advance_arm(ARM_SERVO_TIME_MS/2u+100u);
+    CHECK(arm_busy() && arm_yaw_us!=yaw_start && arm_platform_us!=platform_start);
+    CHECK(arm_claw_us==claw_start && arm_positions==positions);
+    CHECK(!arm_platform_with_yaw(3,125,clock_ms));
+    while(arm_busy() && clock_ms-start<2u*ARM_SERVO_TIME_MS)advance_arm(1);
+    CHECK(arm_ready() && arm_platform_slot()==2 && clock_ms-start<2u*ARM_SERVO_TIME_MS);
+    {float yaw;arm_pose_now(NULL,NULL,&yaw,NULL);CHECK(yaw==256.0f);}
+    CHECK(clock_ms-start<serial_ms);
+    printf("PARALLEL_ROTATION serial_ms=%lu parallel_ms=%lu servo_ms=%u; both PWM channels moved before completion\n",(unsigned long)serial_ms,(unsigned long)(clock_ms-start),(unsigned)ARM_SERVO_TIME_MS);
+    CHECK(arm_platform_with_yaw(3,125,clock_ms));advance_arm(ARM_SERVO_TIME_MS/2u+100u);
+    yaw_start=arm_yaw_us;platform_start=arm_platform_us;stop_request();advance_arm(2000);
+    CHECK(arm_failed() && arm_yaw_us==yaw_start && arm_platform_us==platform_start);
+    reset_fixture();declare_pose();send_line("arm platform pose 20");
+    send_line("arm pose 1 135 125 45");CHECK(!arm_platform_with_yaw(2,256,clock_ms));
+    send_line("arm pose 0 134 125 45");CHECK(!arm_platform_with_yaw(2,256,clock_ms));
+    puts("PASS simultaneous platform/yaw: shared interpolation, no extension/lowering before completion, target cup/yaw committed together, explicit emergency holds both PWM channels");
+}
+
 int main(void)
 {
-    manual_and_recipe_tests();mutual_exclusion_tests();wheel_lock_failures();
-    arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();
+    manual_and_recipe_tests();station_platform_tests();parallel_platform_yaw_tests();mutual_exclusion_tests();wheel_lock_failures();
+    arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();axis_speed_log_only_tests();
     printf("PASS arm integration: %u assertions; host simulation only, no hardware accessed\n",assertions);
     return 0;
 }

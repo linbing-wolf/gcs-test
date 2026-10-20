@@ -14,8 +14,8 @@
 #define ARM_SLIDE_HOME_MM              0
 #define ARM_LIFT_DIR_INVERT            1 /* 沿用队友调试结果：反转位置命令的方向位。 */
 #define ARM_SLIDE_DIR_INVERT           1
-#define ARM_AXIS_RPM                 300u /* 升降/平推位置模式目标转速，RPM；提速后仍以反馈确认到位。 */
-#define ARM_AXIS_ACCEL               150u
+#define ARM_AXIS_RPM                 2500u /* 升降/平推位置模式目标转速，RPM；提速后仍以反馈确认到位。 */
+#define ARM_AXIS_ACCEL               200u
 #define ARM_ENCODER_COUNTS_PER_REV 65536u
 #define ARM_PULSES_PER_REV          3200u /* 驱动器必须使用对应16细分。 */
 #define ARM_POSITION_TOLERANCE_MM      0.5f /* 到位误差窗口，不能把1mm指令的零位移算完成。 */
@@ -43,8 +43,8 @@
 #define ARM_PLATFORM_THIRD_DEG       256.0f
 #define ARM_CHASSIS_STOP_HOLD_MS     200u
 #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u
-#define ARM_SERVO_TIME_MS           2000u /* 云台/载物台插值时间，ms；舵机无到位反馈。 */
-#define ARM_CLAW_TIME_MS             500u /* 夹爪开合插值时间，ms；当前45/15度，需实车复核夹持。 */
+#define ARM_SERVO_TIME_MS           600u /* 云台/载物台插值时间，ms；舵机无到位反馈。 */
+#define ARM_CLAW_TIME_MS             200u /* 夹爪开合插值时间，ms；当前45/15度，需实车复核夹持。 */
 #define ARM_YAW_TEST_TIME_MS        8000u /* 全行程诊断单次插值时间，不改变夹取动作速度。 */
 #define ARM_POLL_MS                   10u
 #define ARM_FEEDBACK_TIMEOUT_MS      500u

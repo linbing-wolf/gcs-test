@@ -147,8 +147,7 @@ MotionState motion_update(Motion *motion, uint32_t now_ms)
     elapsed = now_ms - motion->started_ms;
     if (elapsed >= motion->timeout_ms)
     {
-        stop_wheels(motion);
-        motion->state = MOTION_FAULT;
+        motion->state = MOTION_WAIT_CONFIRM;
     }
     else if (elapsed >= motion->estimate_ms)
         motion->state = MOTION_WAIT_CONFIRM;

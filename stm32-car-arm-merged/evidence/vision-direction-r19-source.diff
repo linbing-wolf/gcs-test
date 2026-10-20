@@ -1,0 +1,102 @@
+--- before/src/station_config.h
++++ src/station_config.h
+@@ -21,7 +21,7 @@
+ /* 两区共用现有MaixCAM D/MOVE/DISC对准：只用像素偏差的方向，每次移动3mm。
+  * 每个目标只发一次D，连续MOVE纠偏，成功DISC结束；移动期间不排队执行偏差。 */
+ #define STN_ALIGN_STEP_MM 3
+-#define STN_ALIGN_MOVE_SIGN 1 /* 正像素偏差向前；实际相机安装方向需现场复核。 */
++#define STN_ALIGN_MOVE_SIGN -1 /* 2026-10-19按操作者要求反转：正偏差后退，负偏差前进；实车待核验。 */
+ #define STN_ALIGN_TRAVEL_MM 75
+ #define STN_ALIGN_TIMEOUT_MS 60000u
+ 
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -2622,7 +2622,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r18; one D per alignment; MOVE stream until DISC; low-speed guard3000ms\r\n");
++    text("[drive] version=20261019-merge2-r19; alignment direction reversed; one D until DISC; low-speed guard3000ms\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/tests/verify_station_vision.c
++++ tests/verify_station_vision.c
+@@ -179,7 +179,8 @@
+             CHECK(road_point(storage ? NODE_H : NODE_D,&point));
+             position=storage ? field_y : field_x;baseline=storage ? point.y : point.x;
+             target=baseline+round((position-baseline)/150.0)*150.0;
+-            dx=(int)round((target-position)*3.0);
++            /* 本轮模拟相机反向安装：前进时同一目标的x增大，独立于固件方向常量。 */
++            dx=(int)round((position-target)*3.0);
+         }
+         if(abs(dx)>5) {
+             if(dx>40)dx=40;
+@@ -778,6 +779,14 @@
+         peer_geometry=1;deadline=clock_ms+500000;
+         while(run.state!=RUN_FAULT && run.job==job && clock_ms<deadline) {
+             serve_peer(&offset);plant_step();
++            if(strstr(output,"[station correction]")) {
++                unsigned logged_job,logged_ring,total;int pixels,mm;
++                CHECK(sscanf(strstr(output,"[station correction]"),
++                    "[station correction] job=%u ring=%u offset_px=%d move_mm=%d total_mm=%u",
++                    &logged_job,&logged_ring,&pixels,&mm,&total)==5);
++                CHECK(logged_job==job && logged_ring>=1 && logged_ring<=3 && pixels!=0);
++                CHECK(mm==(pixels>0 ? -3 : 3)); /* 正偏差后退；负偏差前进。 */
++            }
+             if(run.station_shift && !was_shift) {
+                 positions=arm_positions;yaw_pwm=arm_yaw_us;
+                 if(run.remaining_mm==STN_ALIGN_STEP_MM) {
+--- before/README.md
++++ README.md
+@@ -1,6 +1,6 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r18。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，每个目标只发一次D、持续按MOVE微调，收到成功DISC且车已停稳后取放；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±5RPM/3000ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261019-merge2-r19。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到成功DISC且车已停稳后取放；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±5RPM/3000ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -15,8 +15,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已验证r18固件为 `evidence/merged-keil-20261019T093836800Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r18`。只显示发送记录不代表板子已回复。
++3. 本次已验证r19固件为 `evidence/merged-keil-20261019T122440639Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r19`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -2,7 +2,9 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r18支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r19支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++
++r19仅反转两区视觉纠偏方向：`MOVE,正数`后退3mm，`MOVE,负数`前进3mm，150mm环位索引方向保持。视觉成功回包及发送节拍问题本次暂不处理，方向是否收敛仍待实车确认。
+ 
+ r18修正重复D：每个对准步骤只在开始时发送一次D，MOVE是同一任务的连续过程反馈，不结束任务、不触发重发；成功DISC结束任务，车停稳并重新取得互锁后才继续抓放，不再用三次独立D做确认。自动流程不发送R、不等待READY。原料C/PICK、两区125°观察角、取放姿态和3000ms保护保持。手动vision range仍为显式发送R的既有诊断接口。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ docs/按任务码作业与暂存叠放.md
+@@ -1,6 +1,6 @@
+ # 按任务码作业与暂存叠放
+ 
+-版本：20261019-merge2-r18。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
++版本：20261019-merge2-r19。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
+ 
+ ## 任务码和盘位
+ 
+@@ -22,6 +22,8 @@
+ 最后回2号基准并视觉确认，在125°高位收回时把平台恢复1号，再回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；粗加工与暂存状态机使用带指定观察角检查的内部换盘接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
+ 
+ 例如第一批G1=314、G2=231：取1盘蓝放2号、取2盘红放3号、取3盘绿放1号；随后依次从2、3、1号抓回1、2、3盘。G4只影响第二批粗加工。
++
++r19仅将两区视觉纠偏改为正偏差后退3mm、负偏差前进3mm；环位150mm索引不变，成功回包定义与发送节拍暂不调整，实车效果待确认。
+ 
+ 两区当前都直接使用D、MOVE,dx及DISC,x,y,dx,ok视觉协议，帧仍为AA55+LEN+ASCII+CRC8+0D，UART5 115200。到站先对准2号，每个取放目标以及离站2号再次确认；每个对准步骤只发一次D，同一任务持续输出MOVE；每条新偏差按方向微调3mm，停稳重取严格零速互锁后等待后续反馈。收到成功DISC后结束检测，等待车停稳再放行，不再重发D做三次确认，不自动发R、不等READY。移动及停稳后100ms内的MOVE不排队执行，移动中到达的最终DISC保留到停稳后处理。单次D会话25秒，每步对准累计最多75mm、60秒。原料区C/PICK协议保持。
+ 

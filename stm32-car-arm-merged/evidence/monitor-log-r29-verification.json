@@ -1,0 +1,114 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r29",
+  "scope": "取消底盘、机械臂、视觉及工位超时/反馈时效/轮速监控对整轮任务的自动取消；告警并保留真实任务。缺有效运动反馈时零输出、继续轮询，恢复后接着同一段。急停、实际驱动故障、严重定位错误、机构超行程和非法作业仍停止/拒绝；没有按字面删除所有停机。加速度200与抓放/路线参数保留。",
+  "sourceFilesChanged": [
+    "docs/合并与串口操作.md",
+    "docs/按任务码作业与暂存叠放.md",
+    "README.md",
+    "src/arm_config.h",
+    "src/arm_control.c",
+    "src/heading_control.c",
+    "src/main_table_nav.c",
+    "src/motion.c",
+    "src/motion.h",
+    "src/station_job.c",
+    "src/vision_link.c",
+    "tests/verify_arm_integration.c",
+    "tests/verify_continuous.c",
+    "tests/verify_entry.c",
+    "tests/verify_heading.c",
+    "tests/verify_station_vision.c"
+  ],
+  "sourceHashes": {
+    "docs/合并与串口操作.md": "0698df1dd4d5b05c8b13f8523f72a2b171fff5cb7326436e531a3ebde409fae3",
+    "docs/按任务码作业与暂存叠放.md": "4855752b249744dd86d6e8c08748ce3262a00ef0bad17282d6ed6a1e5425de87",
+    "README.md": "d49ecdb490a2a034e1b32243c03a3e1eb15a5afec24df03aaeee9460d97c856d",
+    "src/arm_config.h": "f085c820eec3c0ef73e3f251a41e77fffc009f0c784ec0e7379cf6e06a33da3e",
+    "src/arm_control.c": "76464e8094697d4b586225192450e69e03a5df44b4227a2a0ae14e76c53a800f",
+    "src/heading_control.c": "0b45813548e935365282fb13a9a81fbeb1db76e6baadd65291e0b869ed0bbd6f",
+    "src/main_table_nav.c": "87a1179318f8c1cb94c551a2a8712a39dbc5aba703da8561f8253ffe51dce860",
+    "src/motion.c": "61202aa94c7008d58c6b57098730fe166e24c261dacfb7c500e37623c493339f",
+    "src/motion.h": "cb1c9de1da84841601110f50c73142cc2efbd36fe6cda3462708a9707cbfee12",
+    "src/station_job.c": "eee46eaae62bc6eba76aec4206b75dfefb3a25307fdc9d12fb5795d73cec8278",
+    "src/vision_link.c": "088a993dfb923f3a8cf7f8e276f794135ffcc5ff2793f0ddfab94f11f8711fce",
+    "tests/verify_arm_integration.c": "21258ebd370080cbdaabc691ab6fd9cc81c771abb9ce0cb13c59f03f9d3cca44",
+    "tests/verify_continuous.c": "4dc85d0ee4941813eb900ac16c1684caa72f9c419681a5765469006adbfa59d4",
+    "tests/verify_entry.c": "5e9990b34c23b71fb30cbf0c0c3d9ff01c59971e8bdbb7456f9cddec2735eaff",
+    "tests/verify_heading.c": "e4e90e3dab21670076c40f150744d87b9e9e8c9cc23c5c6431afc0d5ea9404ee",
+    "tests/verify_station_vision.c": "a71b50323bb5719682fe46d3ef89f230255f7d1f68521cbf409814d563885cad"
+  },
+  "reports": {
+    "heading": "evidence/heading-native-20261019T151129084Z/result.json",
+    "arm": "evidence/arm-native-20261019T151129249Z/result.json",
+    "drive": "evidence/drive-native-20261019T151129211Z/result.json",
+    "continuous": "evidence/continuous-native-20261019T151129118Z/result.json",
+    "station": "evidence/station-native-20261019T151129246Z/result.json"
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T151410055Z/build.log",
+    "verification": "evidence/monitor-log-r29-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 450056,
+    "start": "0x8000000",
+    "endExclusive": "0x806de08",
+    "artifacts": {
+      "evidence/merged-keil-20261019T151410055Z/table_navigation.axf": "f0075a98aa345184f135b49cf1ddefc7080b2cb5da299cdbab742bcff1c0ac7e",
+      "evidence/merged-keil-20261019T151410055Z/table_navigation.hex": "c30a34b73654559d1532bf74428eeda21130ceaa1aacf25d1a794c951483596a",
+      "evidence/merged-keil-20261019T151410055Z/table_navigation.map": "15b1248e70972a4ffc18046672e82d05a29f38601a42878377a2c4c334e1b135"
+    }
+  },
+  "staticStack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "monitorRecovery": {
+    "verification": "evidence/monitor-log-r29-verification.json",
+    "audit": "evidence/monitor-log-r29-audit-after.json",
+    "policyDocument": "docs/自动停机检查与告警策略.md",
+    "allAutomaticStopsRemoved": false,
+    "monitoredTimeoutCancelsTask": false,
+    "missingMotionDataOutputZero": true,
+    "resumeSameTaskAfterValidData": true,
+    "encoderBaselineRetained": true,
+    "fakeAckPositionOrVision": false,
+    "receiveOverflowRecovers": true,
+    "transmitAndBusOffFaultsRetained": true,
+    "manualAndAutomaticWheelRpmLogOnly": true,
+    "removedOldManualNoiseRpmAndTimerDefines": true,
+    "applicationCFilesAudited": 9,
+    "retainedStops": [
+      "explicit emergency/stop/obstacle",
+      "actual disabled/stalled/protected driver",
+      "CAN bus-off, rejected/incomplete submission",
+      "mechanical travel/unsafe pose/configuration",
+      "serious encoder/heading inconsistency"
+    ],
+    "feedbackGapTests": {
+      "distanceMm": 150,
+      "dropAfterMm": 40,
+      "gapMs": 35000,
+      "terminalMm": 149,
+      "toleranceMm": 1,
+      "noTaskOrBaselineReset": true,
+      "beforeEncoderLearningGapMs": 2000,
+      "activeReceiveOverflowRecovers": true
+    }
+  },
+  "carStationConfigurationAndNavigationUnchangedFromR28": true,
+  "allAutomaticStopsRemoved": false,
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

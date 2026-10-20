@@ -1,0 +1,37 @@
+﻿{
+    "sourceHashes":  {
+                         "src/main_table_nav.c":  "424e056230965ab6535d23940ec90760ba9ecf11d62927fc903b676acbf13aab",
+                         "src/arm_control.c":  "d0f0e9225e5383b11bd640a807e3591328cde0daa243b5a215c5fb946f45e9ad",
+                         "src/station_job.c":  "a838af74e03696d6827c3b0d97e5337da8a68699c6063a2033366e83cab7455b",
+                         "src/station_job.h":  "42ada2307139484651356988549a7438f649517ace287e7165ff9c7d7d6827b7",
+                         "src/station_config.h":  "dabd832fc3d9abd0444516ddc5b71893d5733d50716c0ef925b328b75ee85c00",
+                         "src/vision_link.c":  "088a993dfb923f3a8cf7f8e276f794135ffcc5ff2793f0ddfab94f11f8711fce",
+                         "src/vision_link.h":  "0ea9847b974699cbb6809ee444d1077100ed7482fd422c11c6b50d3a49d62abd",
+                         "tests/vision_host_io.h":  "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+                         "vendor/stm32/lanya/usart5.c":  "ad7e8ebdfd41a4f7f2cce7de56376df36d39c472b45043664eba986d27b0a31d",
+                         "src/arm_control.h":  "2fec53ed0530bb9b1a4974d16107bc217c965dae352b370399a4ff11c050934a",
+                         "src/arm_config.h":  "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+                         "tests/verify_entry.c":  "5e9990b34c23b71fb30cbf0c0c3d9ff01c59971e8bdbb7456f9cddec2735eaff",
+                         "tests/verify_arm_integration.c":  "312a2fb4c8fb6caea95c6e53e32a9dcef8c42aba8bb60d62ffc5a14194e7ba70",
+                         "tests/entry_host_io.h":  "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+                         "tests/arm_host_io.h":  "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71"
+                     },
+    "passed":  true,
+    "exitCode":  0,
+    "scope":  "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+    "sourceSha256":  "424e056230965ab6535d23940ec90760ba9ecf11d62927fc903b676acbf13aab",
+    "output":  [
+                   "PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis",
+                   "PASS station platform: high/retracted125 internal selection holds yaw; manual command still requires home0; extended/low/wrong-angle/busy/unknown/fault/invalid-slot rejected",
+                   "PARALLEL_ROTATION serial_ms=1303 parallel_ms=652 servo_ms=600; both PWM channels moved before completion",
+                   "PASS simultaneous platform/yaw: shared interpolation, no extension/lowering before completion, target cup/yaw committed together, explicit emergency holds both PWM channels",
+                   "PASS mutual exclusion: removed-run/nav/runimu/shift/turn blocked in arm session; chassis rejects arm acquisition while busy; ! stops both and requires explicit recovery",
+                   "PASS wheel monitoring: delayed acquisition/stale replies and receive overflow retain session and recover; signed40RPM persists without stop; driver stall and bus-off still stop",
+                   "PASS arm monitoring: feedback/ACK/action deadlines retain pose and recover on actual position; explicit stop, driver fault and failed CAN submission still stop",
+                   "PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation",
+                   "PASS English console: lift 120 retains axis command and all three messages; complete arm/platform status is ASCII",
+                   "PASS arm speed: axes use fresh verified feedback; claw_ms=200 yaw_platform_ms=600; position/status must arrive; missing ACK or RPM magnitude alone cannot cancel or gate measured completion",
+                   "PASS arm axis speed log-only: both5/7 signed1/15/3000RPM pass preflight, position completion and servo steps; both nonzero axes still wait for actual target position and arrived flag",
+                   "PASS arm integration: 128182 assertions; host simulation only, no hardware accessed"
+               ]
+}

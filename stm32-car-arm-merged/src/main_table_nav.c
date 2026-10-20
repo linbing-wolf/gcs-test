@@ -21,6 +21,7 @@
 #include "station_job.h"
 #include "station_config.h"
 #include "vision_link.h"
+#include "hmi_status.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -55,6 +56,7 @@
 #define MOTOR_FLAG_STALLED           4u
 #define MOTOR_FLAG_PROTECTED         8u
 /* ===== 1. 全局状态：Keil Watch 窗口可观察这些变量 ===== */
+static struct {uint32_t start_ms,elapsed_ms;uint8_t running,started;} screen_clock;
 static volatile uint32_t clock_ms;       /* 系统毫秒计时，TIM5 中断更新。 */
 #define SCANNER_RX_SIZE 128u
 typedef enum {SCANNER_OFF, SCANNER_BOOT, SCANNER_SET_ENDING, SCANNER_SET_CONTINUOUS,
@@ -128,6 +130,8 @@ typedef struct
     uint8_t acks;             /* 电机1～4对应bit0～3，15表示四轮均回复速度ACK。 */
     uint8_t ready;            /* 四轮新鲜反馈掩码；15不等于地面实际到位。 */
     uint8_t pending;          /* 正在等待回复的电机地址；0 表示无等待。 */
+    uint32_t warning_ms;
+    uint8_t warning_seen, alignment_waiting;
     uint32_t query_ms;        /* 本次状态请求的发出时间。 */
     uint32_t last_query_ms;
     uint32_t segment_ms;      /* 当前段开始时间，用于 ACK 超时判断。 */
@@ -136,6 +140,7 @@ typedef struct
     uint8_t imu_mode;         /* 已建立闭环会话，供诊断和中断采样故障检查。 */
     uint8_t turn_only, translation_only;
     uint8_t station_enabled, station_phase, scan_turn_stage;
+    uint8_t station_departing, station_speed_logged; /* 工位离站预检范围及每轮日志去重。 */
     uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
     uint8_t transition_ready; /* 仅本段通过距离/航向/四轮停稳后，可向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
@@ -311,6 +316,15 @@ static void run_clear_rx(void)
     __enable_irq();
 }
 
+/* 运行中仅清接收溢出；保留发送失败和bus-off标志，不能吞掉真实硬故障。 */
+static void run_recover_receive(void)
+{
+    __disable_irq();
+    run_rx_tail=run_rx_head;run_rx_overflow=0;can_rx_fault&=(uint8_t)~1u;
+    __enable_irq();
+    run.pending=0;
+}
+
 /* ===== 3. 串口收发与毫秒计时 ===== */
 static void send_byte(uint8_t b)
 {
@@ -389,6 +403,22 @@ static void signed_number(int32_t value)
     if (value < 0)
         text("-");
     number(value < 0 ? 0u - (uint32_t)value : (uint32_t)value);
+}
+
+/* 工位轮速只作诊断；道路/手动会话仍使用原停稳检查。 */
+static int station_speed_log_only(void)
+{
+    return run.station_enabled && (run.state==RUN_STATION || run.station_shift || run.station_departing);
+}
+static void station_log_wheel_speed(uint8_t wheel, const char *stage)
+{
+    uint8_t bit=(uint8_t)(1u<<wheel);
+    int32_t rpm=motor_feedback[wheel].speed_rpm;
+    if (!rpm) {run.station_speed_logged &= (uint8_t)~bit;return;}
+    if (run.station_speed_logged & bit) return;
+    run.station_speed_logged |= bit;
+    text("[station wheel] stage=");text(stage);text(" wheel=");number(wheel+1u);
+    text(" speed_rpm=");signed_number(rpm);text("; logged only\r\n");
 }
 
 /* XM1601按照片中的指令设置CRLF，再切连续模式；不保存Flash或恢复出厂。 */
@@ -526,8 +556,10 @@ static void scanner_update(void)
                     scanner.result[--scanner.length] = 0;
                     if (scanner.length) {
                         text("[scan] "); text(scanner.result); text("\r\n"); scanner.results++;
-                        /* 只在本轮首次B点等待时接收任务；闲置/结束后的连续扫码不能重装旧码。 */
-                        if (!run_active && run.state == RUN_STATION && run.job == 0u) {
+                        /* 首次抵达B即接码，包含转向过程；首个有效任务锁定，闲置/回程不重装。 */
+                        if (run.station_enabled && run.job==0u && run.edge==1u
+                            && ((run_active && run.scan_turn_stage==1u) || (!run_active && run.state==RUN_STATION))
+                            && !stop_pending && !station_task_ready()) {
                             char task_line[sizeof(scanner.result) + 6u];
                             snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
                             (void)station_command(task_line);
@@ -850,6 +882,17 @@ static void imu_status(void)
     text("\r\n");
 }
 
+static void run_wait_feedback(const char *reason);
+
+static void run_warning(const char *reason)
+{
+    if (run.warning_seen && (uint32_t)(clock_ms-run.warning_ms)<1000u) return;
+    run.warning_seen=1;run.warning_ms=clock_ms;
+    text("[run warning] ");text(reason);
+    text(" addr=");number(run.pending);text(" command_dec=");number(run.pending_command);
+    text(" wait_ms=");number(clock_ms-run.query_ms);text("; task retained\r\n");
+}
+
 static void run_fault(const char *reason)
 {
     if (run_rx_overflow) reason = "CAN reply queue overflow";
@@ -966,7 +1009,7 @@ static void run_done(void)
         run.state = RUN_STATION;
         run.station_relock = 1;
         arm_lock_begin();
-        text("[station index done] encoder+IMU stopped; reacquiring four-wheel zero-speed interlock\r\n");
+        text("[station index done] encoder+IMU complete; zero commands confirmed; reacquiring fresh wheel status\r\n");
         return;
     }
     run.state = RUN_DONE;
@@ -1039,6 +1082,8 @@ static int start_run(uint8_t initial_node)
     run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     run_clear_rx();
     run_active = 1;
+    screen_clock.start_ms=clock_ms;screen_clock.elapsed_ms=0;
+    screen_clock.started=screen_clock.running=1;
     text("[run route] ");
     for (i = 0; i < FULL_ROUTE_NODES; i++)
     {
@@ -1088,7 +1133,7 @@ static int start_heading_turn(int16_t relative_degrees, uint16_t rpm)
 }
 
 /* 单次横移与导航复用同一速度状态机；无新IMU时拒绝，不能静默退回脉冲模式。 */
-static int start_heading_shift(int16_t mm, uint16_t rpm)
+static int start_heading_shift(int32_t mm, uint16_t rpm)
 {
     HeadingSample sample = heading_snapshot();
     if (run_active || stop_pending || drive.state == MOTION_RUNNING || !mm
@@ -1116,39 +1161,44 @@ static int start_heading_shift(int16_t mm, uint16_t rpm)
     return 1;
 }
 
-/* 工位内仅允许高位收回；视觉微调允许云台保持粗加工观察角。
+/* 工位内仅允许高位收回；两区索引/视觉微调允许保持各自观察角。
  * 普通道路仍要求arm_parked()，不能把此例外用于整圈行驶。 */
 static int station_chassis_pose_safe(void)
 {
     int slide,lift;float yaw;
+    float work_yaw=(run.job==3u || run.job==6u) ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;
     arm_pose_now(&slide,&lift,&yaw,NULL);
     return arm_ready() && !arm_busy() && slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM
-        && (yaw==ARM_YAW_HOME_DEG || yaw==STN_ROUGH_YAW_DEG);
+        && (yaw==ARM_YAW_HOME_DEG || yaw==work_yaw);
 }
 /* 仅增加工位调用接口；复用当前速度/编码器/IMU状态机，不引入远程底盘实现。 */
-int station_chassis_start(int16_t mm)
+static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
 {
     uint8_t i;
+    int storage = run.job == 3u || run.job == 6u;
+    int index_rpm = storage ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
     if (run_active || stop_pending || run.state != RUN_STATION || !run.station_phase
-        || (run.job != 2u && run.job != 5u) || arm_lock.state != 2
-        || !station_chassis_pose_safe()
-        || (mm != STN_ROUGH_INDEX_MM && mm != -STN_ROUGH_INDEX_MM
-            && mm != STN_ROUGH_ALIGN_STEP_MM && mm != -STN_ROUGH_ALIGN_STEP_MM)) return 0;
+        || (run.job != 2u && run.job != 5u && !storage) || arm_lock.state != 2
+        || !station_chassis_pose_safe() || !mm) return 0;
     for (i = 0; i < MOTOR_COUNT; i++) {
         MotorFeedback *f = &motor_feedback[i];
-        if (!f->speed_valid || f->speed_rpm != 0 || !(f->status_flags & MOTOR_FLAG_ENABLED)
+        station_log_wheel_speed(i,"launch");
+        if (!f->speed_valid || !(f->status_flags & MOTOR_FLAG_ENABLED)
             || (f->status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))
             || (uint32_t)(clock_ms - f->speed_ms) > ARM_FEEDBACK_TIMEOUT_MS
             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
     }
     station_parent = run;
-    if (!start_heading_shift(mm, STN_ROUGH_INDEX_RPM)) {run = station_parent;return 0;}
+    if (!start_heading_shift(mm, (uint16_t)index_rpm)) {run = station_parent;return 0;}
     run.station_shift = run.station_enabled = 1;
-    run.travel_axis = BODY_FORWARD;
+    run.travel_axis = axis;
     run.plan = station_parent.plan;run.edge = station_parent.edge;run.job = station_parent.job;
     run.heading = run.target_heading = station_parent.heading;
     return 1;
 }
+
+int station_chassis_start(int32_t mm) {return station_chassis_start_axis(mm,BODY_FORWARD);}
+int station_chassis_lateral_start(int32_t mm) {return station_chassis_start_axis(mm,BODY_LEFT);}
 
 int station_chassis_busy(void) { return (run.station_shift && run_active) || run.station_relock; }
 int station_chassis_failed(void)
@@ -1186,7 +1236,7 @@ static void run_advance_segment(void)
     if (run.station_enabled && node == NODE_B && run.job == 0u) {
         run.scan_turn_stage=1;
         run.target_heading=(RoadHeading)STN_SCAN_HEADING;run.remaining_mm=0;
-        text("[scan station] align rear scanner to QR before waiting for task\r\n");
+        text("[scan station] B reached; accepting QR while aligning rear scanner\r\n");
         run_begin_alignment();return;
     }
     if (node == full_route_jobs[run.plan][run.job]
@@ -1214,7 +1264,7 @@ static void run_finish_node(void)
     {
         if (run.station_enabled && run.job < 7u) {
             run_active=0;run.state=RUN_STATION;run.turning=0;run.transition_ready=0;run.station_phase=0;
-            text("[run station] waiting for fresh four-wheel stop; job=");number(run.job);text("\r\n");
+            text("[run station] waiting for fresh four-wheel status; job=");number(run.job);text("\r\n");
             arm_lock_begin();return;
         }
         run.job++;
@@ -1243,6 +1293,7 @@ static void run_finish_node(void)
 static void run_station_handoff(void)
 {
     run_active=1;run.state=RUN_PREFLIGHT;run.segment_ms=clock_ms;
+    run.station_departing=1;
     run.station_phase=0;run.pending=run.velocity_waiting=run.velocity_sent=0;
     run.velocity_query_index=0;run.last_query_ms=clock_ms-CAR_VELOCITY_QUERY_MS;
     run.transition_ready=0;run.zero_ms=run.stopped_ms=0;
@@ -1260,9 +1311,12 @@ static void run_station_update(void)
 {
     int started;
     HeadingSample sample=heading_snapshot();
-    if (arm_lock.state==3 || arm_failed() || imu_uart_fault
-        || !heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
-        run_fault("station interlock/arm/IMU fault");return;
+    if (arm_lock.state==3 || arm_failed()) {
+        run_fault("station interlock/arm fault");return;
+    }
+    if (imu_uart_fault) {run_warning("station IMU UART error");imu_uart_fault=0;}
+    if (!heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
+        run_warning("station IMU sample stale; task retained");return;
     }
     if (run.station_relock) {
         if (arm_lock.state != 2) return;
@@ -1296,6 +1350,7 @@ static void run_begin_baseline(void)
     run.velocity_phase = VELOCITY_BASELINE;
     run.phase_ms = clock_ms;
     run.baseline_after_ms = run.stopped_ms;
+    run.station_departing = 0;
     run.stopped_ms = 0;
 }
 
@@ -1309,7 +1364,7 @@ static void run_begin_alignment(void)
     if (reuse && run.heading == run.target_heading && !run.station_align_pending
         && !run.turn_only && !run.translation_only) {
         HeadingDecision decision = heading_control_update(&run.heading_control, sample, clock_ms);
-        if (decision == HEADING_FAULT) {run_fault(run.heading_control.fault);return;}
+        if (decision == HEADING_FAULT) {run.alignment_waiting=1;run_wait_feedback(run.heading_control.fault);return;}
         /* 串口输出期间可能收到新角度：保留原目标更新它，不能把新偏航重设为零。 */
         if (error <= CAR_HEADING_TOLERANCE_CDEG && error >= -CAR_HEADING_TOLERANCE_CDEG
             && run.heading_control.last_yaw_cdeg == sample.yaw_cdeg
@@ -1323,7 +1378,7 @@ static void run_begin_alignment(void)
         }
     }
     if (!heading_control_start(&run.heading_control, sample, error, clock_ms)) {
-        run_fault("IMU sample stale/invalid");
+        run.alignment_waiting=1;run_wait_feedback("IMU sample stale/invalid before alignment");
         return;
     }
     run.velocity_phase = VELOCITY_TURN;
@@ -1403,7 +1458,8 @@ static void arm_lock_begin(void)
     memset(&turn_postcheck, 0, sizeof(turn_postcheck));
     arm_lock.started_ms = clock_ms;
     arm_lock.poll_ms = clock_ms - ARM_POLL_MS;
-    text("[arm interlock: waiting for fresh four-wheel zero-speed/status feedback]\r\n");
+    text(station_speed_log_only() ? "[arm interlock: waiting for fresh four-wheel status; speed logged only]\r\n"
+                                : "[arm interlock: waiting for fresh four-wheel zero-speed/status feedback]\r\n");
 }
 
 /* 独占会话期间持续查询四轮；估时、旧反馈或单轮回复均不能放行。 */
@@ -1419,7 +1475,10 @@ static void arm_lock_update(void)
 #else
     if (CAN1->ESR & CAN_BUS_OFF_FLAG) can_rx_fault |= CAN_BUS_OFF_FLAG;
 #endif
-    if (can_rx_fault || run_rx_overflow) {arm_lock_fault("CAN error/queue overflow");return;}
+    if (run_rx_overflow || (can_rx_fault & 1u)) {
+        run_warning("interlock CAN receive overflow; continue polling");run_recover_receive();
+    }
+    if (can_rx_fault) {arm_lock_fault("CAN transmit/bus fault");return;}
     while (run_read_frame(&frame)) {
         uint8_t kind;
         i = (uint8_t)((frame.id >> CAN_MOTOR_ADDRESS_SHIFT) - 1u);
@@ -1430,17 +1489,15 @@ static void arm_lock_update(void)
             || (int32_t)(frame.received_ms - arm_lock.query_ms[i][kind]) < 0
             || !run_record_frame(&frame)) continue;
         arm_lock.seen[i] |= (uint8_t)(1u << kind);
-        if ((!kind && (!(motor_feedback[i].status_flags & MOTOR_FLAG_ENABLED)
-                         || (motor_feedback[i].status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))))
-            || (kind && motor_feedback[i].speed_rpm != 0)) {
-            /* 刹停过程中允许速度下降，但启用后任何非零速度立即中止机构。 */
-            if (arm_lock.state == 2 || !kind) {arm_lock_fault("wheel moving/disabled/stalled");return;}
-            arm_lock.settling = 0;
+        if (kind) station_log_wheel_speed(i,"interlock");
+        else if (!(motor_feedback[i].status_flags & MOTOR_FLAG_ENABLED)
+                 || (motor_feedback[i].status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))) {
+            arm_lock_fault("wheel disabled/stalled/protected");return;
         }
     }
     for (i = 0; i < MOTOR_COUNT; i++) {
         MotorFeedback *f = &motor_feedback[i];
-        if (arm_lock.seen[i] != 3u || f->speed_rpm != 0
+        if (arm_lock.seen[i] != 3u
             || (uint32_t)(clock_ms - f->speed_ms) > ARM_FEEDBACK_TIMEOUT_MS
             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) ready = 0;
     }
@@ -1454,9 +1511,9 @@ static void arm_lock_update(void)
             text("[arm interlock acquired: chassis commands locked until parked arm off]\r\n");
         }
         if (arm_lock.state == 1 && (uint32_t)(clock_ms - arm_lock.started_ms) > ARM_CHASSIS_LOCK_TIMEOUT_MS) {
-            arm_lock_fault("four-wheel stop confirmation timeout");return;
+            run_warning("four-wheel confirmation delayed; continue polling");
         }
-    } else if (!ready) {arm_lock_fault("four-wheel feedback stale");return;}
+    } else if (!ready) {run_warning("arm interlock feedback stale; continue polling");}
     if (!stop_pending && (uint32_t)(clock_ms - arm_lock.poll_ms) >= ARM_POLL_MS) {
         uint8_t wheel = (uint8_t)(arm_lock.query / 2u), kind = arm_lock.query % 2u;
         arm_lock.query = (uint8_t)((arm_lock.query + 1u) % 8u);
@@ -1557,8 +1614,11 @@ static int run_velocity_stopped(void)
     for (i = 0; i < MOTOR_COUNT; i++) {
         MotorFeedback *f = &motor_feedback[i];
         uint32_t after_zero = f->speed_ms - run.zero_ms;
-        if (f->speed_rpm > CAR_VELOCITY_STOP_RPM || f->speed_rpm < -CAR_VELOCITY_STOP_RPM
-            || after_zero < CAR_HEADING_SETTLE_MS || after_zero > 0x7fffffffu) {
+        station_log_wheel_speed(i,"stop");
+        if (run.obstacle_phase && (f->speed_rpm>CAR_VELOCITY_STOP_RPM || f->speed_rpm<-CAR_VELOCITY_STOP_RPM)) {
+            run.stopped_ms=0;return 0; /* 主动obstacle要求真正停稳后才允许反向。 */
+        }
+        if (after_zero < CAR_HEADING_SETTLE_MS || after_zero > 0x7fffffffu) {
             run.stopped_ms = 0;
             return 0;
         }
@@ -1688,7 +1748,10 @@ static int16_t run_forward_target(int32_t remaining)
     if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
     if (speed > (run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM))
         speed = run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM;
-    if (run.station_shift && speed > STN_ROUGH_INDEX_RPM) speed = STN_ROUGH_INDEX_RPM;
+    if (run.station_shift) {
+        float index_rpm = (run.job == 3u || run.job == 6u) ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
+        if (speed > index_rpm) speed = index_rpm;
+    }
     if (run.encoder_ready != 15u && speed > CAR_ENCODER_LEARN_RPM) speed = CAR_ENCODER_LEARN_RPM;
     return (int16_t)(speed * run.travel_sign);
 }
@@ -1825,7 +1888,7 @@ static int run_obstacle_request(void)
         run.blocked_roads |= (uint16_t)(1u << run.road.road);
         run.completed_roads &= (uint16_t)~(1u << run.road.road);
     }
-    run.obstacle_phase = 1;run.state = RUN_OBSTACLE_STOP;run.phase_ms = clock_ms;
+    run.obstacle_phase = 1;run.alignment_waiting=0;run.state = RUN_OBSTACLE_STOP;run.phase_ms = clock_ms;
     /* 障碍停车绕过正常斜坡和尚未收齐的速度ACK；之后以停车后的新反馈确认。 */
     motion_stop(&drive);
     if (stop_pending || run_rx_overflow || can_rx_fault) {run_fault("obstacle stop command failed");return 1;}
@@ -1837,6 +1900,16 @@ static int run_obstacle_request(void)
     return 1;
 }
 
+/* 反馈不足时只暂停底盘输出，保留本段和工位现场；新数据恢复后继续。 */
+static void run_wait_feedback(const char *reason)
+{
+    run_warning(reason);
+    run.forward_mrpm=0;run.forward_profile_ms=clock_ms;run.phase_ms=clock_ms;
+    if ((run.state!=RUN_PREFLIGHT || run.velocity_sent)
+        && !run_velocity_send(0,0,0)) {run_fault("velocity batch submit failed");return;}
+    run_velocity_query();
+}
+
 static void run_velocity_update(void)
 {
     RunCanFrame frame;
@@ -1845,9 +1918,6 @@ static void run_velocity_update(void)
     uint8_t drive_heading, control_due;
     int16_t forward = 0, left = 0, turn = 0;
     HeadingSample sample = heading_snapshot();
-    if (imu_uart_fault || !heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS)) {
-        run_fault("IMU sample stale/invalid or UART overrun");return;
-    }
     while (run_read_frame(&frame)) {
         uint8_t address = (uint8_t)(frame.id >> 8);
         if (!run_record_frame(&frame)) continue;
@@ -1863,28 +1933,33 @@ static void run_velocity_update(void)
             run_fault("motor disabled or stalled");return;
         }
         if (address == run.pending && frame.data[0] == run.pending_command
-            && (uint32_t)(frame.received_ms - run.query_ms) < CAR_VELOCITY_REPLY_MS) {
+            && (int32_t)(frame.received_ms - run.query_ms) >= 0) {
             if (frame.data[0] == MOTOR_STATUS_COMMAND) motor_feedback[address - 1u].action_status_replies++;
             run.pending = 0;
             run.velocity_query_index = (uint8_t)((run.velocity_query_index + 1u) % 12u);
         }
     }
     if (run.pending && (uint32_t)(clock_ms - run.query_ms) >= CAR_VELOCITY_REPLY_MS) {
-        run_fault("velocity feedback reply timeout");return;
+        run_warning("velocity feedback reply timeout; continue polling");
+        run.pending=0;
+        run.velocity_query_index=(uint8_t)((run.velocity_query_index+1u)%12u);
+        run_wait_feedback("feedback transaction incomplete; await next actual sample");return;
     }
     if (run.velocity_waiting && (uint32_t)(clock_ms - run.velocity_ms) >= CAR_VELOCITY_ACK_MS) {
-        run_fault("missing motor velocity ACK");return;
+        run_warning("missing motor velocity ACK; refresh commanded batch");
+        run.velocity_waiting=0;run.velocity_sent=0;
+    }
+    if (imu_uart_fault) {run_warning("IMU UART error; await a fresh valid sample");imu_uart_fault=0;}
+    if (!heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
+        run_wait_feedback("IMU sample stale/invalid; awaiting feedback");return;
     }
     if (!run_velocity_feedback_fresh()) {
-        if ((run.state != RUN_PREFLIGHT && !(run.obstacle_phase == 1 && run.obstacle_preflight))
-            || (uint32_t)(clock_ms - (run.obstacle_phase == 1 ? run.phase_ms : run.segment_ms)) > CAR_VELOCITY_FEEDBACK_MS) {
-            run_fault("four-wheel velocity/position/status stale");return;
-        }
-        run_velocity_query();return;
+        run_wait_feedback("four-wheel feedback incomplete/stale; awaiting feedback");return;
     }
+    if (run.alignment_waiting) {run.alignment_waiting=0;run_begin_alignment();return;}
     if (run.obstacle_phase == 1) {
         if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_HEADING_TIMEOUT_MS) {
-            run_fault("obstacle stop did not converge");return;
+            run_warning("obstacle stop delayed; waiting for feedback");run.phase_ms=clock_ms;
         }
         if (run.obstacle_leg_active && !run_velocity_distance()) {run_fault("obstacle stop encoder invalid");return;}
         if (!run_velocity_stopped()) {run_velocity_query();return;}
@@ -1898,10 +1973,9 @@ static void run_velocity_update(void)
         run_return_next();return;
     }
     if (run.state == RUN_PREFLIGHT) {
-        for (i = 0; i < MOTOR_COUNT; i++)
-            if (motor_feedback[i].speed_rpm > CAR_VELOCITY_STOP_RPM || motor_feedback[i].speed_rpm < -CAR_VELOCITY_STOP_RPM) {
-                run_fault("preflight wheels not stopped");return;
-            }
+        for (i = 0; i < MOTOR_COUNT; i++) {
+            station_log_wheel_speed(i,"preflight");
+        }
         if (run.turn_only || run.translation_only) {
             run.velocity_phase = VELOCITY_TURN;run.phase_ms = clock_ms;run.turning = 1;
             run.state = RUN_ALIGN;drive.state = MOTION_RUNNING;run.steps++;
@@ -1909,9 +1983,10 @@ static void run_velocity_update(void)
         return;
     }
     decision = heading_control_update(&run.heading_control, sample, clock_ms);
-    if (decision == HEADING_FAULT) {run_fault(run.heading_control.fault);return;}
+    if (decision == HEADING_FAULT) {run_wait_feedback(run.heading_control.fault);return;}
     if ((uint32_t)(clock_ms - run.phase_ms) >= (run.turning ? CAR_HEADING_TIMEOUT_MS : CAR_DRIVE_TIMEOUT_MS)) {
-        run_fault("continuous motion did not converge before deadline");return;
+        run_warning("motion deadline exceeded; feedback completion still required");
+        run.phase_ms=clock_ms;
     }
     for (i = 0; i < MOTOR_COUNT; i++)
         if (run.wheel_rpm[i] && (uint32_t)(clock_ms - run.wheel_start_ms[i]) > CAR_VELOCITY_STALL_MS
@@ -2008,7 +2083,8 @@ static void run_velocity_update(void)
         && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS) {
         run.heading = run.target_heading;
         if (run.velocity_phase == VELOCITY_TURN) {
-            text("[heading aligned; four wheels stopped]\r\n");
+            text(station_speed_log_only() ? "[heading aligned; zero commands confirmed; wheel speed logged only]\r\n"
+                                         : "[heading aligned; four wheels stopped]\r\n");
             run.log_ms = clock_ms - CAR_CONTROL_LOG_MS;
             run_velocity_log();
             if (run.station_align_pending) {
@@ -2022,7 +2098,15 @@ static void run_velocity_update(void)
                 return;
             }
             if (run.scan_turn_stage==1u) {
-                run.scan_turn_stage=0;run.turning=0;run_finish_node();return;
+                run.scan_turn_stage=0;run.turning=0;
+                if (station_task_ready()) {
+                    /* 扫码已与转向重叠，不再进入扫码工位重复获取机构互锁。
+                     * 下一段仍按IMU确认出站朝向，不把途中扫码当作航向已到位。 */
+                    run.job++;run.transition_ready=1;
+                    text("[scan station] task latched; depart directly on route heading\r\n");
+                    if (!run_road()) run_fault("scan departure road failed");
+                } else run_finish_node();
+                return;
             }
             if (run.turn_only || run.finishing) {run_done();return;}
             run_begin_baseline();
@@ -2058,10 +2142,9 @@ static void run_velocity_update(void)
  */
 static void run_update(void)
 {
-    if (run_rx_overflow)
-    {
-        run_fault("CAN reply queue overflow");
-        return;
+    if (run_rx_overflow || (can_rx_fault & 1u)) {
+        run_warning("CAN receive queue/FIFO overflow; continue polling");
+        run_recover_receive();
     }
 #ifdef NAV_ENTRY_HOST_TEST
     if (entry_host_can_bus_off())
@@ -2182,6 +2265,7 @@ static void help(void)
     text("ARM: arm load1 | arm load3 (or @) = calibrated loading sequences\r\n");
     text("STATION: task 134+123+314+231 | station | station auto on/off (default on)\r\n");
     text("VISION: vision status/ping/range/pick N/clear; UART5 AA55+CRC8\r\n");
+    text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
     text("turn = IMU closed-loop rotation test | rpm 20..300\r\n");
@@ -2280,6 +2364,75 @@ static int command_translation_test(const char *command_text)
     return accepted;
 }
 
+/* 状态屏只读取控制现场，不查询电机、不推进任务、不消费视觉偏差。 */
+static void screen_snapshot(HmiSnapshot *snapshot)
+{
+    static const uint8_t addresses[4]={HMI_LF_ADDRESS,HMI_RF_ADDRESS,HMI_LR_ADDRESS,HMI_RR_ADDRESS};
+    unsigned i;int slide,lift;float yaw,claw;uint8_t healthy=1,seen=0;
+    HeadingSample imu=heading_snapshot();
+    for(i=0;i<HMI_FIELDS;i++)snapshot->value[i]=HMI_UNKNOWN;
+    station_task_words(&snapshot->value[HMI_TASKA],&snapshot->value[HMI_TASKB]);
+    snapshot->value[HMI_TASKOK]=station_task_ready();
+    snapshot->value[HMI_PICK]=snapshot->value[HMI_PLACE]=-1;
+    snapshot->value[HMI_VOLTAGE]=-1;
+    if(screen_clock.running) {
+        screen_clock.elapsed_ms=clock_ms-screen_clock.start_ms;
+        if(run.state==RUN_DONE || run.state==RUN_FAULT || run.state==RUN_STOPPED)screen_clock.running=0;
+    }
+    snapshot->value[HMI_ELAPSED]=(int32_t)(screen_clock.elapsed_ms/1000u);
+    snapshot->value[HMI_PHASE]=screen_clock.started ? (run.job>=7u ? 8 : run.job+1u) : 0;
+    if(run.state==RUN_DONE && !run.turn_only && !run.translation_only)snapshot->value[HMI_PHASE]=9;
+    if(run.state==RUN_STOPPED)snapshot->value[HMI_PHASE]=0;
+    if(run.state==RUN_FAULT || (run.state!=RUN_STOPPED && (arm_failed() || arm_lock.state==3)))
+        snapshot->value[HMI_PHASE]=10;
+    for(i=0;i<4;i++) {
+        MotorFeedback *f=&motor_feedback[i];
+        if(f->speed_valid || f->status_replies)seen=1;
+        if(!f->speed_valid || !f->status_replies || (uint32_t)(clock_ms-f->speed_ms)>500u
+            || (uint32_t)(clock_ms-f->status_ms)>500u || !(f->status_flags&1u) || (f->status_flags&12u))healthy=0;
+    }
+    snapshot->value[HMI_COMM]=!seen ? 0 : healthy && !can_rx_fault ? 1 : 2;
+    for(i=0;i<4;i++)if(addresses[i]>=1u && addresses[i]<=4u) {
+        unsigned index=addresses[i]-1u;MotorFeedback *f=&motor_feedback[index];
+        if(run_active)snapshot->value[HMI_LF_T+i*2u]=run.wheel_rpm[index];
+        else if(arm_lock.state==2)snapshot->value[HMI_LF_T+i*2u]=0;
+        if(f->speed_valid && (uint32_t)(clock_ms-f->speed_ms)<=500u)
+            snapshot->value[HMI_LF_R+i*2u]=f->speed_rpm;
+    }
+    snapshot->value[HMI_MECHANISM]=!arm_enabled() ? 0 : arm_busy() ? 1 : -1;
+    if(arm_pose_known()) {
+        arm_target_now(&slide,&lift,&yaw,&claw);
+        snapshot->value[HMI_LIFT]=lift;snapshot->value[HMI_PUSH]=slide;
+        snapshot->value[HMI_GRIP]=(int32_t)claw;snapshot->value[HMI_PAN]=(int32_t)yaw;
+    }
+    if(arm_platform_known())snapshot->value[HMI_TRAY]=arm_platform_slot() ? arm_platform_slot() : HMI_UNKNOWN;
+    snapshot->value[HMI_IMU_AGE]=imu.valid ? (int32_t)(clock_ms-imu.received_ms) : -1;
+    if(heading_sample_fresh(&imu,clock_ms,CAR_IMU_MAX_AGE_MS))snapshot->value[HMI_YAW]=imu.yaw_cdeg/10;
+    if(run_active || run.state==RUN_STATION)
+        snapshot->value[HMI_YAW_T]=heading_wrap_cdeg((int32_t)run.heading_control.last_yaw_cdeg+run.heading_control.error_cdeg)/10;
+    vision_display(clock_ms,&snapshot->value[HMI_COLOR],&snapshot->value[HMI_DX],
+        &snapshot->value[HMI_DY],&snapshot->value[HMI_VISION_AGE]);
+}
+static void screen_update(void)
+{
+    static HmiSnapshot snapshot;
+    screen_snapshot(&snapshot);hmi_update(&snapshot,clock_ms);
+}
+static int screen_command(const char *s)
+{
+    if(!strcmp(s,"screen") || !strcmp(s,"screen status")) {
+        text("[screen] USART6 PC6 TX 9600 8N1; read-only; tx_busy=");number(hmi_busy());
+        text("; physical screen reception unconfirmed\r\n");return 1;
+    }
+    if(!strcmp(s,"screen main"))hmi_select(0,0);
+    else if(!strcmp(s,"screen chassis"))hmi_select(1,0);
+    else if(!strcmp(s,"screen arm"))hmi_select(1,1);
+    else if(!strcmp(s,"screen sensors"))hmi_select(1,2);
+    else if(!strcmp(s,"screen refresh"))hmi_resync();
+    else return 0;
+    text("[screen] display update requested\r\n");return 1;
+}
+
 /* 先处理公共命令和模式切换，再交给当前模式；只裁剪首尾空白。 */
 static void command(char *command_text)
 {
@@ -2295,6 +2448,7 @@ static void command(char *command_text)
     * trimmed_end = 0;
     if (! * command_text)
         return;
+    if(screen_command(command_text))return;
     if (!strcmp(command_text, "info"))
     {
         status();
@@ -2503,6 +2657,7 @@ static void firmware_step(void)
             rx_overflow = 1;
         }
     }
+    screen_update();
     if (!stop_pending)
     {
         if (arm_lock.state==2) arm_update(clock_ms);
@@ -2569,7 +2724,7 @@ int main(void)
     uart_init();
     clock_init_ms();
     arm_init();
-    vision_init();station_init();
+    vision_init();station_init();hmi_init(clock_ms);
     start_button_init();
     scanner_init(CAR_SCANNER_UART_BAUD);
     heading_sensor_reset(&heading_sensor);
@@ -2592,7 +2747,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261019-merge2-r11; rough station vision alignment; English console\r\n");
+    text("[drive] version=20261020-merge2-r36; STACK x/y correction; MOVE pixels\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

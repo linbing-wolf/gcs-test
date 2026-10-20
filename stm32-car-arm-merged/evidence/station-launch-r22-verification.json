@@ -1,0 +1,94 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r22",
+  "scope": "将粗加工/暂存3mm微调和150mm索引启动的严格零速条件统一为现有±15RPM会话容差，修复0/4/2/-2RPM反馈直接导致启动拒绝；反馈有效性、500ms时效、使能/堵转/保护状态、高位收臂和IMU检查保持。首次互锁及移车结束后重新获取互锁仍严格零速，其余参数未扩大。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T125219179Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T125219179Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T125219227Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T125219223Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T125258360Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      1542198,
+      1544581
+    ],
+    "hostArm": [
+      133200
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      3290728,
+      5121248,
+      1051203,
+      1051203,
+      3290831,
+      2455611,
+      5120792
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T125312938Z/build.log",
+    "verification": "evidence/station-launch-r22-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448604,
+    "start": "0x8000000",
+    "endExclusive": "0x806d85c",
+    "artifacts": {
+      "evidence/merged-keil-20261019T125312938Z/table_navigation.axf": "74948449963c763a9b0929fbdfd1c4a9bdd2cc34abb9b7c1c3271a091de8918a",
+      "evidence/merged-keil-20261019T125312938Z/table_navigation.hex": "4d1bbcfa909dec9787d66ff2bd7f8f5c122ab66ac65c6d1a12bfa716c66eac87",
+      "evidence/merged-keil-20261019T125312938Z/table_navigation.map": "462478f75a0d0c6cd888cbc920bd1e7f589359c3499bf2eb9d4fae09b49b1216"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "stationLaunchMaxAbsRpm": 15,
+  "acceptedWheelPatternTested": [
+    0,
+    4,
+    2,
+    -2
+  ],
+  "signedLaunchDistancesTested": [
+    3,
+    -3,
+    150,
+    -150
+  ],
+  "roughAndStorageSigned15BoundaryAccepted": true,
+  "eachWheelSigned16Rejected": true,
+  "firstAcquisitionAndPostMotionReacquisitionStillStrictZero": true,
+  "armAndVisionParametersUnchanged": true,
+  "sourceDiff": "evidence/station-launch-r22-source.diff",
+  "defaultKeilOutputPreserved": {
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "8df946dd2abbdcc70310ae84e824df427c155c16ee2ad580ef30b61e61af17f5",
+      "keil/OBJ/table_navigation.hex": "f55dd0d212a740f6916c357a307d439ccfaee02ae3afd5971129e6fe9e428dda",
+      "keil/OBJ/table_navigation.map": "3a66f3edf30e112e5cb02385de47d92974afe3e826dc03c9fc178e87a7952422"
+    },
+    "scope": "Keil default output untouched; current verified firmware is in the isolated build directory"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

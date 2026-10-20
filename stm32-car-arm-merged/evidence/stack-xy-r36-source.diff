@@ -1,0 +1,425 @@
+--- r35/src/station_job.c
++++ r36/src/station_job.c
+@@ -30,8 +30,8 @@
+     uint8_t phase, job, batch, cursor, count, issued;
+     uint32_t step_ms;
+     uint32_t align_ms, align_sample_ms;
+-    uint8_t align_moving, stack_moving;
+-    int32_t stack_offset_mm;
++    uint8_t align_moving, stack_moving, stack_axis;
++    int32_t stack_offset_mm[2]; /* 0前后，1左右；放完按左右、前后的顺序恢复。 */
+     uint32_t align_travel, warning_ms;
+     uint8_t warning_seen;
+     char reason[192]; /* 中文UTF-8故障原因。 */
+@@ -46,11 +46,15 @@
+ static float station_align_yaw(void) {return storage_job() ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;}
+ 
+ /* 像素→毫米的控制比例由操作者指定，整数四舍五入；保留正负和完整幅值。 */
+-static int32_t vision_move_mm(int16_t pixels)
++static int32_t vision_pixel_mm(int16_t pixels)
+ {
+     int32_t magnitude=pixels<0 ? -(int32_t)pixels : pixels;
+     magnitude=(magnitude*STN_VISION_MM_PER_PX_X1000+500)/1000;
+-    return (pixels<0 ? -magnitude : magnitude)*STN_ALIGN_MOVE_SIGN;
++    return pixels<0 ? -magnitude : magnitude;
++}
++static int32_t vision_move_mm(int16_t pixels)
++{
++    return vision_pixel_mm(pixels)*STN_ALIGN_MOVE_SIGN;
+ }
+ 
+ static void stn_text(const char *s) { arm_output(s); }
+@@ -391,17 +395,12 @@
+         return 1;
+     }
+     case SS_STACK:
+-        stn.stack_moving=0;stn.stack_offset_mm=0;
++        stn.stack_moving=stn.stack_axis=0;
++        stn.stack_offset_mm[0]=stn.stack_offset_mm[1]=0;
+         vision_request_stack((uint8_t)s->value,now);
+         return 1;
+     case SS_STACK_RETURN:
+-        if(stn.stack_offset_mm) {
+-            if(!station_chassis_start(-stn.stack_offset_mm)) {
+-                stn_warning("stack return awaiting required pose/feedback",now);stn.issued=0;return 0;
+-            }
+-            snprintf(line,sizeof(line),"[stack return] move_mm=%ld\r\n",(long)-stn.stack_offset_mm);
+-            stn_text(line);
+-        }
++        stn.stack_moving=stn.stack_axis=0;
+         return 1;
+     case SS_VISION:
+         vision_request_pick((uint8_t)s->value, now);
+@@ -517,35 +516,67 @@
+     stn.align_moving=1;
+ }
+ 
+-/* 每个第二批物料在环位上请求一次F；用返回中心做一次水平修正，再取放。 */
++/* 每块一次F，顺序完成前后和左右修正；两轴完成后才取放。 */
+ static void station_stack_update(const StationStep *s,uint32_t now)
+ {
+     int16_t x,y;
+-    int32_t move_mm;
+-    char line[144];
++    int32_t mm;
++    char line[176];
+     if(stn.stack_moving) {
+         if(station_chassis_failed()){stn_fault("stack alignment motion failed");return;}
+         if(station_chassis_busy())return;
+-        vision_cancel_pick();stn.stack_moving=0;step_finished();return;
+-    }
+-    if(vision_stack_state()!=VISION_PICK_READY) {
+-        if((uint32_t)(now-stn.step_ms)>STN_VISION_TIMEOUT_MS) {
+-            stn_warning("stack target reply delayed; same F request retained",now);stn.step_ms=now;
+-        }
+-        return;
+-    }
+-    vision_stack_result(&x,&y);
+-    move_mm=vision_move_mm((int16_t)(x-STN_STACK_CENTER_X_PX));
+-    if(move_mm && !station_chassis_start(move_mm)) {
+-        stn_warning("stack correction awaiting required pose/feedback",now);return;
+-    }
+-    snprintf(line,sizeof(line),"[station stack] job=%u ring=%u color=%u x=%d y=%d move_mm=%ld place_lift_mm=%d\r\n",
+-             (unsigned)stn.job,(unsigned)s->ring,(unsigned)s->value,(int)x,(int)y,(long)move_mm,
+-             STN_STORAGE_LIFT_MM+STN_STORAGE_LAYER_LIFT_MM);
+-    stn_text(line);
+-    stn.stack_offset_mm=move_mm;
+-    if(move_mm)stn.stack_moving=1;
+-    else {vision_cancel_pick();step_finished();}
++        stn.stack_moving=0;stn.stack_axis++;
++    }
++    if(stn.stack_axis==0) {
++        if(vision_stack_state()!=VISION_PICK_READY) {
++            if((uint32_t)(now-stn.step_ms)>STN_VISION_TIMEOUT_MS) {
++                stn_warning("stack target reply delayed; same F request retained",now);stn.step_ms=now;
++            }
++            return;
++        }
++        vision_stack_result(&x,&y);
++        stn.stack_offset_mm[0]=vision_move_mm((int16_t)(x-STN_STACK_CENTER_X_PX));
++        stn.stack_offset_mm[1]=vision_pixel_mm((int16_t)(y-STN_STACK_CENTER_Y_PX))*STN_STACK_Y_MOVE_SIGN;
++        snprintf(line,sizeof(line),"[station stack] job=%u ring=%u color=%u x=%d y=%d move_mm=%ld lateral_mm=%ld place_lift_mm=%d\r\n",
++                 (unsigned)stn.job,(unsigned)s->ring,(unsigned)s->value,(int)x,(int)y,
++                 (long)stn.stack_offset_mm[0],(long)stn.stack_offset_mm[1],STN_STORAGE_LIFT_MM+STN_STORAGE_LAYER_LIFT_MM);
++        stn_text(line);
++    }
++    if(stn.stack_axis<2) {
++        mm=stn.stack_offset_mm[stn.stack_axis];
++        if(mm) {
++            if(!(stn.stack_axis==0 ? station_chassis_start(mm) : station_chassis_lateral_start(mm))) {
++                stn_warning("stack correction awaiting required pose/feedback",now);return;
++            }
++            stn.stack_moving=1;return;
++        }
++        stn.stack_axis++;return;
++    }
++    vision_cancel_pick();step_finished();
++}
++
++/* 空爪高位撤销左右、前后修正，避免局部坐标修正累入150mm索引。 */
++static void station_stack_return_update(uint32_t now)
++{
++    unsigned axis;
++    int32_t mm;
++    char line[80];
++    if(stn.stack_moving) {
++        if(station_chassis_failed()){stn_fault("stack return motion failed");return;}
++        if(station_chassis_busy())return;
++        stn.stack_offset_mm[1u-stn.stack_axis]=0;
++        stn.stack_moving=0;stn.stack_axis++;
++    }
++    if(stn.stack_axis>=2){step_finished();return;}
++    axis=1u-stn.stack_axis;mm=-stn.stack_offset_mm[axis];
++    if(mm) {
++        if(!(axis==0 ? station_chassis_start(mm) : station_chassis_lateral_start(mm))) {
++            stn_warning("stack return awaiting required pose/feedback",now);return;
++        }
++        snprintf(line,sizeof(line),"[stack return] move_mm=%ld axis=%s\r\n",(long)mm,axis==0 ? "forward" : "lateral");
++        stn_text(line);stn.stack_moving=1;return;
++    }
++    stn.stack_axis++;
+ }
+ 
+ void station_update(uint32_t now)
+@@ -580,6 +611,7 @@
+     }
+     if (s->kind==SS_ALIGN) {station_align_update((uint8_t)s->value,now);return;}
+     if (s->kind==SS_STACK) {station_stack_update(s,now);return;}
++    if (s->kind==SS_STACK_RETURN) {station_stack_return_update(now);return;}
+     if (s->kind == SS_VISION) {
+         int state = vision_pick_state();
+         if (state == VISION_PICK_READY) {
+@@ -596,9 +628,9 @@
+         }
+         return;
+     }
+-    if (s->kind == SS_CHASSIS || s->kind==SS_STACK_RETURN) {
++    if (s->kind == SS_CHASSIS) {
+         if (station_chassis_failed()) stn_fault("station chassis index failed; vehicle held");
+-        else if (!station_chassis_busy()) {stn.stack_offset_mm=0;step_finished();}
++        else if (!station_chassis_busy()) step_finished();
+         else if ((uint32_t)(now - stn.step_ms) > STN_STEP_TIMEOUT_MS)
+             {stn_warning("index duration exceeds estimate",now);stn.step_ms=now;}
+         return;
+--- r35/src/station_job.h
++++ r36/src/station_job.h
+@@ -29,6 +29,8 @@
+ /* 粗加工/暂存使用：高位收回、云台0或粗加工作业角、四轮严格零速。
+  * 支持150mm索引及上位机指定毫米距离；完成后重新取得工位互锁。 */
+ int station_chassis_start(int32_t delta_mm);
++/* 工位横移：正值向左、负值向右；沿用同一编码器/IMU子动作及互锁。 */
++int station_chassis_lateral_start(int32_t delta_mm);
+ int station_chassis_busy(void);
+ int station_chassis_failed(void);
+ 
+--- r35/src/station_config.h
++++ r36/src/station_config.h
+@@ -25,7 +25,9 @@
+ #ifndef STN_VISION_MM_PER_PX_X1000
+ #define STN_VISION_MM_PER_PX_X1000 1000
+ #endif
+-#define STN_STACK_CENTER_X_PX 320 /* 沿用E对准的画面水平中心；y仅记录，不改既有平推/高度。 */
++#define STN_STACK_CENTER_X_PX 320
++#define STN_STACK_CENTER_Y_PX 240
++#define STN_STACK_Y_MOVE_SIGN -1 /* 操作者确认：y>240向右（车体横移负向），y<240向左。 */
+ #define STN_ALIGN_TRAVEL_MM 75
+ #define STN_ALIGN_TIMEOUT_MS 60000u
+ 
+--- r35/src/main_table_nav.c
++++ r36/src/main_table_nav.c
+@@ -1172,7 +1172,7 @@
+         && (yaw==ARM_YAW_HOME_DEG || yaw==work_yaw);
+ }
+ /* 仅增加工位调用接口；复用当前速度/编码器/IMU状态机，不引入远程底盘实现。 */
+-int station_chassis_start(int32_t mm)
++static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
+ {
+     uint8_t i;
+     int storage = run.job == 3u || run.job == 6u;
+@@ -1191,11 +1191,14 @@
+     station_parent = run;
+     if (!start_heading_shift(mm, (uint16_t)index_rpm)) {run = station_parent;return 0;}
+     run.station_shift = run.station_enabled = 1;
+-    run.travel_axis = BODY_FORWARD;
++    run.travel_axis = axis;
+     run.plan = station_parent.plan;run.edge = station_parent.edge;run.job = station_parent.job;
+     run.heading = run.target_heading = station_parent.heading;
+     return 1;
+ }
++
++int station_chassis_start(int32_t mm) {return station_chassis_start_axis(mm,BODY_FORWARD);}
++int station_chassis_lateral_start(int32_t mm) {return station_chassis_start_axis(mm,BODY_LEFT);}
+ 
+ int station_chassis_busy(void) { return (run.station_shift && run_active) || run.station_relock; }
+ int station_chassis_failed(void)
+@@ -2744,7 +2747,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261020-merge2-r35; MOVE pixels; storage F/STACK\r\n");
++    text("[drive] version=20261020-merge2-r36; STACK x/y correction; MOVE pixels\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- r35/tests/verify_station_vision.c
++++ r36/tests/verify_station_vision.c
+@@ -1058,7 +1058,7 @@
+         CHECK(peer_disc_count==1 && vision_tx_count==14);positions=arm_positions;
+         peer_reply("PICK,3,320,240",0);peer_reply("DISC,320,240,0,1",0);peer_reply("NONE,F",0);tick(26000);
+         CHECK(run.state==RUN_STATION && !run_active && arm_positions==positions && vision_tx_count==14);
+-        snprintf(payload,sizeof(payload),"STACK,%d,180",320+pixels);peer_reply(payload,0);tick(1);
++        snprintf(payload,sizeof(payload),"STACK,%d,240",320+pixels);peer_reply(payload,0);tick(1);
+         deadline=clock_ms+60000;
+         if(pixels) {
+             while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+@@ -1090,6 +1090,70 @@
+      CHECK(peer_stack_count==1);stop_request();peer_reply("STACK,320,240",0);tick(500);
+      CHECK(!station_active() && vision_stack_state()==VISION_PICK_IDLE && !run_active);}
+     puts("PASS second-storage F: E once, F per material/color before pickup, 40/-40/0 pixel correction, no grip while waiting/moving, duplicate ignored, late reply resumes, 100 pickup/65 place retained, emergency cancels");
++}
++
++/* 独立车体位置模型核验双轴纠正与逆序恢复，包含每轴正/负/零。 */
++static void stack_xy_tests(void)
++{
++    int xp,yp;
++    if(!STN_STORAGE_PLACE_READY || !STN_PLATFORM_TAKE_READY || STN_STORAGE_LAYER_LIFT_MM<=0
++       || STN_STORAGE_LAYER_LIFT_MM>ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM)return;
++    for(xp=-40;xp<=40;xp+=40)for(yp=-40;yp<=40;yp+=40) {
++        uint32_t deadline;unsigned offset=0,positions,saw_x=0,saw_y=0,return_x=0,return_y=0;
++        int picked=0,placed=0;double anchor_x,anchor_y;char payload[40];RoadPoint point;
++        prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;deadline=clock_ms+30000;
++        while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
++        CHECK(clock_ms<deadline && peer_stack_count==1 && peer_disc_count==1);
++        positions=arm_positions;anchor_x=field_x;anchor_y=field_y;
++        snprintf(payload,sizeof(payload),"STACK,%d,%d",320+xp,240+yp);peer_reply(payload,0);
++        deadline=clock_ms+60000;
++        while(!picked && run.state!=RUN_FAULT && clock_ms<deadline) {
++            int slide,lift;float yaw,claw;
++            plant_step();
++            if(station_chassis_busy()) {
++                CHECK(arm_positions==positions && station_chassis_pose_safe());
++                if(run.station_shift && run.travel_axis==BODY_FORWARD && !saw_x) {
++                    CHECK(xp && !saw_y && run.remaining_mm==40 && run.travel_sign==(xp>0 ? -1 : 1));saw_x=1;
++                }
++                if(run.station_shift && run.travel_axis==BODY_LEFT && !saw_y) {
++                    CHECK(yp && (!xp || saw_x) && run.remaining_mm==40 && run.travel_sign==(yp>0 ? -1 : 1));saw_y=1;
++                    peer_reply("STACK,0,0",0); /* 旧终包不能启动额外修正。 */
++                }
++            }
++            arm_pose_now(&slide,&lift,&yaw,&claw);
++            if(slide==35 && lift==100 && yaw==256 && claw==ARM_CLAW_CLOSE_DEG)picked=1;
++        }
++        CHECK(clock_ms<deadline && picked && saw_x==(xp!=0) && saw_y==(yp!=0));
++        CHECK(fabs(field_x-anchor_x+yp)<5.0 && fabs(field_y-anchor_y+xp)<5.0);
++        peer_stack_hold=0;deadline=clock_ms+250000;
++        while(run.job==6 && run.state!=RUN_FAULT && clock_ms<deadline) {
++            int slide,lift;float yaw,claw;
++            serve_peer(&offset);plant_step();arm_pose_now(&slide,&lift,&yaw,&claw);
++            if(!placed && slide==55 && lift==STN_STORAGE_LIFT_MM+STN_STORAGE_LAYER_LIFT_MM && yaw==125 && claw==ARM_CLAW_OPEN_DEG) {
++                CHECK(fabs(field_x-anchor_x+yp)<5.0 && fabs(field_y-anchor_y+xp)<5.0);placed=1;
++            }
++            if(strstr(output,"[stack return]")) {
++                int mm;char axis[16];
++                CHECK(placed && sscanf(strstr(output,"[stack return]"),"[stack return] move_mm=%d axis=%15s",&mm,axis)==2);
++                CHECK(slide==0 && lift==135 && yaw==125 && claw==ARM_CLAW_OPEN_DEG);
++                if(!strcmp(axis,"lateral")) {CHECK(yp && mm==yp && !return_x);return_y++;}
++                else {CHECK(!strcmp(axis,"forward") && xp && mm==xp && (!yp || return_y));return_x++;}
++            }
++        }
++        CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==7 && placed);
++        CHECK(return_x==(xp!=0) && return_y==(yp!=0) && peer_stack_count==3 && peer_disc_count==1);
++        CHECK(road_point(NODE_H,&point) && fabs(field_x-point.x)<5.0 && fabs(field_y-point.y)<5.0);
++        CHECK(arm_parked());stop_request();
++    }
++    /* 横移执行中急停，不能在迟到终包后继续另一轴或夹取。 */
++    prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;
++    {unsigned offset=0,positions;uint32_t deadline=clock_ms+30000;
++     while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
++     CHECK(peer_stack_count==1);positions=arm_positions;peer_reply("STACK,320,280",0);
++     while(!run.station_shift && clock_ms<deadline)plant_step();
++     CHECK(run.station_shift && run.travel_axis==BODY_LEFT);stop_request();peer_reply("STACK,320,240",0);tick(500);
++     CHECK(!run_active && !station_active() && vision_stack_state()==VISION_PICK_IDLE && arm_positions==positions);}
++    puts("PASS STACK x/y: nine signed/zero pairs, y>240 RIGHT/y<240 LEFT, x then y before grip,100/65 poses, inverse y/x empty125 return, E/F counts preserved, late duplicate and lateral emergency");
+ }
+ 
+ static void station_alignment_tests(void)
+@@ -1219,7 +1283,7 @@
+ #endif
+ int STATION_TEST_MAIN(void)
+ {
+-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();scan_during_turn_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_move_distance_tests();stack_transport_tests();stack_correction_tests();station_alignment_tests();
++    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();scan_during_turn_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_move_distance_tests();stack_transport_tests();stack_correction_tests();stack_xy_tests();station_alignment_tests();
+     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
+     return 0;
+ }
+--- r35/tests/verify_vision_gain.c
++++ r36/tests/verify_vision_gain.c
+@@ -28,7 +28,7 @@
+         prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;deadline=clock_ms+30000;
+         while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
+         CHECK(clock_ms<deadline && peer_stack_count==1);positions=arm_positions;
+-        peer_reply(direction ? "STACK,280,180" : "STACK,360,180",0);tick(1);
++        peer_reply(direction ? "STACK,280,240" : "STACK,360,240",0);tick(1);
+         while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+         CHECK(run.state!=RUN_FAULT && run.station_shift && run.remaining_mm==20);
+         CHECK(run.travel_sign==(direction ? 1 : -1));
+@@ -38,6 +38,20 @@
+         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==14);
+         stop_request();
+     }
+-    printf("PASS configurable pixel gain: %u assertions; test-only0.5mm/px maps signed40px to20mm for D/E MOVE and F STACK, not production calibration\n",assertions);
++    for(direction=0;direction<2;direction++) {
++        uint32_t deadline;unsigned offset=0,positions;
++        prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;deadline=clock_ms+30000;
++        while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
++        CHECK(clock_ms<deadline && peer_stack_count==1);positions=arm_positions;
++        peer_reply(direction ? "STACK,320,200" : "STACK,320,280",0);tick(1);
++        while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
++        CHECK(run.state!=RUN_FAULT && run.station_shift && run.travel_axis==BODY_LEFT && run.remaining_mm==20);
++        CHECK(run.travel_sign==(direction ? 1 : -1));
++        while(station_chassis_busy() && run.state!=RUN_FAULT && clock_ms<deadline) {
++            CHECK(arm_positions==positions);plant_step();
++        }
++        CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==14);stop_request();
++    }
++    printf("PASS configurable pixel gain: %u assertions; test-only0.5mm/px maps signed40px to20mm for D/E MOVE and both F STACK axes, not production calibration\n",assertions);
+     return 0;
+ }
+--- r35/tools/verify-station-vision.ps1
++++ r36/tools/verify-station-vision.ps1
+@@ -37,7 +37,7 @@
+         'tests/verify_station_vision.c','tests/verify_vision_gain.c','tools/verify-station-vision.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+     }
+-    [ordered]@{passed=$true;exitCode=$checkExit;scope='MOVE pixels with operator-assumed1px/mm configurable scaling; second storage E once then F,color/STACK per material, no returned height, one center correction before100 pickup/65 place, exact colors/CRC and cancellation/late frames; full signed pixel magnitude and plus supported; DISC coordinate consistency veto removed: D/E accept reported ok1 despite dx!=cx-320, including386/177/71 and420/620 offsets; in-motion terminal reply waits for completion then reaches platform100 grip; simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return D/E requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, full commanded millimeter corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup100/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
++    [ordered]@{passed=$true;exitCode=$checkExit;scope='STACK x/y: x drives front/back then y drives lateral, ypositive RIGHT/ynegative LEFT at240; nine signed/zero cases, inverse y/x return, lateral emergency and half gain; MOVE pixels with operator-assumed1px/mm configurable scaling; second storage E once then F,color/STACK per material, no returned height, one center correction before100 pickup/65 place, exact colors/CRC and cancellation/late frames; full signed pixel magnitude and plus supported; DISC coordinate consistency veto removed: D/E accept reported ok1 despite dx!=cx-320, including386/177/71 and420/620 offsets; in-motion terminal reply waits for completion then reaches platform100 grip; simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return D/E requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, full commanded millimeter corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup100/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
+         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $checkOut 'result.json') -Encoding UTF8
+     Write-Output $checkOut
+ } finally {$env:PATH=$checkOldPath;Pop-Location}
+--- r35/README.md
++++ r36/README.md
+@@ -1,4 +1,6 @@
+ # 底盘＋机械机构独立合并工程
++
++r36：第二次暂存的STACK加入y左右横移。画面中心320/240，按操作者确认y>240向右、y<240向左、y=240不横移；x前后方向保持。先完成x前后，再完成y左右，两轴结束后100mm夹取、65mm放置。放完空爪高位保持125°，依次撤销y、x修正再继续150mm索引。两轴沿用1px=1mm假设及同一可调比例；每块一次F、每区一次D/E和原抓放参数保持。无新增像素合格门槛、无R或重复F。单次双轴坐标修正，未烧录或实车标定。
+ 
+ r35：MOVE字段按像素解释，使用STN_VISION_MM_PER_PX_X1000集中换算；当前按操作者假定1px=1mm（1000），不是实测标定。第二次暂存先E对准2号，再在各目标环位发送一次F,当前颜色；接收STACK,x,y，按x−320换算后做一次前后修正，移动结束后平台100mm夹取、地面65mm放置；空爪收臂并保持125°恢复F前位置，再继续150mm索引。y仅记录，不改平推/高度。F不返回高度；无额外偏差幅值门槛、不重发F、不发R。D/E每次进站一次、DISC按ok=1放行及其余抓放参数保持。单次坐标修正不代表再次视觉确认或实车叠放验收。
+ 
+@@ -31,7 +33,7 @@
+ 历史r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
+ 
+ 
+-**当前版本：20261020-merge2-r35。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号按150mm索引，不再请求D/E；第二批暂存每块另请求F定位同色底座。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/100/256°。两区高位收回后保持125°做150mm索引或按上位机像素偏差换算的视觉移车，MOVE正值后退、负值前进（当前假定1px/mm）；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261020-merge2-r36。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号按150mm索引，不再请求D/E；第二批暂存每块另请求F定位同色底座。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/100/256°。两区高位收回后保持125°做150mm索引或按上位机像素偏差换算的视觉移车，MOVE正值后退、负值前进（当前假定1px/mm）；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -46,8 +48,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已核对r35固件为 `evidence/merged-keil-20261020T121800202Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r35`。只显示发送记录不代表板子已回复。
++3. 本次已核对r36固件为 `evidence/merged-keil-20261020T122953074Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r36`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- r35/docs/合并与串口操作.md
++++ r36/docs/合并与串口操作.md
+@@ -1,4 +1,6 @@
+ # 合并范围与串口操作
++
++r36：第二次暂存的STACK加入y左右横移。画面中心320/240，按操作者确认y>240向右、y<240向左、y=240不横移；x前后方向保持。先完成x前后，再完成y左右，两轴结束后100mm夹取、65mm放置。放完空爪高位保持125°，依次撤销y、x修正再继续150mm索引。两轴沿用1px=1mm假设及同一可调比例；每块一次F、每区一次D/E和原抓放参数保持。无新增像素合格门槛、无R或重复F。单次双轴坐标修正，未烧录或实车标定。
+ 
+ r35：MOVE字段按像素解释，使用STN_VISION_MM_PER_PX_X1000集中换算；当前按操作者假定1px=1mm（1000），不是实测标定。第二次暂存先E对准2号，再在各目标环位发送一次F,当前颜色；接收STACK,x,y，按x−320换算后做一次前后修正，移动结束后平台100mm夹取、地面65mm放置；空爪收臂并保持125°恢复F前位置，再继续150mm索引。y仅记录，不改平推/高度。F不返回高度；无额外偏差幅值门槛、不重发F、不发R。D/E每次进站一次、DISC按ok=1放行及其余抓放参数保持。单次坐标修正不代表再次视觉确认或实车叠放验收。
+ 
+--- r35/docs/按任务码作业与暂存叠放.md
++++ r36/docs/按任务码作业与暂存叠放.md
+@@ -1,4 +1,6 @@
+ # 按任务码作业与暂存叠放
++
++r36：第二次暂存的STACK加入y左右横移。画面中心320/240，按操作者确认y>240向右、y<240向左、y=240不横移；x前后方向保持。先完成x前后，再完成y左右，两轴结束后100mm夹取、65mm放置。放完空爪高位保持125°，依次撤销y、x修正再继续150mm索引。两轴沿用1px=1mm假设及同一可调比例；每块一次F、每区一次D/E和原抓放参数保持。无新增像素合格门槛、无R或重复F。单次双轴坐标修正，未烧录或实车标定。
+ 
+ r35：MOVE字段按像素解释，使用STN_VISION_MM_PER_PX_X1000集中换算；当前按操作者假定1px=1mm（1000），不是实测标定。第二次暂存先E对准2号，再在各目标环位发送一次F,当前颜色；接收STACK,x,y，按x−320换算后做一次前后修正，移动结束后平台100mm夹取、地面65mm放置；空爪收臂并保持125°恢复F前位置，再继续150mm索引。y仅记录，不改平推/高度。F不返回高度；无额外偏差幅值门槛、不重发F、不发R。D/E每次进站一次、DISC按ok=1放行及其余抓放参数保持。单次坐标修正不代表再次视觉确认或实车叠放验收。
+ 
+@@ -128,12 +130,14 @@
+ 
+ r18测试视觉端在一个D之后每300ms主动输出MOVE，直到最终DISC才结束，禁止任务未结束时再收到D；粗加工每次完整作业8个对准步骤对应8次D，暂存5个步骤对应5次D，不依赖重发请求产生反馈。自动帧仅允许C/D，出现R立即失败。覆盖移动期间偏差丢弃、最终DISC保留至停稳，以及CRC、坐标、超时、UART和原有故障。当前板上视觉程序和真实动作未核验；协议无请求编号，跨任务在途迟到回包无法完全区分。
+ 
+-### r35第二批暂存视觉码垛接入
++### 当前第二批暂存视觉码垛接入（r36）
+ 
+-第二次暂存（job=6/batch=1）先保持125°并用E对准2号基准。每块移到第一批同色的G2环位后发送一次F,<G3当前颜色>，等STACK,x,y，再执行一次水平坐标修正；车身移车和新鲜状态交接完成后才从平台100mm夹取，按55/65/125°放置；空爪高位保持125°，抵消本次F修正后再继续150mm索引，保留E基准。F共三次，不增加D/E或R。第一次暂存及粗加工不发F。
++第二次暂存（job=6/batch=1）先保持125°并用E对准2号基准。每块移到第一批同色的G2环位后发送一次F,<G3当前颜色>，等STACK,x,y，先执行x前后修正，再执行y左右修正；车身移车和新鲜状态交接完成后才从平台100mm夹取，按55/65/125°放置；空爪高位保持125°，先抵消y左右、再抵消x前后修正，然后继续150mm索引，保留E基准。F共三次，不增加D/E或R。第一次暂存及粗加工不发F。
+ 
+-MOVE是有符号像素偏差；F修正使用x−320。两者统一乘STN_VISION_MM_PER_PX_X1000/1000并四舍五入，正偏差后退、负偏差前进。当前1000是操作者指定的1px/mm假设，非标定；测试专用500用于验证40px→20mm，不是生产参数。STACK的y仅记录；既有平推和两层高度保持。
++MOVE是有符号像素偏差；F修正使用x−320。两者统一乘STN_VISION_MM_PER_PX_X1000/1000并四舍五入，正偏差后退、负偏差前进。当前1000是操作者指定的1px/mm假设，非标定；测试专用500用于验证40px→20mm，不是生产参数。STACK的y−240换算车身左右横移，正值向右、负值向左；既有平推和两层高度保持。
+ 
+-F回包不含高度、同色确认标志或成功位。收到格式正确的中心后做一次修正，不设额外像素合格门槛、不再次F复测，也不声称已视觉闭环确认。源码中视觉找不到同色底座时也可能返回空环/ROI中心，仅凭STACK无法区分；本次不伪造底座检测证明。实际机位、像素比例、夹爪对中与堆叠稳定性需要实车验证。
++F回包不含高度、同色确认标志或成功位。收到格式正确的中心后做一次顺序双轴修正，不设额外像素合格门槛、不再次F复测，也不声称已视觉闭环确认。源码中视觉找不到同色底座时也可能返回空环/ROI中心，仅凭STACK无法区分；本次不伪造底座检测证明。实际机位、像素比例、夹爪对中与堆叠稳定性需要实车验证。
+ 
+-日志可查[vision] queued request F,<颜色>、[vision] STACK、[station stack]的ring/color/x/y/move_mm/place_lift_mm。vision status新增[vision stack]状态。25秒未回复仅记录告警并保留原F，不自动重发、不自动停机或假定定位成功。
++日志可查[vision] queued request F,<颜色>、[vision] STACK、[station stack]的ring/color/x/y/move_mm/lateral_mm/place_lift_mm。vision status新增[vision stack]状态。25秒未回复仅记录告警并保留原F，不自动重发、不自动停机或假定定位成功。
++
++横移约定：station_chassis_lateral_start正毫米为车体向左、负毫米为向右；STN_STACK_Y_MOVE_SIGN=-1对应操作者确认的相机y方向。STN_STACK_CENTER_Y_PX=240。坐标零偏差的轴跳过，不制造零距离动作；有偏差的两轴均等待原编码器/IMU完成和工位状态交接，禁止在第二轴未完成时抓取。回程以[stack return]的axis=lateral/forward分别记录，仍不插入云台0°。

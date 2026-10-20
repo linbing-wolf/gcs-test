@@ -123,11 +123,18 @@ static void return_failure_tests(void)
             if(test==5)stop_request();
             if(test==6)send_line("obstacle");
         }
-        deadline=clock_ms+25000;
-        while(run_active && clock_ms<deadline)plant_step();
-        CHECK(!run_active && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
-        CHECK(run.job==2);
-        if(test<2)CHECK(velocity_batches==before_batches);
+        if(test<5) {
+            deadline=clock_ms+1200;while(run_active && clock_ms<deadline)plant_step();
+            CHECK(run.state!=RUN_FAULT && run.job==2);
+            missing_feedback_motor=moving_at_stop_motor=missing_velocity_ack=0;
+            deadline=clock_ms+25000;
+            while(run_active && clock_ms<deadline)plant_step();
+            CHECK(!run_active && run.state==RUN_WAIT_OBSTACLE && run.job==2);
+            (void)before_batches;
+        } else {
+            deadline=clock_ms+25000;while(run_active && clock_ms<deadline)plant_step();
+            CHECK(!run_active && (run.state==RUN_FAULT || run.state==RUN_STOPPED));CHECK(run.job==2);
+        }
     }
     begin_route(1,0);send_line("obstacle");
     {uint32_t deadline=clock_ms+10000;

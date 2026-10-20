@@ -1,0 +1,180 @@
+{
+  "passed": true,
+  "version": "20261020-merge2-r30",
+  "scope": "三项节拍优化：粗加工/暂存高位收回后云台与平台并行转向；原地转向Kp120→200、最低3→5RPM，过冲反修和精度判据保持；首次B点转向中接收并锁定任务码，出站航向到位后直接接B-E、无多余扫码互锁。保留用户已改轴速2500/舵机600ms与加速度200。未修改视觉任务的失败终包流程。",
+  "sourceFilesChanged": [
+    "docs/合并与串口操作.md",
+    "docs/按任务码作业与暂存叠放.md",
+    "README.md",
+    "src/arm_control.c",
+    "src/arm_control.h",
+    "src/car_config.h",
+    "src/main_table_nav.c",
+    "src/station_job.c",
+    "src/station_job.h",
+    "tests/verify_arm_integration.c",
+    "tests/verify_drive.c",
+    "tests/verify_heading.c",
+    "tests/verify_station_vision.c",
+    "tools/verify-station-vision.ps1"
+  ],
+  "sourceHashes": {
+    "docs/合并与串口操作.md": "7dae977c94b0d111eb72862f50ee3809cfca9479e12b925b8dd29b2eec2ce7da",
+    "docs/按任务码作业与暂存叠放.md": "3f4f87ebc76030a14b2a6af46bf25e69c42961840f8a06f7c5f723044d5d1b94",
+    "README.md": "4d2c70623d8b4e98b91661c06e30f951444ba1200d9267f5e62885c19525b607",
+    "src/arm_control.c": "b0f5e15fe08d102e7d479cd03cec6708ad85cab156760e4a1028aa28c1bb3c86",
+    "src/arm_control.h": "2fec53ed0530bb9b1a4974d16107bc217c965dae352b370399a4ff11c050934a",
+    "src/car_config.h": "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+    "src/main_table_nav.c": "26baccbf03e90a1065b43d1b811f8cd096cdaa24d0773731d6d7acd0d0c45e3d",
+    "src/station_job.c": "28ea2a5f7c3e0cabbaa46ad07c65468bfab9c62ed56e3540e9422bd218a9b2f5",
+    "src/station_job.h": "42ada2307139484651356988549a7438f649517ace287e7165ff9c7d7d6827b7",
+    "tests/verify_arm_integration.c": "312a2fb4c8fb6caea95c6e53e32a9dcef8c42aba8bb60d62ffc5a14194e7ba70",
+    "tests/verify_drive.c": "7cfa35d90beb6d7b34073d7634bb31ef9d18e56824b185590f879679b358b6be",
+    "tests/verify_heading.c": "34d152a4f6f9c11afc50efa3b9d372032bc7b77bdd1b9ad1fc9919aef6163142",
+    "tests/verify_station_vision.c": "6fd30d9d0158b45000bda1b19c13a7b2872e85e89729d2c092a13a7de6de5f4c",
+    "tools/verify-station-vision.ps1": "7a0bb12dc07ef29dbdf372094afd04bceff829335f4d21dadbb9c80be5ea37da"
+  },
+  "preservedArmConfigHash": "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+  "reports": {
+    "heading": "evidence/heading-native-20261020T065928275Z/result.json",
+    "arm": "evidence/arm-native-20261020T065928375Z/result.json",
+    "drive": "evidence/drive-native-20261020T065928442Z/result.json",
+    "continuous": "evidence/continuous-native-20261020T065928442Z/result.json",
+    "station": "evidence/station-native-20261020T065928342Z/result.json"
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261020T065941218Z/build.log",
+    "verification": "evidence/timing-r30-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 450436,
+    "start": "0x8000000",
+    "endExclusive": "0x806df84",
+    "artifacts": {
+      "evidence/merged-keil-20261020T065941218Z/table_navigation.axf": "b7a6f05a57a430c10d837240327eeef82b0ea85fe777facadcccbe20d9f1f6e7",
+      "evidence/merged-keil-20261020T065941218Z/table_navigation.hex": "5ea640681b2876985c9b9e0906fa1699fef56cc1a3a6a5227c93c12016b1cfb8",
+      "evidence/merged-keil-20261020T065941218Z/table_navigation.map": "4d0bc7bfb6aed61d966b8f93ceb7192596016f36e0bbd5f139d4687709d2b3f5"
+    }
+  },
+  "staticStack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "timingOptimization": {
+    "verification": "evidence/timing-r30-verification.json",
+    "details": "docs/作业节拍优化.md",
+    "parallelRotation": {
+      "jobs": [
+        2,
+        3,
+        5,
+        6
+      ],
+      "beforeSlideMm": 0,
+      "beforeLiftMm": 135,
+      "targetSelectionAndYawSameStep": true,
+      "finalSlot1AndYaw0SameStep": true,
+      "nextExtensionWaitsForCombinedCompletion": true,
+      "rawAlreadyParallelUnchanged": true,
+      "serialMs": 1303,
+      "parallelMs": 652,
+      "physicalVerified": false
+    },
+    "turn": {
+      "beforeKpX100": 120,
+      "afterKpX100": 200,
+      "beforeMinRpm": 3,
+      "afterMinRpm": 5,
+      "kdX100": 30,
+      "toleranceCdegUnchanged": 80,
+      "stableMsUnchanged": 300,
+      "physicalOvershootReverseRetained": true,
+      "translationPdAndSlewUnchanged": true,
+      "independentPlantMetrics": [
+        {
+          "gain": 0.65,
+          "angleDeg": 90,
+          "beforeMs": 7365,
+          "afterMs": 5100,
+          "reductionPercent": 30.75,
+          "afterErrorCdeg": 69
+        },
+        {
+          "gain": 0.65,
+          "angleDeg": 180,
+          "beforeMs": 9675,
+          "afterMs": 7395,
+          "reductionPercent": 23.57,
+          "afterErrorCdeg": 70
+        },
+        {
+          "gain": 1.0,
+          "angleDeg": 90,
+          "beforeMs": 5295,
+          "afterMs": 3675,
+          "reductionPercent": 30.59,
+          "afterErrorCdeg": 69
+        },
+        {
+          "gain": 1.0,
+          "angleDeg": 180,
+          "beforeMs": 6795,
+          "afterMs": 5175,
+          "reductionPercent": 23.84,
+          "afterErrorCdeg": 69
+        },
+        {
+          "gain": 1.4,
+          "angleDeg": 90,
+          "beforeMs": 4200,
+          "afterMs": 2925,
+          "reductionPercent": 30.36,
+          "afterErrorCdeg": 64
+        },
+        {
+          "gain": 1.4,
+          "angleDeg": 180,
+          "beforeMs": 5250,
+          "afterMs": 3990,
+          "reductionPercent": 24.0,
+          "afterErrorCdeg": 63
+        }
+      ]
+    },
+    "scanner": {
+      "hardwareContinuousModeUnchanged": true,
+      "acceptsFromFirstBArrival": true,
+      "acceptsDuringScanTurn": true,
+      "firstValidTaskLatched": true,
+      "duplicateDoesNotReplace": true,
+      "preBIdleReturnAndStoppedCodesIgnored": true,
+      "noStopTriggerAdded": true,
+      "routeHeadingRequiredBeforeDeparture": true,
+      "scanAndDepartureHeadingBoth": "HEAD_X_NEG",
+      "skipRedundantScanStationInterlockWhenAlreadyLatched": true,
+      "fragmentInvalidDuplicateStopLateAndTelemetryRecoveryTested": true
+    },
+    "preexistingArmConfigPreserved": true,
+    "axisRpm": 2500,
+    "servoMs": 600,
+    "clawMs": 200,
+    "driverAccel": 200,
+    "visionFailureTerminalIssueResolved": false,
+    "hardwareAccessed": false
+  },
+  "benchmarkBeforeConfigHash": "f1610e4462a498b784bb911429d1d9073301c6f8a7e6129bb44594639d6e9c8d",
+  "benchmarkAfterConfigHash": "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

@@ -1,0 +1,21 @@
+{
+  "snapshot": "evidence/rough-place5-before-20261019T133115320910Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "actual": "c228e0c2a02d9f4cf9861de90eeb76b1f02cad099f3a1c6cc87722de647b71a3",
+      "manifest": "7624323064a65a217cfddf00cc78ccdf895443e810022df75e2070d6f54aad77"
+    },
+    "keil/OBJ/table_navigation.hex": {
+      "actual": "c41cf2da0613d396fb6421a76e85684f40c64c3ed71c81fb405a92e2ed0b974e",
+      "manifest": "ce0974be47c91e03cf7e556062aeda85f64ab6fd47c9eda7b3f8e427bbd93f55"
+    },
+    "keil/OBJ/table_navigation.map": {
+      "actual": "d14ffb57e85aba421728d672e4c1fde7aae0518d98644cc902aa6c49849837f7",
+      "manifest": "d55b9157fd301d207416de6bb1170d0c5ca1ab1e8ec3b864d6faf8df888953a1"
+    },
+    "src/station_config.h": {
+      "actual": "32bbde0728c2f5324d077df4257571a5d4a0821ccfba4817a601a142d308ade1",
+      "manifest": "ad56ac3d82377308864d0b6e748c5b1f158260ccaf14ad409b62142a614ebcd0"
+    }
+  }
+}

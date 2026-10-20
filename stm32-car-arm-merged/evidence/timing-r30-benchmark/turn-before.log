@@ -1,0 +1,6 @@
+TURN_TIMING gain=0.65 angle=90 elapsed_ms=7365 error_cdeg=75 reverse=0
+TURN_TIMING gain=0.65 angle=180 elapsed_ms=9675 error_cdeg=76 reverse=0
+TURN_TIMING gain=1.00 angle=90 elapsed_ms=5295 error_cdeg=73 reverse=0
+TURN_TIMING gain=1.00 angle=180 elapsed_ms=6795 error_cdeg=73 reverse=0
+TURN_TIMING gain=1.40 angle=90 elapsed_ms=4200 error_cdeg=65 reverse=0
+TURN_TIMING gain=1.40 angle=180 elapsed_ms=5250 error_cdeg=71 reverse=0

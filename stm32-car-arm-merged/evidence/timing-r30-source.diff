@@ -1,0 +1,536 @@
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -1,4 +1,7 @@
+ # 合并范围与串口操作
++
++r30：粗加工/暂存换盘与云台转向共用一次插值，抬高收回后并行旋转，完成后再伸出/下降；原料区原有并行换盘保持。原地转向Kp从1.20提高至2.00 RPM/度，最低修正从3提高至5 RPM，Kd=0.30、±0.80度容差和过冲反修保持；直行PD、速度斜坡和加速度200不变。首个B点到达后立即接收持续扫码，转向期间锁定首个有效任务，航向到位后直接衔接B→E；没扫到则继续在B等。保留本地已有轴速2500和舵机600ms。详见[作业节拍优化](作业节拍优化.md)。未烧录或实车验证。
++
+ 
+ r29：查询/ACK/动作/视觉等待超时、反馈过期和接收溢出改为告警与恢复，不再因此进入FAULT或取消任务。轮速幅值和持续时间不再触发停机，含手动机构会话。缺少有效底盘反馈时零输出并保留当前任务/编码器基线，数据恢复后接续；机构等待真实位置/到位，视觉等待真实PICK/DISC，不伪造完成、不重发D/E。显式停止、驱动器/总线硬故障、机械超行程与严重定位错误仍停止，非法任务/缓存越界仍拒绝。详见[自动停机检查与告警策略](自动停机检查与告警策略.md)。加速度200、斜坡120及抓放参数保持，未烧录或实车验收。
+ 
+@@ -20,7 +23,7 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r29支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261020-merge2-r30支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
+ 
+ r24按操作者要求改为每次进站只请求一次视觉：粗加工D、暂存E，125°观察姿态对准中间2号基准；后续放料、粗加工抓回及最终回2号只用现有150mm索引，不再发D/E。一次请求中连续MOVE至成功DISC的处理保持。两批各自进站各请求一次；其余动作及r23轮速日志策略保持。
+ 
+@@ -50,7 +53,7 @@
+ 
+ 当前r26暂存第一层沿用粗加工55mm平推、5mm升降、125°云台，平台取料35mm/100mm/256°；第二层在同一位置叠放，lift=5+60=65mm，第二批平台取料仍110mm。生产配置两批全流程通过电脑模拟，135mm行程上限保持；实际对中、松爪高度和叠放稳定性未实车验证。旧105mm首层/165mm第二层配置已替换。
+ 
+-r9任务码只对一整轮 `runimu A/C` 有效：第一批和第二批作业共用该任务，工位间交接及返程经过B均不清除、不重复要求扫码。完成两批并返回启停区、整轮完成时清空任务码；急停或故障取消本轮时也清空。下一轮可重新手输任务，或在首个B点等待重新扫码。扫码模块只有在首个B点扫码等待时才向任务解析器提交，闲置及整轮结束后的连续扫码只显示结果，不重新缓存旧任务。`station` 的 `task_ready=0`、两批 `colors=000 rings=000` 表示已失效；不影响同一轮两批作业的任务复用。
++r9任务码只对一整轮 `runimu A/C` 有效：第一批和第二批作业共用该任务，工位间交接及返程经过B均不清除、不重复要求扫码。完成两批并返回启停区、整轮完成时清空任务码；急停或故障取消本轮时也清空。下一轮可重新手输任务，或在首个B点等待重新扫码。r30扫码模块在首个B点到达后即可向任务解析器提交，包含扫码转向期间；仅锁定首个有效任务，闲置及整轮结束后的连续扫码只显示结果，不重新缓存旧任务。`station` 的 `task_ready=0`、两批 `colors=000 rings=000` 表示已失效；不影响同一轮两批作业的任务复用。
+ 
+ r8修复起步微小反向位置反馈可能锁错编码器方向的问题：每轮净位移至少2mm、连续两份不同时间且同向增长的位置反馈才确认方向；四轮全部确认前平移限20RPM，1.5秒仍未确认则故障停车。正常后输出 `[encoder directions confirmed] signs=...`。通过E不停时保留同一组基线和方向；F→E→D仍为860+810=1670mm。已确认方向的某轮若累计明显反向超过2mm，会输出 `[encoder direction conflict] wheel=...` 并停车，避免四轮平均时相互抵消。这些门槛是软件初值，不能代替实车超程原因确认。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ docs/按任务码作业与暂存叠放.md
+@@ -1,4 +1,7 @@
+ # 按任务码作业与暂存叠放
++
++r30：粗加工/暂存换盘与云台转向共用一次插值，抬高收回后并行旋转，完成后再伸出/下降；原料区原有并行换盘保持。原地转向Kp从1.20提高至2.00 RPM/度，最低修正从3提高至5 RPM，Kd=0.30、±0.80度容差和过冲反修保持；直行PD、速度斜坡和加速度200不变。首个B点到达后立即接收持续扫码，转向期间锁定首个有效任务，航向到位后直接衔接B→E；没扫到则继续在B等。保留本地已有轴速2500和舵机600ms。详见[作业节拍优化](作业节拍优化.md)。未烧录或实车验证。
++
+ 
+ r29：查询/ACK/动作/视觉等待超时、反馈过期和接收溢出改为告警与恢复，不再因此进入FAULT或取消任务。轮速幅值和持续时间不再触发停机，含手动机构会话。缺少有效底盘反馈时零输出并保留当前任务/编码器基线，数据恢复后接续；机构等待真实位置/到位，视觉等待真实PICK/DISC，不伪造完成、不重发D/E。显式停止、驱动器/总线硬故障、机械超行程与严重定位错误仍停止，非法任务/缓存越界仍拒绝。详见[自动停机检查与告警策略](自动停机检查与告警策略.md)。加速度200、斜坡120及抓放参数保持，未烧录或实车验收。
+ 
+@@ -35,9 +38,9 @@
+ 3. 升到135mm、收回平推，直接转125°，平推55mm，升降到5mm，张爪放下。
+ 4. 升到135mm、收回平推，保持125°进入下一次移车。
+ 
+-三块全部放完，按同一任务靶位顺序索引后抓回：125°/55mm/5mm夹起，升到135mm收回，保持125°选择原盘位，再直接转256°，按35mm/110mm放回原盘，松爪、抬高收回并直接转125°。抓回和放回也不插入车头0°。放回平台高度110mm沿用原值，不与本次取料100mm混改。
++三块全部放完，按同一任务靶位顺序索引后抓回：125°/55mm/5mm夹起，升到135mm收回，选择原盘位与转256°在同一步并行执行，按35mm/110mm放回原盘，松爪、抬高收回并直接转125°。抓回和放回也不插入车头0°。放回平台高度110mm沿用原值，不与本次取料100mm混改。
+ 
+-最后按索引回2号基准，在125°高位收回时把平台恢复1号，再回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；粗加工与暂存状态机使用带指定观察角检查的内部换盘接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
++最后按索引回2号基准，在高位收回时并行把平台恢复1号、云台回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；粗加工与暂存状态机使用高位收回时的云台/平台并行旋转内部接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
+ 
+ 例如第一批G1=314、G2=231：取1盘蓝放2号、取2盘红放3号、取3盘绿放1号；随后依次从2、3、1号抓回1、2、3盘。G4只影响第二批粗加工。
+ 
+--- before/README.md
++++ README.md
+@@ -1,4 +1,7 @@
+ # 底盘＋机械机构独立合并工程
++
++r30：粗加工/暂存换盘与云台转向共用一次插值，抬高收回后并行旋转，完成后再伸出/下降；原料区原有并行换盘保持。原地转向Kp从1.20提高至2.00 RPM/度，最低修正从3提高至5 RPM，Kd=0.30、±0.80度容差和过冲反修保持；直行PD、速度斜坡和加速度200不变。首个B点到达后立即接收持续扫码，转向期间锁定首个有效任务，航向到位后直接衔接B→E；没扫到则继续在B等。保留本地已有轴速2500和舵机600ms。详见[作业节拍优化](docs/作业节拍优化.md)。未烧录或实车验证。
++
+ 
+ r29：查询/ACK/动作/视觉等待超时、反馈过期和接收溢出改为告警与恢复，不再因此进入FAULT或取消任务。轮速幅值和持续时间不再触发停机，含手动机构会话。缺少有效底盘反馈时零输出并保留当前任务/编码器基线，数据恢复后接续；机构等待真实位置/到位，视觉等待真实PICK/DISC，不伪造完成、不重发D/E。显式停止、驱动器/总线硬故障、机械超行程与严重定位错误仍停止，非法任务/缓存越界仍拒绝。详见[自动停机检查与告警策略](docs/自动停机检查与告警策略.md)。加速度200、斜坡120及抓放参数保持，未烧录或实车验收。
+ 
+@@ -18,7 +21,7 @@
+ 历史r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
+ 
+ 
+-**当前版本：20261019-merge2-r29。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/110/256°。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261020-merge2-r30。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/110/256°。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -33,8 +36,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已核对r29固件为 `evidence/merged-keil-20261019T151410055Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r29`。只显示发送记录不代表板子已回复。
++3. 本次已核对r30固件为 `evidence/merged-keil-20261020T065941218Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r30`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/src/arm_control.c
++++ src/arm_control.c
+@@ -450,6 +450,16 @@
+     start_single(step,now);
+     return arm_busy() && !arm_failed();
+ }
++int arm_platform_with_yaw(uint8_t slot,float target_yaw,uint32_t now)
++{
++    ArmStep step={0,0,0,0,0,YAW|PLATFORM};
++    if(slot<1u || slot>3u || !arm_ready()
++        || arm.slide!=ARM_SLIDE_HOME_MM || arm.lift!=ARM_LIFT_HOME_MM
++        || !pose_valid(arm.slide,arm.lift,target_yaw,arm.claw)) return 0;
++    step.yaw=target_yaw;step.platform=platform_angle_of(slot);
++    start_single(step,now);
++    return arm_busy() && !arm_failed();
++}
+ static void arm_status(void)
+ {
+     /* 仅主循环调用；固定缓冲避免浮点格式化占满启动文件的1KiB栈。 */
+--- before/src/arm_control.h
++++ src/arm_control.h
+@@ -19,6 +19,8 @@
+ /* 工位内部换盘：调用方须持有停车互锁；仅在高位收回且云台等于指定作业角时接受。
+  * 普通arm platform命令仍要求车头0度，不放宽手动接口。 */
+ int arm_platform_at_yaw(uint8_t slot, float work_yaw, uint32_t now);
++/* 工位高位收回时，载物台选杯与云台转向共用一次插值；完成后才可伸出/下降。 */
++int arm_platform_with_yaw(uint8_t slot, float target_yaw, uint32_t now);
+ void arm_pose_now(int *slide, int *lift, float *yaw, float *claw);
+ void arm_can_error(uint8_t flags);
+ void arm_can_rx(uint32_t id, uint8_t ide, uint8_t rtr,
+--- before/src/car_config.h
++++ src/car_config.h
+@@ -63,9 +63,9 @@
+ #define CAR_HEADING_STABLE_SAMPLES     3u
+ #define CAR_HEADING_SETTLE_MS        100u
+ #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
+-#define CAR_HEADING_KP_X100          120       /* 1.20 RPM/度，角度误差到电机速度。 */
++#define CAR_HEADING_KP_X100          200       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
+ #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
+-#define CAR_HEADING_MIN_RPM           3       /* 误差超容差时的低速修正初值。 */
++#define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
+ #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
+ #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
+ /* 直行保持航向独立于原地转向：沿用PD增益初值，小角度仍保留角速度阻尼。 */
+@@ -73,7 +73,7 @@
+ #define CAR_DRIVE_HEADING_KD_X100     30       /* RPM/(度/秒) ×100。 */
+ #define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
+ #define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
+-#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向3RPM跳变。 */
++#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向的最低转速跳变。 */
+ #define CAR_DRIVE_ACCEL_RPM_PER_S    120u      /* 速度指令上升率RPM/s；0到90RPM至少750ms，沿用可跟随斜坡，与驱动器200档位不是同一单位。 */
+ #define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速及制动距离计算共用RPM/s；沿用120的可跟随制动斜坡，不能由驱动器200档位推定制动能力。 */
+ #define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 100u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -554,8 +554,10 @@
+                     scanner.result[--scanner.length] = 0;
+                     if (scanner.length) {
+                         text("[scan] "); text(scanner.result); text("\r\n"); scanner.results++;
+-                        /* 只在本轮首次B点等待时接收任务；闲置/结束后的连续扫码不能重装旧码。 */
+-                        if (!run_active && run.state == RUN_STATION && run.job == 0u) {
++                        /* 首次抵达B即接码，包含转向过程；首个有效任务锁定，闲置/回程不重装。 */
++                        if (run.station_enabled && run.job==0u && run.edge==1u
++                            && ((run_active && run.scan_turn_stage==1u) || (!run_active && run.state==RUN_STATION))
++                            && !stop_pending && !station_task_ready()) {
+                             char task_line[sizeof(scanner.result) + 6u];
+                             snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
+                             (void)station_command(task_line);
+@@ -1229,7 +1231,7 @@
+     if (run.station_enabled && node == NODE_B && run.job == 0u) {
+         run.scan_turn_stage=1;
+         run.target_heading=(RoadHeading)STN_SCAN_HEADING;run.remaining_mm=0;
+-        text("[scan station] align rear scanner to QR before waiting for task\r\n");
++        text("[scan station] B reached; accepting QR while aligning rear scanner\r\n");
+         run_begin_alignment();return;
+     }
+     if (node == full_route_jobs[run.plan][run.job]
+@@ -2091,7 +2093,15 @@
+                 return;
+             }
+             if (run.scan_turn_stage==1u) {
+-                run.scan_turn_stage=0;run.turning=0;run_finish_node();return;
++                run.scan_turn_stage=0;run.turning=0;
++                if (station_task_ready()) {
++                    /* 扫码已与转向重叠，不再进入扫码工位重复获取机构互锁。
++                     * 下一段仍按IMU确认出站朝向，不把途中扫码当作航向已到位。 */
++                    run.job++;run.transition_ready=1;
++                    text("[scan station] task latched; depart directly on route heading\r\n");
++                    if (!run_road()) run_fault("scan departure road failed");
++                } else run_finish_node();
++                return;
+             }
+             if (run.turn_only || run.finishing) {run_done();return;}
+             run_begin_baseline();
+@@ -2660,7 +2670,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r29; monitor warnings retain tasks; accel200; D/E once\r\n");
++    text("[drive] version=20261020-merge2-r30; parallel station rotation; faster turns; scan at B\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/src/station_job.c
++++ src/station_job.c
+@@ -7,11 +7,12 @@
+ #include <stdio.h>
+ #include <string.h>
+ 
+-enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN };
++enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM_YAW, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN };
+ typedef struct {
+     uint8_t kind;
+     int16_t value;
+     uint8_t ring; /* 仅SS_CHASSIS：此步完成后对准的环号。 */
++    uint8_t platform_slot; /* 仅SS_PLATFORM_YAW：与云台一起旋转的杯位。 */
+ } StationStep;
+ 
+ enum {
+@@ -68,9 +69,15 @@
+     if (stn.count >= STN_STEP_MAX) {stn_fault("station program too large");return 0;}
+     program[stn.count].kind = kind;
+     program[stn.count].value = (int16_t)value;
+-    program[stn.count].ring = 0;
++    program[stn.count].ring = program[stn.count].platform_slot = 0;
+     stn.count++;
+     return 1;
++}
++
++static void push_platform_yaw(uint8_t slot,float yaw)
++{
++    if (push(SS_PLATFORM_YAW,(int)(yaw*10.0f)))
++        program[stn.count-1u].platform_slot=slot;
+ }
+ 
+ /* 编排时的实际姿态只代表第一步，不能据此省掉后续步骤的目标。 */
+@@ -94,17 +101,11 @@
+     push(SS_LIFT, ARM_LIFT_HOME_MM);
+     push(SS_SLIDE, ARM_SLIDE_HOME_MM);
+ }
+-/* 离开工位回车头0度；粗加工环间移动不调用此收尾。 */
+-static void push_retreat_home(void)
+-{
+-    push_retract();
+-    push(SS_YAW, (int)(ARM_YAW_HOME_DEG * 10.0f));
+-}
+ /* 到目标靶位后才从指定杯位取料；下一杯由作业表显式选择。 */
+-static void push_take_from_platform(int lift_mm)
++static void push_take_from_platform(uint8_t slot,int lift_mm)
+ {
+     /* 先在高处转向杯位并张开爪子，再伸齿条、下降；避免闭爪贴着杯壁下降。 */
+-    push(SS_YAW, (int)(ARM_PLACE_YAW_DEG * 10.0f));
++    push_platform_yaw(slot,ARM_PLACE_YAW_DEG);
+     push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
+     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+     push(SS_LIFT, lift_mm);
+@@ -113,9 +114,11 @@
+     push(SS_SLIDE, ARM_SLIDE_HOME_MM);
+ }
+ /* 粗加工放回原盘，只抬高收回，不回车头或自动换盘。 */
+-static void push_place_on_platform(void)
+-{
+-    push_move_to(ARM_PLACE_SLIDE_MM, ARM_PLACE_LIFT_MM, (int)(ARM_PLACE_YAW_DEG * 10.0f));
++static void push_place_on_platform(uint8_t slot)
++{
++    push_platform_yaw(slot,ARM_PLACE_YAW_DEG);
++    push(SS_SLIDE, ARM_PLACE_SLIDE_MM);
++    push(SS_LIFT, ARM_PLACE_LIFT_MM);
+     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+     push_retract();
+ }
+@@ -201,8 +204,7 @@
+     for (i = 0; i < 3u; i++) {
+         target = task_rings[stn.batch][i];
+         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+-        push(SS_PLATFORM, i + 1);
+-        push_take_from_platform(STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
++        push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
+         push_move_to(stn_rough_place.slide_mm, stn_rough_place.lift_mm, (int)(stn_rough_place.yaw_deg * 10.0f));
+         push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+         push_retract(); /* 保持125度，直接前后移动到下一环。 */
+@@ -212,13 +214,12 @@
+         target = task_rings[stn.batch][i];
+         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+         push_grip_at(&stn_rough_grip);
+-        push(SS_PLATFORM, i + 1);
+-        push_place_on_platform();
++        push_place_on_platform(i+1u);
+         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
+     }
+     if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+-    push(SS_PLATFORM, 1);
+-    push_retreat_home(); /* 全部工位动作完成后才回车头0度。 */
++    push_retract();
++    push_platform_yaw(1u,ARM_YAW_HOME_DEG); /* 全部工位动作完成后才回车头0度。 */
+     return 1;
+ }
+ static int build_storage(void)
+@@ -262,14 +263,13 @@
+     push(SS_ALIGN, 2);
+     for (i = 0; i < 3u; i++) {
+         if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+-        push(SS_PLATFORM, i + 1);
+-        push_take_from_platform(stn.batch ? ARM_PLACE_LIFT_MM : STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
++        push_take_from_platform(i+1u,stn.batch ? ARM_PLACE_LIFT_MM : STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
+         push_release_at(&pose);
+         push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
+     }
+     if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+-    push(SS_PLATFORM, 1);
+-    push_retreat_home();
++    push_retract();
++    push_platform_yaw(1u,ARM_YAW_HOME_DEG);
+     return 1;
+ }
+ 
+@@ -332,7 +332,9 @@
+             int value=program[i].value;
+             if ((program[i].kind==SS_SLIDE && (value<ARM_SLIDE_MIN_MM || value>ARM_SLIDE_MAX_MM))
+                 || (program[i].kind==SS_LIFT && (value<ARM_LIFT_MIN_MM || value>ARM_LIFT_MAX_MM))
+-                || (program[i].kind==SS_YAW && (value<ARM_YAW_MIN_DEG*10 || value>ARM_YAW_MAX_DEG*10))
++                || ((program[i].kind==SS_YAW || program[i].kind==SS_PLATFORM_YAW)
++                    && (value<ARM_YAW_MIN_DEG*10 || value>ARM_YAW_MAX_DEG*10))
++                || (program[i].kind==SS_PLATFORM_YAW && (program[i].platform_slot<1u || program[i].platform_slot>3u))
+                 || (program[i].kind==SS_CLAW && (value<ARM_CLAW_MIN_DEG*10 || value>ARM_CLAW_MAX_DEG*10))) {
+                 stn_fault("station pose outside configured travel");return -1;
+             }
+@@ -404,16 +406,9 @@
+             ok = arm_command(command, now);
+         }
+         break;
+-    case SS_PLATFORM: {
+-        int slot = s->value ? s->value : arm_platform_slot() % 3 + 1;
+-        if (stn.job==2u || stn.job==5u || storage_job()) {
+-            ok = arm_platform_at_yaw((uint8_t)slot, station_align_yaw(), now);
+-        } else {
+-            snprintf(line, sizeof(line), "arm platform %d", slot);
+-            ok = arm_command(line, now);
+-        }
++    case SS_PLATFORM_YAW:
++        ok=arm_platform_with_yaw(s->platform_slot,s->value/10.0f,now);
+         break;
+-    }
+     case SS_CHASSIS: {
+         char index_line[64];
+         if (!station_chassis_start(s->value)) {
+@@ -613,6 +608,7 @@
+     task_ready=1;return 1;
+ }
+ int station_auto_enabled(void) {return automatic;}
++int station_task_ready(void) {return task_ready;}
+ 
+ void station_status(void)
+ {
+--- before/src/station_job.h
++++ src/station_job.h
+@@ -14,6 +14,8 @@
+  */
+ void station_init(void);
+ int station_auto_enabled(void);
++/* 本轮有效任务是否已接收；扫码接收窗口由底盘首次抵达B控制。 */
++int station_task_ready(void);
+ /* 返回 1 已启动作业，0 该节点无动作，-1 拒绝执行（已打印原因）。 */
+ int station_start(uint8_t node, uint8_t job_index, uint32_t now);
+ void station_update(uint32_t now);
+--- before/tests/verify_arm_integration.c
++++ tests/verify_arm_integration.c
+@@ -294,9 +294,41 @@
+     arm_flags=3;advance_arm(350);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
+     puts("PASS arm axis speed log-only: both5/7 signed1/15/3000RPM pass preflight, position completion and servo steps; both nonzero axes still wait for actual target position and arrived flag");
+ }
++static void parallel_platform_yaw_tests(void)
++{
++    uint32_t start,serial_ms;uint16_t yaw_start,platform_start,claw_start;unsigned positions;
++    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 45");
++    start=clock_ms;CHECK(arm_platform_at_yaw(2,125,clock_ms));
++    while(arm_busy() && clock_ms-start<2u*ARM_SERVO_TIME_MS)advance_arm(1);
++    send_line("arm yaw 256");
++    while(arm_busy() && clock_ms-start<3u*ARM_SERVO_TIME_MS)advance_arm(1);
++    CHECK(arm_ready());serial_ms=clock_ms-start;
++    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 45");
++    yaw_start=arm_yaw_us;platform_start=arm_platform_us;claw_start=arm_claw_us;positions=arm_positions;
++    CHECK(!arm_platform_with_yaw(0,256,clock_ms) && !arm_platform_with_yaw(4,256,clock_ms));
++    CHECK(!arm_platform_with_yaw(2,361,clock_ms));
++    start=clock_ms;CHECK(arm_platform_with_yaw(2,256,clock_ms));
++    advance_arm(ARM_SERVO_TIME_MS/2u+100u);
++    CHECK(arm_busy() && arm_yaw_us!=yaw_start && arm_platform_us!=platform_start);
++    CHECK(arm_claw_us==claw_start && arm_positions==positions);
++    CHECK(!arm_platform_with_yaw(3,125,clock_ms));
++    while(arm_busy() && clock_ms-start<2u*ARM_SERVO_TIME_MS)advance_arm(1);
++    CHECK(arm_ready() && arm_platform_slot()==2 && clock_ms-start<2u*ARM_SERVO_TIME_MS);
++    {float yaw;arm_pose_now(NULL,NULL,&yaw,NULL);CHECK(yaw==256.0f);}
++    CHECK(clock_ms-start<serial_ms);
++    printf("PARALLEL_ROTATION serial_ms=%lu parallel_ms=%lu servo_ms=%u; both PWM channels moved before completion\n",(unsigned long)serial_ms,(unsigned long)(clock_ms-start),(unsigned)ARM_SERVO_TIME_MS);
++    CHECK(arm_platform_with_yaw(3,125,clock_ms));advance_arm(ARM_SERVO_TIME_MS/2u+100u);
++    yaw_start=arm_yaw_us;platform_start=arm_platform_us;stop_request();advance_arm(2000);
++    CHECK(arm_failed() && arm_yaw_us==yaw_start && arm_platform_us==platform_start);
++    reset_fixture();declare_pose();send_line("arm platform pose 20");
++    send_line("arm pose 1 135 125 45");CHECK(!arm_platform_with_yaw(2,256,clock_ms));
++    send_line("arm pose 0 134 125 45");CHECK(!arm_platform_with_yaw(2,256,clock_ms));
++    puts("PASS simultaneous platform/yaw: shared interpolation, no extension/lowering before completion, target cup/yaw committed together, explicit emergency holds both PWM channels");
++}
++
+ int main(void)
+ {
+-    manual_and_recipe_tests();station_platform_tests();mutual_exclusion_tests();wheel_lock_failures();
++    manual_and_recipe_tests();station_platform_tests();parallel_platform_yaw_tests();mutual_exclusion_tests();wheel_lock_failures();
+     arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();axis_speed_log_only_tests();
+     printf("PASS arm integration: %u assertions; host simulation only, no hardware accessed\n",assertions);
+     return 0;
+--- before/tests/verify_drive.c
++++ tests/verify_drive.c
+@@ -20,7 +20,7 @@
+     }
+     h.error_cdeg=10000;h.rate_cdeg_s=-10000;CHECK(heading_control_drive_rpm(&h,20)==20);
+     h.error_cdeg=-10000;h.rate_cdeg_s=10000;CHECK(heading_control_drive_rpm(&h,20)==-20);
+-    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==3);
++    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==CAR_HEADING_MIN_RPM);
+     h.error_cdeg=37;h.rate_cdeg_s=-510;CHECK(heading_control_rpm(&h,60)==0);
+     reset_fixture();run.travel_sign=1;clock_ms=run.forward_profile_ms=10;
+     for(i=0;i<30;i++) {
+@@ -41,7 +41,7 @@
+                     +rpm*rpm*factor/(2.0*CAR_DRIVE_DECEL_RPM_PER_S);
+         CHECK(rpm<=CAR_RUN_RPM && stop<=i-CAR_DISTANCE_TOLERANCE_MM+0.01);
+     }
+-    puts("PASS drive core: logged small-angle/rate cases, predictive damping sign, unchanged turn control, bounded ramps, delayed tick, reverse, wrap and braking envelope");
++    puts("PASS drive core: logged small-angle/rate cases, predictive damping sign, updated turn minimum with independent drive PD, bounded ramps, delayed tick, reverse, wrap and braking envelope");
+ }
+ 
+ static void drive_stop_and_log_tests(void)
+--- before/tests/verify_heading.c
++++ tests/verify_heading.c
+@@ -241,7 +241,7 @@
+     const int16_t origins[]={17900,-17900,7420};
+     for(origin=0;origin<3;origin++)for(command=0;command<4;command++) {
+         int expected=command>=2 ? 18000 : 9000;
+-        int32_t measured;
++        int32_t measured;uint32_t start;
+         if(command&1)expected=-expected;
+         reset_plant(origins[origin],origin==1 ? 0.85 : 1.3);
+         imu_period_ms=origin==0 ? 10 : origin==1 ? 50 : 100;
+@@ -249,7 +249,8 @@
+         CHECK(run_active && run.turn_only && run.heading_control.target_cdeg==expected);
+         send_line("left90");CHECK(strstr(output,"[rejected"));
+         send_line("rpm 90");CHECK(strstr(output,"[rejected") && turn_rpm==60);
+-        finish_plant(20000);
++        start=clock_ms;finish_plant(20000);
++        if(!command)printf("TURN_REGRESSION gain=%.2f imu_ms=%lu elapsed_ms=%lu\n",yaw_gain,(unsigned long)imu_period_ms,(unsigned long)(clock_ms-start));
+         measured=(int32_t)lround(physical_yaw)-origins[origin];
+         CHECK(abs(measured-expected)<=CAR_HEADING_TOLERANCE_CDEG+2);
+         CHECK(max_turn_rpm<=60 && min_turn_rpm<=CAR_HEADING_MIN_RPM && forward_actions==0);
+@@ -464,7 +465,7 @@
+     sample.sequence++;sample.received_ms=29;sample.yaw_cdeg=-17900;
+     CHECK(heading_control_update(&h,sample,29)==HEADING_CORRECT && h.progress_cdeg==200);
+     CHECK(heading_control_rpm(&h,60)==60);
+-    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==3);
++    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==CAR_HEADING_MIN_RPM);
+     h.rate_cdeg_s=10000;CHECK(heading_control_rpm(&h,60)==0);
+     heading_control_wheels(90,10,wheels);CHECK(wheels[0]==-80 && wheels[1]==100 && wheels[2]==100 && wheels[3]==-80);
+     heading_control_wheels(0,-30,wheels);CHECK(wheels[0]==-30 && wheels[3]==-30);
+--- before/tests/verify_station_vision.c
++++ tests/verify_station_vision.c
+@@ -207,8 +207,9 @@
+         prepare_arm_auto(plan);
+         if(preloaded)send_line("task 134+123+314+231");
+         send_line(plan?"runimu C":"runimu A");deadline=clock_ms+30000;
+-        while(run.state!=RUN_STATION && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+-        CHECK(run.state==RUN_STATION && !run.job && run.edge==1 && run.heading==HEAD_X_NEG);
++        while(run.job==0 && run.state!=RUN_STATION && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
++        CHECK(run.state!=RUN_FAULT && run.edge==1 && run.heading==HEAD_X_NEG);
++        CHECK(preloaded ? run.job==1 : (run.state==RUN_STATION && !run.job));
+         scan_yaw=physical_yaw;
+         if(!preloaded)send_line("task 134+123+314+231");
+         deadline=clock_ms+12000;
+@@ -238,6 +239,52 @@
+     }
+     puts("PASS B handoff A/C: scanned or preloaded task keeps -X heading directly into B-E without a 90-degree return; missing fresh wheel-4 feedback prevents departure");
+ }
++static void scan_during_turn_tests(void)
++{
++    unsigned plan,mode;
++    for(plan=0;plan<2;plan++)for(mode=0;mode<3;mode++) {
++        uint32_t deadline;int32_t error;unsigned i,latched=0;
++        prepare_arm_auto(plan);scanner.state=SCANNER_READY;
++        send_line(plan?"runimu C":"runimu A");
++        /* 到B前持续上报码只能显示，不能载入本轮任务。 */
++        scanner_receive((const uint8_t *)"134+123+314+231\r\n",17);tick(1);CHECK(!station_task_ready());
++        deadline=clock_ms+30000;
++        while(!run.scan_turn_stage && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
++        CHECK(clock_ms<deadline && run.scan_turn_stage==1 && run.job==0 && run.edge==1);
++        while(abs(run.heading_control.progress_cdeg)<1000 && run.scan_turn_stage && clock_ms<deadline)plant_step();
++        CHECK(run_active && run.scan_turn_stage==1 && run.state!=RUN_STATION);
++        error=run.heading_control.error_cdeg;CHECK(abs(error)>1500);
++        scanner_receive((const uint8_t *)"bad-task\r\n",10);CHECK(!station_task_ready());
++        scanner_receive((const uint8_t *)"134+123+314+231\r\n",8);CHECK(!station_task_ready());
++        if(mode==2) {
++            stop_request();scanner_receive((const uint8_t *)"134+123+314+231\r\n"+8,9);tick(1);
++            CHECK(!station_task_ready() && !run_active && !arm_positions);continue;
++        }
++        scanner_receive((const uint8_t *)"134+123+314+231\r\n"+8,9);
++        CHECK(station_task_ready() && run.scan_turn_stage==1 && !run.job);
++        /* 后续不同有效码也不能覆盖首次锁定的任务。 */
++        scanner_receive((const uint8_t *)"314+231+134+123\r\n",17);
++        station_status();CHECK(strstr(output,"batch1 colors=134 rings=123"));
++        if(mode==1) {
++            missing_feedback_motor=4;deadline=clock_ms+1200;
++            while(clock_ms<deadline)plant_step();
++            CHECK(run.job==0 && run.scan_turn_stage==1 && run.state!=RUN_FAULT);
++            for(i=0;i<4;i++)CHECK(!simulated_wheel_rpm[i]);
++            missing_feedback_motor=0;
++        }
++        deadline=clock_ms+15000;
++        while(run.state!=RUN_FAULT && clock_ms<deadline) {
++            plant_step();CHECK(run.state!=RUN_STATION && !arm_positions);
++            if(strstr(output,"task latched; depart directly"))latched=1;
++            if(run.job==1 && run.velocity_phase==VELOCITY_FORWARD && run.progress_mm>=50)break;
++        }
++        CHECK(clock_ms<deadline && run.job==1 && run.edge==1 && !run.scan_turn_stage);
++        CHECK(run.target_heading==HEAD_X_NEG && latched);
++        stop_request();
++    }
++    puts("PASS scan during B turn: both A/C accept fragmented QR before alignment completes; invalid/duplicate/pre-B/after-stop codes cannot replace task; missing wheel data delays departure, correct B-E heading retained, no redundant scan interlock");
++}
++
+ static void raw_preparation_timing_tests(void)
+ {
+     unsigned changed;
+@@ -270,7 +317,7 @@
+         }
+         stop_request();
+     }
+-    puts("PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full 2s yaw; changed lift/slide/claw targets still execute in safe order with fresh feedback");
++    puts("PASS raw preparation: already parked/open pose starts yaw within 500ms and requests vision only after full configured yaw interpolation; changed lift/slide/claw targets still execute in safe order with fresh feedback");
+ }
+ static void raw_last_return_tests(void)
+ {
+@@ -985,7 +1032,7 @@
+ 
+ int main(void)
+ {
+-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
++    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();scan_during_turn_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
+     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
+     return 0;
+ }
+--- before/tools/verify-station-vision.ps1
++++ tools/verify-station-vision.ps1
+@@ -35,7 +35,7 @@
+         'tests/verify_station_vision.c','tools/verify-station-vision.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+     }
+-    [ordered]@{passed=$true;exitCode=$checkExit;scope='rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup110/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
++    [ordered]@{passed=$true;exitCode=$checkExit;scope='simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup110/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed';sourceHashes=$checkHashes;variants=$checkVariants} |
+         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $checkOut 'result.json') -Encoding UTF8
+     Write-Output $checkOut
+ } finally {$env:PATH=$checkOldPath;Pop-Location}

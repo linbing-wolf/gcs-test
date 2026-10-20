@@ -1,0 +1,89 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r17",
+  "scope": "按操作者确认的上位机回包后自行停止行为，粗加工/暂存对准直接发D，收到MOVE后移车、停稳再发D，DISC仍三次独立确认；首次/纠偏/复测/清除均无自动R，不等READY。原料C/PICK、取放参数、两区125度和3000ms保护保持。",
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T092706919Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T092706948Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T092707025Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T092707025Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T092706866Z/result.json"
+  },
+  "exactReportSourceHashesMatch": true,
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T092710809Z/build.log",
+    "verification": "evidence/vision-direct-r17-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448556,
+    "start": "0x8000000",
+    "endExclusive": "0x806d82c",
+    "artifacts": {
+      "evidence/merged-keil-20261019T092710809Z/table_navigation.axf": "c28c7c85912e8203fd67e2d92cacd4b7ffed13d4cca85a32ace332e877895ad3",
+      "evidence/merged-keil-20261019T092710809Z/table_navigation.hex": "7b6ade14ee19624edb744f7a9a61b24ac8f035bcc3267e4f159d774a31c3d5da",
+      "evidence/merged-keil-20261019T092710809Z/table_navigation.map": "e04f7512b6f9522a4d87eac1402693e682b6742cf239d6a383f1e8a1354a93df"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "vision": {
+    "verification": "evidence/vision-direct-r17-verification.json",
+    "jobs": [
+      2,
+      3,
+      5,
+      6
+    ],
+    "alignYawDeg": 125,
+    "initialRing": 2,
+    "finalRing": 2,
+    "everyTargetRequiresVision": true,
+    "protocol": [
+      "D -> MOVE,dx or DISC,x,y,dx,ok; upper computer self-terminates",
+      "MOVE -> move3mm -> stopped/relocked -> new D"
+    ],
+    "moveStepMm": 3,
+    "positivePixelMeans": "vehicle forward; physical polarity requires verification",
+    "independentConfirmationRequests": 3,
+    "maxCorrectionTravelMmPerTarget": 75,
+    "maxAlignMs": 60000,
+    "storagePlaceYawDegUnchanged": 131,
+    "storageTakeLiftMmUnchanged": 110,
+    "storageFirstPlaceLiftMmUnchanged": 105,
+    "ringIdentity": "D reports center only, no ring ID; initial ring2 vicinity and correct ROI are required",
+    "sideAnglePlatformSelection": true,
+    "hardwareVerified": false,
+    "automaticResetFrames": false,
+    "requiresReadyHandshake": false,
+    "operatorConfirmedSelfStopping": true,
+    "selfStoppingUpperSoftwarePhysicallyVerified": false,
+    "manualRangeRCommandRetained": true,
+    "oneReplyConsumedPerRequest": true,
+    "rejectRepliesBeforeRequestFullyTransmitted": true,
+    "lateReplyLimitation": "No request ID; queued old bytes are cleared but in-flight cross-request late replies cannot be distinguished"
+  },
+  "armConfigUnchanged": true,
+  "concurrentKeilOutputsPreserved": {
+    "keil/OBJ/table_navigation.axf": "ca2f64db0378b994e75eb1f596c2ddd453c4edb174daaa3a3af81f29bd014996",
+    "keil/OBJ/table_navigation.hex": "7b6ade14ee19624edb744f7a9a61b24ac8f035bcc3267e4f159d774a31c3d5da",
+    "keil/OBJ/table_navigation.map": "fe1f205ccd09394df9edb6b8bbda8ebb75fa8b43266d6d328730b33ea6c9a901"
+  },
+  "automaticFramesChecked": "C/D only; any R fails simulated peer",
+  "preChangeSnapshot": "evidence/vision-direct-before-20261019T092247220Z",
+  "sourceDiff": "evidence/vision-direct-r17-source.diff",
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

@@ -1,0 +1,98 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r28",
+  "scope": "修复当前模拟全路线超程：速度斜坡和制动计算从500恢复为120RPM/s，避免高估可跟随的制动能力；用户指定机械臂轴、底盘运动和停车加速度档位均改为200。速度上限、15mm超程阈值、1mm到位容差和既有抓放/视觉/轴速日志策略不变。五套完整回归及ARM构建通过，未烧录或实车验收。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T141853758Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T141853865Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T141853763Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T142212126Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T141853836Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      37247,
+      1542198,
+      37247,
+      1544581
+    ],
+    "hostArm": [
+      152090
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      5837100,
+      5837100,
+      3070195,
+      3070195,
+      3992085,
+      2918500,
+      5837182,
+      3992801
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T141933078Z/build.log",
+    "verification": "evidence/braking-r28-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 449160,
+    "start": "0x8000000",
+    "endExclusive": "0x806da88",
+    "artifacts": {
+      "evidence/merged-keil-20261019T141933078Z/table_navigation.axf": "d489363ccc482992e56158f37eb200fe41eafc15a740df047c1111f10c63f94d",
+      "evidence/merged-keil-20261019T141933078Z/table_navigation.hex": "31aa06c2158f8ceaf0f445406985519e8904a66fc17f201b3c13ee89da278990",
+      "evidence/merged-keil-20261019T141933078Z/table_navigation.map": "8f2925255311b56a407265378c44bd105183accff76d0ac16de0f93f213b5470"
+    }
+  },
+  "brakingFix": {
+    "verification": "evidence/braking-r28-verification.json",
+    "beforeCommandAccelRpmPerS": 500,
+    "beforeCommandDecelRpmPerS": 500,
+    "afterCommandAccelRpmPerS": 120,
+    "afterCommandDecelRpmPerS": 120,
+    "driverAccelerationSetting": 200,
+    "distanceOverrunMmUnchanged": 15,
+    "distanceToleranceMmUnchanged": 1,
+    "speedLimitRpmUnchanged": 3000,
+    "rootCause": "Command/braking500RPM/s exceeded independent plant response180RPM/s, with slow wheels140RPM/s in asymmetric test. It underestimated stopping distance and introduced yaw drift. Restoring120RPM/s profiles fixes these host regressions. Actual vehicle braking capability unmeasured.",
+    "intermediate200DecelStillOverruns": true,
+    "intermediate200Accel120DecelStillFailsAsymmetricTracking": true,
+    "all1670MmEncoderLearningCasesWithin1Mm": true,
+    "allRoadAndBothBatchStationTestsPass": true,
+    "testBoundsUnchanged": true,
+    "regressionTestsUnchangedFromStart": true
+  },
+  "accelerationChange": {
+    "ARM_AXIS_ACCEL": 200,
+    "CAR_MOTION_ACCELERATION": 200,
+    "CAR_STOP_ACCELERATION": 200,
+    "source": "explicit latest user request",
+    "driverFieldUnit": "8-bit driver acceleration setting, not RPM/s"
+  },
+  "staticStack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "snapshot": "evidence/braking-before-20261019T141424776216Z",
+  "preexistingChangesPreserved": true,
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

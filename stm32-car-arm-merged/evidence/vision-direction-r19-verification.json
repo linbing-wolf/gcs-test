@@ -1,0 +1,83 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r19",
+  "scope": "仅反转粗加工/暂存共用的视觉纠偏方向：正偏差后退3mm，负偏差前进3mm；150mm索引、抓放动作、D/MOVE/DISC处理、25秒会话和视觉节拍均保持。上位机回包语义和发送节拍问题按用户要求暂不处理，实车收敛未确认。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T122422441Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T122422439Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T122422495Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T122422495Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T122422351Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      1542198,
+      1544581
+    ],
+    "hostArm": [
+      127145
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      3119079,
+      4984257,
+      972934,
+      972934,
+      3119452,
+      2358404,
+      4983801
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T122440639Z/build.log",
+    "verification": "evidence/vision-direction-r19-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448624,
+    "start": "0x8000000",
+    "endExclusive": "0x806d870",
+    "artifacts": {
+      "evidence/merged-keil-20261019T122440639Z/table_navigation.axf": "e2f6ccda159a96c18688460b0faea4a58d00735b4f165ea02cedbd7f5a40fc32",
+      "evidence/merged-keil-20261019T122440639Z/table_navigation.hex": "efc11089e72812a43da0ea945e2b1d70b324367ca01cd86089b256fd2ae2b977",
+      "evidence/merged-keil-20261019T122440639Z/table_navigation.map": "d63d303fa55a36a0a81e3374d78c4f5c5e0a66ec77b8360228be4adbc2436867"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "correctionMoveSign": -1,
+  "positiveOffsetMoveMm": -3,
+  "negativeOffsetMoveMm": 3,
+  "independentSimulatedReversedCamera": true,
+  "stationAndVisionCodeUnchanged": true,
+  "armParametersUnchanged": true,
+  "sourceDiff": "evidence/vision-direction-r19-source.diff",
+  "defaultKeilOutputPreserved": {
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "8e2c0fcbf78ab252249bf066126dfaecbf795f3e49a952f6f1a839061068e24b",
+      "keil/OBJ/table_navigation.hex": "07bc16774fc96919c13edfffd6ecb05d898d1804007c266a162294856f546f3a",
+      "keil/OBJ/table_navigation.map": "5f495bdccc0a4fc7c4aa67b163b592cccc662950de9397b73c5e3d96f7abbef8"
+    },
+    "scope": "Keil default output untouched; current verified firmware is in the isolated build directory"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

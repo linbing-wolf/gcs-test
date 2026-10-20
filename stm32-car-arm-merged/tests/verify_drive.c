@@ -20,7 +20,7 @@ static void drive_core_tests(void)
     }
     h.error_cdeg=10000;h.rate_cdeg_s=-10000;CHECK(heading_control_drive_rpm(&h,20)==20);
     h.error_cdeg=-10000;h.rate_cdeg_s=10000;CHECK(heading_control_drive_rpm(&h,20)==-20);
-    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==3);
+    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==CAR_HEADING_MIN_RPM);
     h.error_cdeg=37;h.rate_cdeg_s=-510;CHECK(heading_control_rpm(&h,60)==0);
     reset_fixture();run.travel_sign=1;clock_ms=run.forward_profile_ms=10;
     for(i=0;i<30;i++) {
@@ -41,7 +41,7 @@ static void drive_core_tests(void)
                     +rpm*rpm*factor/(2.0*CAR_DRIVE_DECEL_RPM_PER_S);
         CHECK(rpm<=CAR_RUN_RPM && stop<=i-CAR_DISTANCE_TOLERANCE_MM+0.01);
     }
-    puts("PASS drive core: logged small-angle/rate cases, predictive damping sign, unchanged turn control, bounded ramps, delayed tick, reverse, wrap and braking envelope");
+    puts("PASS drive core: logged small-angle/rate cases, predictive damping sign, updated turn minimum with independent drive PD, bounded ramps, delayed tick, reverse, wrap and braking envelope");
 }
 
 static void drive_stop_and_log_tests(void)

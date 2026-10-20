@@ -1,0 +1,175 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r20",
+  "scope": "按操作者要求去掉DISC成功结果的±5像素幅值门槛，格式及字段一致性正常且ok=1即接受，停稳后继续抓放；ok=0、非法帧、坐标不一致、超时及既有MOVE规则保持。反转方向和反馈节拍保持，未修改当前已有1500RPM/舵机700ms/夹爪200ms配置。",
+  "sourceHashesMatchAllReports": true,
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T123558757Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T123735560Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T123558814Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T123558813Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T123558613Z/result.json"
+  },
+  "assertions": {
+    "hostHeading": [
+      1542198,
+      1544581
+    ],
+    "hostArm": [
+      126646
+    ],
+    "hostContinuous": [
+      2154054
+    ],
+    "hostDrive": [
+      614949
+    ],
+    "hostStationVision": [
+      3195896,
+      5026768,
+      1003787,
+      1003787,
+      3196263,
+      2408195,
+      5026312
+    ]
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T123748813Z/build.log",
+    "verification": "evidence/vision-ok-r20-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448616,
+    "start": "0x8000000",
+    "endExclusive": "0x806d868",
+    "artifacts": {
+      "evidence/merged-keil-20261019T123748813Z/table_navigation.axf": "25d0313737ff6958fdeb38fd3bbbfcc672354844fa4acff3ce0fbf8111327700",
+      "evidence/merged-keil-20261019T123748813Z/table_navigation.hex": "01554ad8f1f5c49bdb2e8d082a3b3e0eb4a8c0727b1685685f7cf18b54682e09",
+      "evidence/merged-keil-20261019T123748813Z/table_navigation.map": "ca9ccd97ee06779fb23a7ec75a323dc49e8c207c353a9aa272054f9fcb675a2d"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "acceptedSuccessOffsetsTested": [
+    54,
+    84,
+    77,
+    80,
+    91,
+    -91,
+    6,
+    -6,
+    319,
+    -320
+  ],
+  "largeOffsetSuccessRoughAndStorageFlowPassed": true,
+  "largeOffsetSuccessDuringMovementWaitsForStoppedChassis": true,
+  "ok0AndMalformedStillRejected": true,
+  "correctionDirectionUnchanged": true,
+  "stationCodeUnchanged": true,
+  "armConfigUnchangedSinceStart": true,
+  "preExistingArmSpeed": {
+    "axisRpm": 1500,
+    "axisAcceleration": 150,
+    "clawInterpolationMs": 200,
+    "yawPlatformInterpolationMs": 700,
+    "axisStepServoFloorMs": 0,
+    "freshFeedbackGatesRetained": true,
+    "stepOrderUnchanged": true,
+    "benchmark": {
+      "before": [
+        {
+          "uartCost": 0,
+          "block": 1,
+          "softwareMs": 24623
+        },
+        {
+          "uartCost": 0,
+          "block": 2,
+          "softwareMs": 24623
+        },
+        {
+          "uartCost": 0,
+          "block": 3,
+          "softwareMs": 24623
+        },
+        {
+          "uartCost": 1,
+          "block": 1,
+          "softwareMs": 24756
+        },
+        {
+          "uartCost": 1,
+          "block": 2,
+          "softwareMs": 24756
+        },
+        {
+          "uartCost": 1,
+          "block": 3,
+          "softwareMs": 24756
+        }
+      ],
+      "after": [
+        {
+          "uartCost": 0,
+          "block": 1,
+          "softwareMs": 6103
+        },
+        {
+          "uartCost": 0,
+          "block": 2,
+          "softwareMs": 6103
+        },
+        {
+          "uartCost": 0,
+          "block": 3,
+          "softwareMs": 6103
+        },
+        {
+          "uartCost": 1,
+          "block": 1,
+          "softwareMs": 6236
+        },
+        {
+          "uartCost": 1,
+          "block": 2,
+          "softwareMs": 6236
+        },
+        {
+          "uartCost": 1,
+          "block": 3,
+          "softwareMs": 6236
+        }
+      ]
+    },
+    "benchmarkScope": "Software state machine with instantaneous mocked axis position; not physical timing. UART-cost variant included.",
+    "hardwareVerified": false,
+    "verification": "evidence/vision-ok-r20-verification.json",
+    "scope": "Pre-existing arm_config.h preserved byte-for-byte from this revision start. Older benchmarks remain historical; host mid-motion tests now sample relative to configured duration."
+  },
+  "armTestFixedWaitsAdaptedToConfig": true,
+  "sourceDiff": "evidence/vision-ok-r20-source.diff",
+  "defaultKeilOutputPreserved": {
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "29688e3a5b2987df561822170f2123579f3911f3c8a6c922d0c64783b98626f5",
+      "keil/OBJ/table_navigation.hex": "efc11089e72812a43da0ea945e2b1d70b324367ca01cd86089b256fd2ae2b977",
+      "keil/OBJ/table_navigation.map": "5cdc694e113c331a2f241588ca544be4b4b010b62f79cc68aa87f7328054c654"
+    },
+    "scope": "Keil default output untouched; current verified firmware is in the isolated build directory"
+  },
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

@@ -1,0 +1,39 @@
+﻿{
+    "sourceHashes":  {
+                         "src/main_table_nav.c":  "749e9d33ff4da7b6477bdc30707070a2ab6145b9da4bf3936d1b1ec5b4262797",
+                         "src/arm_control.c":  "6ccb6eed124c2da19910cc8d18bfc933dff232ac0799f44d14e60a36da58efdf",
+                         "src/station_job.c":  "f330e8cf6b2e72dfb51afee849c472146ab9fba7f4afede1efb47818a683229a",
+                         "src/station_job.h":  "309ee7135726a277cee4314facb36499e0cbd8f80792f06aaebdef6643b1a4ff",
+                         "src/station_config.h":  "dabd832fc3d9abd0444516ddc5b71893d5733d50716c0ef925b328b75ee85c00",
+                         "src/vision_link.c":  "05aaedca0072a9dcc99af8fd7a862f8ce40b3eb71a5a2b8606c058e1eebb5380",
+                         "src/vision_link.h":  "1fad55be8bde10f23df8983fae52834014044067dc9c42d3cdf54eb3950187aa",
+                         "src/hmi_status.c":  "8e626dabbc98232fc361ff72fe1b559515e5943e653cd505097f631f00e4da7c",
+                         "src/hmi_status.h":  "c91dce4aa3dd0e35fc136378785160c449b46f277627ee925614e5e6cf771f98",
+                         "tests/vision_host_io.h":  "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+                         "vendor/stm32/lanya/usart5.c":  "ad7e8ebdfd41a4f7f2cce7de56376df36d39c472b45043664eba986d27b0a31d",
+                         "src/arm_control.h":  "a02003c13555a9bdd7221cefafd310a2429e64dcfcc5c4a26aeecbb60e3e9d6b",
+                         "src/arm_config.h":  "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+                         "tests/verify_entry.c":  "f52ba277d7fc7ee51fa3c604c4cb41477d7ce15ac67f2d1dad1a0a79d449ca08",
+                         "tests/verify_arm_integration.c":  "312a2fb4c8fb6caea95c6e53e32a9dcef8c42aba8bb60d62ffc5a14194e7ba70",
+                         "tests/entry_host_io.h":  "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+                         "tests/arm_host_io.h":  "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71"
+                     },
+    "passed":  true,
+    "exitCode":  0,
+    "scope":  "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+    "sourceSha256":  "749e9d33ff4da7b6477bdc30707070a2ab6145b9da4bf3936d1b1ec5b4262797",
+    "output":  [
+                   "PASS merged arm: latest calibrated PWM, signed two-axis movement, home/pick/place/cycle, three platform slots, park-before-release and return to chassis",
+                   "PASS station platform: high/retracted125 internal selection holds yaw; manual command still requires home0; extended/low/wrong-angle/busy/unknown/fault/invalid-slot rejected",
+                   "PARALLEL_ROTATION serial_ms=1303 parallel_ms=652 servo_ms=600; both PWM channels moved before completion",
+                   "PASS simultaneous platform/yaw: shared interpolation, no extension/lowering before completion, target cup/yaw committed together, explicit emergency holds both PWM channels",
+                   "PASS mutual exclusion: removed-run/nav/runimu/shift/turn blocked in arm session; chassis rejects arm acquisition while busy; ! stops both and requires explicit recovery",
+                   "PASS wheel monitoring: delayed acquisition/stale replies and receive overflow retain session and recover; signed40RPM persists without stop; driver stall and bus-off still stop",
+                   "PASS arm monitoring: feedback/ACK/action deadlines retain pose and recover on actual position; explicit stop, driver fault and failed CAN submission still stop",
+                   "PASS boundaries/shared services: malformed/out-of-range commands, busy rejection, scanner/IMU/button continue during arm motion, CAN address isolation",
+                   "PASS English console: lift 120 retains axis command and all three messages; complete arm/platform status is ASCII",
+                   "PASS arm speed: axes use fresh verified feedback; claw_ms=200 yaw_platform_ms=600; position/status must arrive; missing ACK or RPM magnitude alone cannot cancel or gate measured completion",
+                   "PASS arm axis speed log-only: both5/7 signed1/15/3000RPM pass preflight, position completion and servo steps; both nonzero axes still wait for actual target position and arrived flag",
+                   "PASS arm integration: 128182 assertions; host simulation only, no hardware accessed"
+               ]
+}

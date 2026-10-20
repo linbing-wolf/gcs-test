@@ -1,0 +1,141 @@
+{
+  "passed": false,
+  "requestedArmChangePassed": true,
+  "status": "LOCAL_ARM_AND_ISOLATED_STATION_PASSED_FULL_ROUTE_REGRESSION_FAILED_NOT_HARDWARE_VERIFIED",
+  "version": "20261019-merge2-r27",
+  "scope": "5/7号机构轴速只记日志，移除动作前非零RPM停机及到位阶段RPM=0门槛；保留ACK、位置、驱动器到位和通信/急停处理。用户追加授权三项加速度500改为255；其他速度/抓放参数保持。机构与独立工位回归通过，全路线回归失败并单独记录。",
+  "armTest": {
+    "passed": true,
+    "report": "evidence/arm-native-20261019T140454248Z/result.json",
+    "scope": "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+    "assertions": [
+      152090
+    ],
+    "hardwareAccuracyVerified": false
+  },
+  "isolatedStationTest": {
+    "passed": true,
+    "report": "evidence/axis-speed-log-r27-targeted/result.json",
+    "assertions": [
+      4537357
+    ],
+    "scope": "rough/storage station and vision; no full-road validation"
+  },
+  "fullRegressionFailures": {
+    "hostHeading": {
+      "passed": false,
+      "exitCode": 1,
+      "report": "evidence/axis-speed-log-r27-verification.json",
+      "attemptDirectory": "evidence/heading-native-20261019T140454415Z",
+      "reason": "encoder distance overrun/reversed:1692mm on1670mm; unchanged with pre-change arm_control.c",
+      "hardwareAccuracyVerified": false
+    },
+    "hostContinuous": {
+      "passed": false,
+      "exitCode": 1,
+      "report": "evidence/axis-speed-log-r27-verification.json",
+      "attemptDirectory": "evidence/continuous-native-20261019T140454414Z",
+      "reason": "encoder distance overrun/reversed at1055mm before first job",
+      "hardwareAccuracyVerified": false
+    },
+    "hostDrive": {
+      "passed": false,
+      "exitCode": 1,
+      "report": "evidence/axis-speed-log-r27-verification.json",
+      "attemptDirectory": "evidence/drive-native-20261019T140454420Z",
+      "reason": "hardcoded3000mRPM slew assertion fails under current preexisting500RPM/s ramp",
+      "hardwareAccuracyVerified": false
+    },
+    "hostStationVision": {
+      "passed": false,
+      "exitCode": 1,
+      "report": "evidence/axis-speed-log-r27-verification.json",
+      "attemptDirectory": "evidence/station-native-20261019T140454335Z",
+      "reason": "B scan handoff fails before station work; isolated station suite passes",
+      "hardwareAccuracyVerified": false
+    }
+  },
+  "baselineHeadingFailureReproduced": true,
+  "baselineArmSource": "evidence/axis-speed-log-before-20261019T140135186330Z/src/arm_control.c",
+  "sourceHashes": {
+    "src/main_table_nav.c": "7337e9c9b897c85f7e55366e56983e83e09ba791f18e5cc4b3f5fe5fde8f6a7b",
+    "src/arm_control.c": "d4ebaec273aeab158c660111ec645b5ad6d1cd53383c544afe6aa768b77b57aa",
+    "src/station_job.c": "871e6723b219e0c56fdf55b851ec955e1353a1321ccef8faf44d1b5290886573",
+    "src/station_job.h": "cea93883b1968186edc9e8fec3b99444c9af3e9c643f4bd6b2faa97f0626d3bd",
+    "src/station_config.h": "260d61a1c3a1e05e2436889ebff9f92af3b58e9cba54d5fe38aef1f3aa48153c",
+    "src/vision_link.c": "86cd70c25bb73edd1f5dbb9c54d93aba31a430d1f7b7891fd68e3ae6206694a0",
+    "src/vision_link.h": "0ea9847b974699cbb6809ee444d1077100ed7482fd422c11c6b50d3a49d62abd",
+    "tests/vision_host_io.h": "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+    "vendor/stm32/lanya/usart5.c": "ad7e8ebdfd41a4f7f2cce7de56376df36d39c472b45043664eba986d27b0a31d",
+    "src/arm_control.h": "85568421551c2f759a3a2eed3e9b87fab5c4cd5932e37d4d46ec0b9637505c19",
+    "src/arm_config.h": "3d87524bc21d82df7221ac19b57d870f6945bc99bcd808265f0f0b25901d46e8",
+    "tests/verify_entry.c": "163a0d0091387a40f85503a5fbd0f2e38becef77e6ed1bd3fdb8fce73c1afb99",
+    "tests/verify_arm_integration.c": "609e2674d43e88c4ed11000d9cd594f52c57951b3cf99fac7bf671e332de0943",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/arm_host_io.h": "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71",
+    "tests/verify_station_vision.c": "5b81439cb44dd651c84a4b65aa8166a2aecbc094e8506e19e3c9a991ad822a5b",
+    "tools/verify-station-vision.ps1": "5fc024b150b941de5ef5f98dfac635a4996f21ca228b06c220a33c546c95a0b5",
+    "src/car_config.h": "1ad1b50fc61d472ba0e002217a465bb3e16eb2bbd7453d573b2e85c0199b5e88",
+    "tests/verify_heading.c": "011ab764f3560f868ff8d0efeff168993c570273afe3faf964c9a42d68ffa7a3",
+    "tests/verify_drive.c": "c303b7ec3cfbb850bb9b832ef49433641ddfd0b080b32c7155535bb8bab04d54",
+    "tests/verify_continuous.c": "ed46a963a6b67095823a4c5f32a15c53cb4618b4d377fc65efd20cf8f8af2da8"
+  },
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T140652352Z/build.log",
+    "verification": "evidence/axis-speed-log-r27-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 449156,
+    "start": "0x8000000",
+    "endExclusive": "0x806da84",
+    "artifacts": {
+      "evidence/merged-keil-20261019T140652352Z/table_navigation.axf": "829950e0cd070dd79d72aa496c0ddb2182f661289a3d2ec341ef3ee915b332db",
+      "evidence/merged-keil-20261019T140652352Z/table_navigation.hex": "784b048eea2714e0c448d5d971af99928ecc3a978e1d934f9dc0b2481d2c28c2",
+      "evidence/merged-keil-20261019T140652352Z/table_navigation.map": "3088955e24d29b123c1ab5c0e3ce03a146fb7ac506ef8e42aa6d5146d151de2f"
+    }
+  },
+  "staticStack": {
+    "reportedMaximumBytes": 616,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "armAxisSpeed": {
+    "verification": "evidence/axis-speed-log-r27-verification.json",
+    "policy": "log_only",
+    "preflightNonzeroStopRemoved": true,
+    "completionRequiresZeroRpm": false,
+    "loggingIncludesStageAddressAndRpm": true,
+    "positionAckAndDriverArrivedRequired": true,
+    "freshFeedbackRequired": true,
+    "signedRpmTested": [
+      1,
+      -1,
+      15,
+      -15,
+      3000,
+      -3000
+    ],
+    "physicalVerified": false
+  },
+  "accelerationChange": {
+    "ARM_AXIS_ACCEL": 255,
+    "CAR_MOTION_ACCELERATION": 255,
+    "CAR_STOP_ACCELERATION": 255,
+    "source": "explicit latest user approval",
+    "allOtherConfigBytesUnchangedFromTaskStart": true
+  },
+  "snapshot": "evidence/axis-speed-log-before-20261019T140135186330Z",
+  "preexistingChangesPreserved": true,
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

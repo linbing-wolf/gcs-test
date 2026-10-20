@@ -1,0 +1,210 @@
+{
+  "version": "20261020-merge2-r35",
+  "passed": true,
+  "scope": "按操作者假定1px=1mm换算完整MOVE像素幅值；第二次暂存各块接入F,颜色/STACK,x,y，修正后取放并恢复E索引基准。",
+  "snapshot": "evidence/stack-before-20261020T120736699309Z",
+  "pixelScale": {
+    "configuredX1000": 1000,
+    "operatorAssumed": true,
+    "physicallyCalibrated": false,
+    "parameter": "STN_VISION_MM_PER_PX_X1000",
+    "positivePixelMeans": "backward",
+    "negativePixelMeans": "forward",
+    "testOnlyHalfGainPassed": true
+  },
+  "stack": {
+    "job": 6,
+    "batch": 1,
+    "entryCommand": "E",
+    "entryRequests": 1,
+    "targetCommand": "F,<G3 current color>",
+    "reply": "STACK,x,y",
+    "requestsPerMaterial": 1,
+    "materials": 3,
+    "xReferencePixels": 320,
+    "yUsedForMotion": false,
+    "correctionsPerMaterial": 1,
+    "centerMagnitudeQualityVeto": false,
+    "repeatedMeasurementAfterCorrection": false,
+    "heightReturnedByVision": false,
+    "platformTakeLiftMm": 100,
+    "placeLiftMm": 65,
+    "restoresPreFCorrectionPositionAfterRelease": true,
+    "emptyHighRetractedYaw125DuringReturn": true,
+    "noGripWhileWaitingOrMoving": true,
+    "nominalTimeoutLogOnlyNoResend": true,
+    "noRAdded": true,
+    "emergencyCancels": true
+  },
+  "unchanged": {
+    "files": [
+      "src/arm_config.h",
+      "src/car_config.h",
+      "src/hmi_status.c",
+      "src/hmi_status.h"
+    ],
+    "mainControlExceptVersionBanner": true,
+    "rawAndRoughRecipes": true,
+    "allPreexistingStationDefineValues": true,
+    "discParserAndSuccessBehavior": true
+  },
+  "visionSource": {
+    "commit": "2631ae6219b7bb7dafb5b4e8399ba2677c20d05f",
+    "directory": "evidence/vision-review-20261020T120145Z",
+    "files": {
+      "evidence/vision-review-20261020T120145Z/AI_HANDOFF_STM32.md": "0db946551b707fac752107ff946b64a9e129cca7c6b99f62a9bd58aadd68eaba",
+      "evidence/vision-review-20261020T120145Z/COMMIT.txt": "4f8a86e9967b701ffbf4b905b509acfcfb02f9de0e41444bb8cec821756534b3",
+      "evidence/vision-review-20261020T120145Z/QUICKSTART.md": "587fec7fa0452190e6dc35b99c8bfbb82e57a3affa2e1e33afbe07cbd6870b24",
+      "evidence/vision-review-20261020T120145Z/maixcam_app_v2/config.py": "54dd6e27a4f98ebaf9c2914e98187f4af510f31701fc0a7e32c05fc3f709e3e5",
+      "evidence/vision-review-20261020T120145Z/maixcam_app_v2/main.py": "4053bf288df0d90044eba17b18daea145611a5de305edcbcfa95f3e412ad19ea",
+      "evidence/vision-review-20261020T120145Z/maixcam_app_v2/protocol.py": "cb6e487ee0eeb3408d2d34b80484eb4a1bd7a15ae44aa17aa12bfa8510641733",
+      "evidence/vision-review-20261020T120145Z/maixcam_app_v2/README.md": "d8718aee868415c4c4bf04892855cbd26558703728198bcb4b6e2765071289ad",
+      "evidence/vision-review-20261020T120145Z/maixcam_app_v2/tasks.py": "d9795383de260215a452d0e14df2da4fdae3d50d653f1340a36dde3cbc2bec75"
+    },
+    "actualCameraApplicationAccessed": false
+  },
+  "hostReports": {
+    "hostHmi": {
+      "passed": true,
+      "report": "evidence/hmi-native-20261020T121747277Z/result.json",
+      "scope": "read-only serial screen host integration; no screen or vehicle accessed; synthetic wheel mapping is test-only",
+      "assertions": [
+        6538,
+        6539
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostHeading": {
+      "passed": true,
+      "report": "evidence/heading-native-20261020T121747453Z/result.json",
+      "scope": "host mocks and simulated heading, not physical vehicle",
+      "assertions": [
+        37262,
+        1442075,
+        37262,
+        1442981
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostArm": {
+      "passed": true,
+      "report": "evidence/arm-native-20261020T121747452Z/result.json",
+      "scope": "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+      "assertions": [
+        128182
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostStationVision": {
+      "passed": true,
+      "report": "evidence/station-native-20261020T121747472Z/result.json",
+      "scope": "MOVE pixels with operator-assumed1px/mm configurable scaling; second storage E once then F,color/STACK per material, no returned height, one center correction before100 pickup/65 place, exact colors/CRC and cancellation/late frames; full signed pixel magnitude and plus supported; DISC coordinate consistency veto removed: D/E accept reported ok1 despite dx!=cx-320, including386/177/71 and420/620 offsets; in-motion terminal reply waits for completion then reaches platform100 grip; simultaneous platform/yaw during rough/storage cup selection and final parking; B turn accepts QR early, first valid code latched, departure waits for correct route heading without redundant scan interlock; rough D once / storage E once per visit at entry ring2 yaw125; no target/return D/E requests; single D/E session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, full commanded millimeter corrections, transport and camera/fault limits; rough pickup100/place5/retrieve5; storage first pickup100/place5/yaw125, second pickup100/place65/yaw125; wheel log-only policy retained; persistent signed5/7 axis RPM is logged only across full A/C routes and station grip/departure; late PICK/DISC, UART/FIFO errors and nominal station/vision budgets retain requests/tasks; query gaps retain stage and recover; production layer60 completes both batches; layer20/130 mocks complete routes, layer0 unknown and layer131 overtravel refuse; no hardware accessed",
+      "assertions": [
+        6590455,
+        6590455,
+        3586466,
+        3586466,
+        4598138,
+        3304982,
+        6591000,
+        4599952,
+        52598
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostContinuous": {
+      "passed": true,
+      "report": "evidence/continuous-native-20261020T121747472Z/result.json",
+      "scope": "actual configured RPM; simulated nonstop node passing and obstacle return; no hardware accessed",
+      "assertions": [
+        1939092
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostDrive": {
+      "passed": true,
+      "report": "evidence/drive-native-20261020T121747452Z/result.json",
+      "scope": "host drive heading/ramp/stop/log checks and asymmetric-wheel simulation; not physical accuracy",
+      "assertions": [
+        549712
+      ],
+      "hardwareAccuracyVerified": false
+    }
+  },
+  "sourceHashes": {
+    "src/arm_config.h": "dc5b3463ec3bee48f156ffdf8a3020fdc40c275944d2716384b87cfe18d1f83a",
+    "src/arm_control.c": "6ccb6eed124c2da19910cc8d18bfc933dff232ac0799f44d14e60a36da58efdf",
+    "src/arm_control.h": "a02003c13555a9bdd7221cefafd310a2429e64dcfcc5c4a26aeecbb60e3e9d6b",
+    "src/car_config.h": "ab5efc4468b94a678b0e8011a541fcf4bffdd364af9538ecc737cf78593db4bf",
+    "src/full_route.h": "5185df89f04b3cb8b38a584870f497b567519ae1dfb8b6ee6f723e1986c5b0f8",
+    "src/heading_control.c": "0b45813548e935365282fb13a9a81fbeb1db76e6baadd65291e0b869ed0bbd6f",
+    "src/heading_control.h": "320ed13dbab443778d3a5046259bf1bec874911571cc66545d873b0bc07022b6",
+    "src/heading_sensor.c": "dc2dd88ba87cb7c467c0ce78fb17173a8ac57a7b0538597dd13f8962360608f6",
+    "src/heading_sensor.h": "22bf9c9e8e0bfbb3ba461edecb2ad67b5eff0979def4cf45e7a81fd3b6d86e4a",
+    "src/hmi_status.c": "8e626dabbc98232fc361ff72fe1b559515e5943e653cd505097f631f00e4da7c",
+    "src/hmi_status.h": "c91dce4aa3dd0e35fc136378785160c449b46f277627ee925614e5e6cf771f98",
+    "src/main_table_nav.c": "2756ea66c7b13f854b0017addbf87ace6b999960cdf490df434aa7209ff31120",
+    "src/motion.c": "61202aa94c7008d58c6b57098730fe166e24c261dacfb7c500e37623c493339f",
+    "src/motion.h": "cb1c9de1da84841601110f50c73142cc2efbd36fe6cda3462708a9707cbfee12",
+    "src/navigation.c": "ae22a317369307de7f4f1d6e5f8b0a88351acb094f6d8d16ca068035ec9b2bc1",
+    "src/navigation.h": "7502d34cfff865fddeb837217755582096cc62000b81f04f122578e7f84752f6",
+    "src/road_map.c": "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
+    "src/road_map.h": "3da0c1143d02bdbee54f52314085b151a96e778494447e867405057af9a0827f",
+    "src/station_config.h": "9b364defa7f6c8c50ac7766cf1d9c2c346a208062e0826b5b82f9398e21505a6",
+    "src/station_job.c": "811b28b3d636145d9c65cb091c3fe6cb5b83b7842d8eecb3215c95533da35542",
+    "src/station_job.h": "17225b7a5b291c8a83ede47bc74f7121e8b9b1f8218ac26ac5fdae32c82a3dc7",
+    "src/structure.h": "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
+    "src/vision_link.c": "ba8d51a4b5b33fdc72785269a2d5f8c2588e0d19081aeb78b8b46cce90e19876",
+    "src/vision_link.h": "c649095078a05b5a9c4cc0afa3865a49136069d2f2a399b92fdca0d1ce82b227",
+    "tests/verify_hmi.c": "da0790235a4de575797e37f1307b153ba0fbfdd72b9b2304b8876177dbb5d323",
+    "tests/verify_heading.c": "34d152a4f6f9c11afc50efa3b9d372032bc7b77bdd1b9ad1fc9919aef6163142",
+    "tests/verify_entry.c": "f52ba277d7fc7ee51fa3c604c4cb41477d7ce15ac67f2d1dad1a0a79d449ca08",
+    "tests/entry_host_io.h": "2dbfe35fe51376d9aed42b2a6ade29e3c6c996d8af891d07987d7f1ac7e7a208",
+    "tests/arm_host_io.h": "248d0fcc2c012e4fe8fdebfc819163efd3e24b0700cce176f42ab32f2000fb71",
+    "tests/vision_host_io.h": "3c41db617dfa43ed37db8a16fb35eed1293d9b392a316da99afab547264b9bda",
+    "tools/verify-hmi.ps1": "fd558f7d31a7838ff3438d52d040380c2526c3a1ff78b355402f06e0974b39a8",
+    "keil/TableNavigation.uvprojx": "18fc771585885a7aad6ef01a4d0ebaccada740c021e6f20983d5e749ecc153a9",
+    "vendor/stm32/lanya/usart5.c": "ad7e8ebdfd41a4f7f2cce7de56376df36d39c472b45043664eba986d27b0a31d",
+    "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
+    "lookup/table_data.h": "52f9e9aa531bf693809ca61739188329f362bf5ca0be17c485ae05a6861fadc6",
+    "lookup/generation.json": "407f1d42188f82da99471ab383824fe62883cc6d488330438b974346544069c4",
+    "tests/verify_can_rx.c": "51504168acdb2c17adfa74ad2b0d9c82c8f677c26b59c60bb7e4b7ba4dd5c64a",
+    "tools/verify-heading.ps1": "cb05dc4cd6116997121185ebb4e54adfea17c6a68242429de6ca58fcdd7ce124",
+    "vendor/stm32/can_ZDT/can.c": "fcbca0205338ce49b2be50ceac109f8321c2f37a7e6e1c07b0ace9764cc81e5a",
+    "vendor/stm32/imu/imu.c": "36e8fc96ba8126f933a26d9adefcad101f0155b07ca5dd670bf57713ab523923",
+    "vendor/stm32/SYSTEM/Serial.c": "4ce4e8b43dee20b4c545287f6dc61c07f85888629fab97fad61f911c1d186d4a",
+    "tests/verify_arm_integration.c": "312a2fb4c8fb6caea95c6e53e32a9dcef8c42aba8bb60d62ffc5a14194e7ba70",
+    "tests/verify_station_vision.c": "091bdb99addfe79144cfc5fc05436da4848ba5f0c47ad38b3a8fb79712f179dc",
+    "tests/verify_vision_gain.c": "27349853ac8254c4d798dd63ad80a23411e439907c6ae93d80223e3c9408ebc6",
+    "tools/verify-station-vision.ps1": "3e609013a39bbb2032fbbfc0f65d01bd06e03348b9393057fa56938a2da55688",
+    "tests/verify_continuous.c": "4dc85d0ee4941813eb900ac16c1684caa72f9c419681a5765469006adbfa59d4",
+    "tools/verify-continuous.ps1": "ef0fd728b7866d7e6d4908b55c9aef24cc822f02933b6889bba8b77e37c2e2ef",
+    "tests/verify_drive.c": "7cfa35d90beb6d7b34073d7634bb31ef9d18e56824b185590f879679b358b6be",
+    "tools/verify-drive.ps1": "1dd8d7364dfcd5cd1b980e8ebe0b2abadfc1db3e2f641e6a03e904b3c637339f"
+  },
+  "build": {
+    "directory": "evidence/merged-keil-20261020T121800202Z",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "maximumReportedStackBytes": 616
+  },
+  "firmwareHashes": {
+    "evidence/merged-keil-20261020T121800202Z/table_navigation.axf": "3ca151c04d4b3642d3698dde79f697a43531d66ef49d8b8e3b47d6a75c6812ce",
+    "evidence/merged-keil-20261020T121800202Z/table_navigation.hex": "209e92adbddaa709bffd916e930afeab37e2122b46fedf4e38e9af9af1cfb827",
+    "evidence/merged-keil-20261020T121800202Z/table_navigation.map": "ad9e8cd32f7e060438782405b59b6a04003c97467db6486d6e2891b1e578fd31"
+  },
+  "loadBytes": 455056,
+  "elfAndHexLoadBytesEqual": true,
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalVerified": false,
+  "limitations": [
+    "1px/mm is an operator assumption, not measured calibration.",
+    "F returns only center coordinates, without color/fallback-source/success marker; camera fallback center cannot prove a same-color base.",
+    "Only x drives one correction; y is logged, and there is no repeated visual confirmation after that correction.",
+    "No request ID distinguishes a late reply crossing two F sessions.",
+    "Physical pickup, release, restored index reference and stacking stability remain unverified."
+  ]
+}

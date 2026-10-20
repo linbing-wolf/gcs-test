@@ -1,0 +1,26 @@
+{
+  "snapshot": "evidence/storage-take100-before-20261020T083914221790Z",
+  "preexistingManifestDifferences": {
+    "keil/OBJ/table_navigation.axf": {
+      "manifest": "dad41c6332106b0d632fc7197f453bca076be66fb2ba8ac8c44116c22f039464",
+      "actual": "dc3d2770acd398606e3e23af2f3219d7aee9231d6fbd1748ca1ebd791f50d04a"
+    },
+    "keil/OBJ/table_navigation.hex": {
+      "manifest": "c30a34b73654559d1532bf74428eeda21130ceaa1aacf25d1a794c951483596a",
+      "actual": "5ea640681b2876985c9b9e0906fa1699fef56cc1a3a6a5227c93c12016b1cfb8"
+    },
+    "keil/OBJ/table_navigation.map": {
+      "manifest": "4360f8c696ac879deebca83137d6bd247430fe72fb2b3b89f7843b8425d54b1e",
+      "actual": "0452d78afba2c09e922db9f17de9503d240608debc9df0fc839bf3f3fb81703d"
+    },
+    "src/arm_control.c": {
+      "manifest": "b0f5e15fe08d102e7d479cd03cec6708ad85cab156760e4a1028aa28c1bb3c86",
+      "actual": "d0f0e9225e5383b11bd640a807e3591328cde0daa243b5a215c5fb946f45e9ad"
+    }
+  },
+  "defaultOutputHashes": {
+    "keil/OBJ/table_navigation.axf": "dc3d2770acd398606e3e23af2f3219d7aee9231d6fbd1748ca1ebd791f50d04a",
+    "keil/OBJ/table_navigation.hex": "5ea640681b2876985c9b9e0906fa1699fef56cc1a3a6a5227c93c12016b1cfb8",
+    "keil/OBJ/table_navigation.map": "0452d78afba2c09e922db9f17de9503d240608debc9df0fc839bf3f3fb81703d"
+  }
+}

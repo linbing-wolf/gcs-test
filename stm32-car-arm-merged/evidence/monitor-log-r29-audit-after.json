@@ -1,0 +1,426 @@
+{
+  "scope": "全部src/*.c中的自动停止/故障状态路径；不是每个调用都可删除",
+  "applicationCFilesScanned": 9,
+  "retainedOrPropagatedSites": [
+    {
+      "file": "src/arm_control.c",
+      "line": 339,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "if(f.data[1]!=2) {arm_fail(\"position command rejected\");return;} a->ack=1; continue;"
+    },
+    {
+      "file": "src/arm_control.c",
+      "line": 345,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "if (!(a->flags&1u) || (a->flags&12u)) {arm_fail(\"axis disabled/stalled/protected\");return;}"
+    },
+    {
+      "file": "src/arm_control.c",
+      "line": 425,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "arm_fail(\"recipe target outside configured travel\");"
+    },
+    {
+      "file": "src/arm_control.c",
+      "line": 651,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "if(arm_rx_fault){arm_fail(\"CAN transmit/bus fault\");return;}"
+    },
+    {
+      "file": "src/heading_control.c",
+      "line": 25,
+      "disposition": "样本不可用：上层暂缓并等待新样本，不取消任务",
+      "source": "if (control->fault && sample.sequence==control->sample_sequence) return HEADING_FAULT;"
+    },
+    {
+      "file": "src/heading_control.c",
+      "line": 29,
+      "disposition": "样本不可用：上层暂缓并等待新样本，不取消任务",
+      "source": "if (control->fault) return HEADING_FAULT;"
+    },
+    {
+      "file": "src/heading_control.c",
+      "line": 35,
+      "disposition": "样本不可用：上层暂缓并等待新样本，不取消任务",
+      "source": "return HEADING_FAULT;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 753,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (state == MOTION_FAULT)"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 754,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "return NAV_MOTION_FAULT;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1222,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (!run_segment()) run_fault(\"next segment failed\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1280,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "run_fault(\"next road failed\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1298,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "run_fault(\"station completion/parked pose mismatch\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1308,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "run_fault(\"station interlock/arm fault\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1321,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (started<0) {run_fault(\"station action refused\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1325,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (station_failed()) {run_fault(\"station work failed\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1327,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (!arm_ready() || !arm_parked()) {run_fault(\"station ended without parked arm\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1360,
+      "disposition": "样本不可用：上层暂缓并等待新样本，不取消任务",
+      "source": "if (decision == HEADING_FAULT) {run.alignment_waiting=1;run_wait_feedback(run.heading_control.fault);return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1440,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (run.station_enabled && run.state==RUN_STATION) run_fault(\"station chassis interlock failed\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1474,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "if (can_rx_fault) {arm_lock_fault(\"CAN transmit/bus fault\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1488,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "arm_lock_fault(\"wheel disabled/stalled/protected\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1528,
+      "disposition": "显式停止命令",
+      "source": "if (run.station_enabled && (run_active || run.state==RUN_STATION)) run_fault(\"operator stopped station arm\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1874,
+      "disposition": "显式停止命令",
+      "source": "if (run.obstacle_phase) {run_fault(\"obstacle repeated during stop/return; hold position\");return 1;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1887,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "if (stop_pending || run_rx_overflow || can_rx_fault) {run_fault(\"obstacle stop command failed\");return 1;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1902,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "&& !run_velocity_send(0,0,0)) {run_fault(\"velocity batch submit failed\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1918,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "if (frame.data[1] != MOTOR_POSITION_ACK) {run_fault(\"velocity command rejected\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1926,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "run_fault(\"motor disabled or stalled\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1957,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "if (run.obstacle_leg_active && !run_velocity_distance()) {run_fault(\"obstacle stop encoder invalid\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1963,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "|| !run_save_leg((uint16_t)run.progress_mm)) {run_fault(\"obstacle return path invalid\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1975,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "} else if (!run_road()) run_fault(\"invalid road/start failure\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1979,
+      "disposition": "样本不可用：上层暂缓并等待新样本，不取消任务",
+      "source": "if (decision == HEADING_FAULT) {run_wait_feedback(run.heading_control.fault);return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1987,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "run_fault(\"wheel position did not follow velocity command\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 1992,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "run_fault(\"IMU rotation direction mismatch\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2012,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "if (!run_velocity_distance()) {run_fault(\"encoder distance overrun/reversed\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2017,
+      "disposition": "实际驱动器或严重定位异常",
+      "source": "run_fault(\"IMU excessive translation heading error\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2072,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "if (!run_velocity_send(forward, left, turn)) {run_fault(\"velocity batch submit failed\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2109,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "run_fault(\"obstacle return distance outside tolerance\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2115,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (!run_save_leg((uint16_t)run.progress_mm)) {run_fault(\"road return path full\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2137,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "run_fault(\"CAN bus off\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2143,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "run_fault(\"CAN bus off\");"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2148,
+      "disposition": "驱动拒绝/提交失败/总线硬故障",
+      "source": "run_fault((can_rx_fault & 2u) ? \"CAN transmit mailbox full; command incomplete\""
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2399,
+      "disposition": "显式停止命令",
+      "source": "if (!strcmp(command_text,\"obstacle\") && (run.state==RUN_STATION || run.station_shift)) {run_fault(\"obstacle during station work; no automatic reverse\");return;}"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2580,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "run_fault(\"arm left parked pose during route\");return;"
+    },
+    {
+      "file": "src/main_table_nav.c",
+      "line": 2591,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (state == MOTION_FAULT)"
+    },
+    {
+      "file": "src/motion.c",
+      "line": 127,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "motion->state = MOTION_FAULT;"
+    },
+    {
+      "file": "src/motion.c",
+      "line": 134,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "motion->state = MOTION_FAULT;"
+    },
+    {
+      "file": "src/motion.c",
+      "line": 144,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "return MOTION_FAULT;"
+    },
+    {
+      "file": "src/navigation.c",
+      "line": 13,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "navigation->state = NAV_FAULT;"
+    },
+    {
+      "file": "src/navigation.c",
+      "line": 57,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "|| !stationary(navigation->state) || navigation->state == NAV_FAULT)"
+    },
+    {
+      "file": "src/navigation.c",
+      "line": 95,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (event == NAV_MOTION_FAULT)"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 68,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "if (stn.count >= STN_STEP_MAX) {stn_fault(\"station program too large\");return 0;}"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 151,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"task colors incomplete; send task 123 or task 134123314231\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 181,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"rough-process poses not calibrated (station_config.h)\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 185,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"platform must start at slot 1 before unloading\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 192,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "stn_fault(\"rough targets must be a permutation of 1,2,3\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 229,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"storage poses not calibrated (station_config.h)\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 233,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"platform must start at slot 1 before unloading\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 238,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "stn_fault(\"storage layer height not calibrated (STN_STORAGE_LAYER_LIFT_MM)\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 243,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"storage second layer exceeds lift travel\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 253,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "if (j == 3u) {stn_fault(\"storage color absent from first batch\");return 0;}"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 257,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "stn_fault(\"storage targets must be 1,2,3\");return 0;"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 286,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "if (job > 7u || (job < 7u && node != nodes[job])) {stn_fault(\"station node/job mismatch\");return -1;}"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 310,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"task code not set; station work needs colors and ring numbers\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 314,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"arm on + arm pose + arm platform pose 20 must be done before run\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 324,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"unknown station job\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 337,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"station pose outside configured travel\");return -1;"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 364,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "stn_fault(\"vision alignment requires high/retracted arm at station angle\");return 0;"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 434,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"arm rejected a station step; check pose/platform declaration\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 464,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (station_chassis_failed()) {stn_fault(\"station alignment motion failed\");return;}"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 514,
+      "disposition": "作业配置/行程/机构前置条件；不编造合法目标",
+      "source": "stn_fault(\"arm reported a fault during station work\");"
+    },
+    {
+      "file": "src/station_job.c",
+      "line": 544,
+      "disposition": "上述硬故障的传播或路线/执行器结构错误",
+      "source": "if (station_chassis_failed()) stn_fault(\"station chassis index failed; vehicle held\");"
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r14",
+  "scope": "按文档实现盘位顺序粗加工、G2暂存与第二批同色叠放；两区前1中2后3、150mm分段、回2号基准。取消粗加工逐环视觉等待，保留原料颜色核验。实测物块60mm使第二层165mm超过当前135mm行程，第二批暂存取料前拒绝。",
+  "hostReports": {
+    "hostHeading": "evidence/heading-native-20261019T081954630Z/result.json",
+    "hostArm": "evidence/arm-native-20261019T081954640Z/result.json",
+    "hostContinuous": "evidence/continuous-native-20261019T081954633Z/result.json",
+    "hostDrive": "evidence/drive-native-20261019T081954657Z/result.json",
+    "hostStationVision": "evidence/station-native-20261019T081954526Z/result.json"
+  },
+  "exactReportSourceHashesMatch": true,
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T081958441Z/build.log",
+    "verification": "evidence/document-flow-r14-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 447256,
+    "start": "0x8000000",
+    "endExclusive": "0x806d318",
+    "artifacts": {
+      "keil/OBJ/table_navigation.axf": "bcc861594322a769e0153768ef29465b4b6ef88473859d9b6b65fd3a063122a9",
+      "keil/OBJ/table_navigation.hex": "1b5b2e771225344fe0392b73a4681257f0785f26e31995492deb2bf83102cf82",
+      "keil/OBJ/table_navigation.map": "a2c7dc304026fadf64096f055602a0bdbb230ed8bb64ab8160e59280e8eaf9a4"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 552,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "calibration": {
+    "roughPlaceReady": true,
+    "storagePlaceReady": true,
+    "platformTakeReady": true,
+    "roughPlatformTakeReady": true,
+    "physicalPickupOrderNeedsConfirmation": true,
+    "actualAutomaticRunCannotCompleteAllJobs": true,
+    "roughPickupOrder": "G2/G4 by original cup1/2/3; place then retrieve in same order",
+    "roughRingCount": 3,
+    "roughIndexMm": 150,
+    "roughIndexSign": -1,
+    "roughIndexRpm": 60,
+    "roughReturnBaselineRing": 2,
+    "roughPose": {
+      "slideMm": 55,
+      "liftMm": 105,
+      "yawDeg": 125
+    },
+    "storagePose": {
+      "slideMm": 55,
+      "liftMm": 105,
+      "yawDeg": 131
+    },
+    "storageIndexSign": -1,
+    "storageIndexMm": 150,
+    "storageReturnBaselineRing": 2,
+    "layerHeightMm": 60,
+    "requiredSecondLiftMm": 165,
+    "configuredMaxLiftMm": 135,
+    "secondLayerPosesMeasured": false,
+    "automaticLimit": "job6 second storage refuses 165mm target before arm/chassis actions"
+  },
+  "sourceDiff": "evidence/document-flow-r14-source.diff",
+  "preChangeSnapshot": "evidence/document-flow-before-20261019T080909132Z",
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

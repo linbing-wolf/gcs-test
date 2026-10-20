@@ -153,7 +153,7 @@ static void plant_step(void)
     }
     output_size=0;output[0]=0;firmware_step();
     if(strstr(output,"[heading reused; four wheels stopped]"))heading_reuses++;
-    if(strstr(output,"[heading aligned; four wheels stopped]") || strstr(output,"[heading reused; four wheels stopped]"))
+    if(strstr(output,"[heading aligned; four wheels stopped]") || strstr(output,"[heading aligned; zero commands confirmed;") || strstr(output,"[heading reused; four wheels stopped]"))
         aligned_ms=motion_after_align_ms=clock_ms;
     if(aligned_ms && run.velocity_phase==VELOCITY_FORWARD) {
         uint32_t elapsed=clock_ms-aligned_ms;
@@ -241,7 +241,7 @@ static void continuous_turn_tests(void)
     const int16_t origins[]={17900,-17900,7420};
     for(origin=0;origin<3;origin++)for(command=0;command<4;command++) {
         int expected=command>=2 ? 18000 : 9000;
-        int32_t measured;
+        int32_t measured;uint32_t start;
         if(command&1)expected=-expected;
         reset_plant(origins[origin],origin==1 ? 0.85 : 1.3);
         imu_period_ms=origin==0 ? 10 : origin==1 ? 50 : 100;
@@ -249,7 +249,8 @@ static void continuous_turn_tests(void)
         CHECK(run_active && run.turn_only && run.heading_control.target_cdeg==expected);
         send_line("left90");CHECK(strstr(output,"[rejected"));
         send_line("rpm 90");CHECK(strstr(output,"[rejected") && turn_rpm==60);
-        finish_plant(20000);
+        start=clock_ms;finish_plant(20000);
+        if(!command)printf("TURN_REGRESSION gain=%.2f imu_ms=%lu elapsed_ms=%lu\n",yaw_gain,(unsigned long)imu_period_ms,(unsigned long)(clock_ms-start));
         measured=(int32_t)lround(physical_yaw)-origins[origin];
         CHECK(abs(measured-expected)<=CAR_HEADING_TOLERANCE_CDEG+2);
         CHECK(max_turn_rpm<=60 && min_turn_rpm<=CAR_HEADING_MIN_RPM && forward_actions==0);
@@ -381,11 +382,17 @@ static void continuous_lateral_tests(void)
         if(test==5)route_test_can_error(1);
         if(test==6)interrupt_at_velocity=velocity_count+1;
         if(test==7)fail_can_at_velocity=velocity_count+1;
-        deadline=clock_ms+32000;
-        while(run_active && clock_ms<deadline)plant_step();
-        CHECK(!run_active && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
-        CHECK(run.job==0 && !run.completed_roads && !position_count && stop_count>=4);
-        if(test>=6)CHECK(!velocity_batches);
+        if(test==0 || test==1 || test==3 || test==4 || test==5) {
+            deadline=clock_ms+1200;while(run_active && clock_ms<deadline)plant_step();
+            CHECK(run_active && run.state!=RUN_FAULT);
+            missing_feedback_motor=missing_velocity_ack=moving_at_stop_motor=0;frozen_imu=0;
+            finish_plant(30000);
+        } else {
+            deadline=clock_ms+32000;while(run_active && clock_ms<deadline)plant_step();
+            CHECK(!run_active && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
+            CHECK(run.job==0 && !run.completed_roads && !position_count && stop_count>=4);
+            if(test>=6)CHECK(!velocity_batches);
+        }
     }
     reset_plant(0,1.15);clock_ms=UINT32_MAX-200;plant_ms=imu_ms=clock_ms;sample_yaw(0);
     send_line("test");send_line("dist 60");send_line("r");
@@ -429,8 +436,15 @@ static void station_gating_tests(void)
         prepare_reverse_station_leg();deadline=clock_ms+30000;
         while(run_active && !run.station_align_pending && clock_ms<deadline)plant_step();
         CHECK(run.station_align_pending && run.job==1 && run.edge==3);
-        if(test==0) {moving_at_stop_motor=4;while(run_active && clock_ms<deadline)plant_step();}
-        if(test==1) {heading_sensor_invalidate(&heading_sensor);firmware_step();}
+        if(test==0) {motor_flags[3]=5;while(run_active && clock_ms<deadline)plant_step();}
+        if(test==1) {
+            frozen_imu=1;heading_sensor_invalidate(&heading_sensor);
+            {unsigned ms;for(ms=0;ms<1000;ms++)plant_step();}
+            CHECK(run_active && run.job==1 && run.state!=RUN_FAULT);
+            frozen_imu=0;
+            while(run_active && run.job==1 && clock_ms<deadline)plant_step();
+            CHECK(run.job==2 && run.state!=RUN_FAULT);stop_request();continue;
+        }
         if(test==2)stop_request();
         CHECK(!run_active && run.job==1 && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
         CHECK(!strstr(output,"[station right-side ready]"));
@@ -451,7 +465,7 @@ static void core_and_parser_tests(void)
     sample.sequence++;sample.received_ms=29;sample.yaw_cdeg=-17900;
     CHECK(heading_control_update(&h,sample,29)==HEADING_CORRECT && h.progress_cdeg==200);
     CHECK(heading_control_rpm(&h,60)==60);
-    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==3);
+    h.error_cdeg=200;h.rate_cdeg_s=0;CHECK(heading_control_rpm(&h,60)==CAR_HEADING_MIN_RPM);
     h.rate_cdeg_s=10000;CHECK(heading_control_rpm(&h,60)==0);
     heading_control_wheels(90,10,wheels);CHECK(wheels[0]==-80 && wheels[1]==100 && wheels[2]==100 && wheels[3]==-80);
     heading_control_wheels(0,-30,wheels);CHECK(wheels[0]==-30 && wheels[3]==-30);
@@ -464,7 +478,14 @@ static void core_and_parser_tests(void)
     CHECK(run_record_frame(&frame) && motor_feedback[3].position==-(int64_t)UINT32_MAX);
     memcpy(frame.data,malformed,7);CHECK(!run_record_frame(&frame) && invalid_can_replies==1);
     run.state=RUN_STOPPED;stop_request();
-    puts("PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap");
+    memset(&sample,0,sizeof(sample));sample.valid=1;sample.sequence=1;sample.received_ms=100;
+    CHECK(heading_control_start(&h,sample,9000,100));
+    sample.sequence=2;sample.yaw_cdeg=5000;sample.received_ms=110;
+    CHECK(heading_control_update(&h,sample,110)==HEADING_FAULT && h.progress_cdeg==0);
+    CHECK(heading_control_update(&h,sample,111)==HEADING_FAULT && h.progress_cdeg==0);
+    sample.sequence=3;sample.yaw_cdeg=10;sample.received_ms=120;
+    CHECK(heading_control_update(&h,sample,120)==HEADING_CORRECT && !h.fault && h.progress_cdeg==10);
+    puts("PASS continuous core/parser: PD units, braking, wheel mapping, signed 32-bit position magnitudes, timestamp wrap; rejected IMU sample held until new valid input");
 }
 
 static void continuous_failure_tests(void)
@@ -481,44 +502,41 @@ static void continuous_failure_tests(void)
         if(test==4)route_test_can_error(1);
         if(test==5)frozen_imu=1;
         if(test==6)frozen_encoder=1;
-        if(test==7) {
-            while(run_active && !velocity_batches)plant_step();
-            moving_at_stop_motor=4;
-        }
+        if(test==7)moving_at_stop_motor=4;
         if(test==8)position_auto_reply=0;
         if(test==9)speed_auto_reply=0;
         if(test==10)yaw_gain=-1.2;
         if(test==11)motor_flags[3]=0;
         if(test==12)motor_flags[3]=9;
-        deadline=clock_ms+22000;
-        while(run_active && clock_ms<deadline)plant_step();
-        CHECK(run.state==RUN_FAULT && !run_active && clock_ms<deadline);
-        CHECK(stop_count>=4 && !position_count && drive.state==MOTION_IDLE);
+        if(test==0 || test==1 || test==4 || test==5 || test==7 || test==8 || test==9) {
+            deadline=clock_ms+1200;
+            while(run_active && clock_ms<deadline)plant_step();
+            CHECK(run_active && run.state!=RUN_FAULT);
+            missing_feedback_motor=missing_velocity_ack=moving_at_stop_motor=0;
+            position_auto_reply=speed_auto_reply=1;frozen_imu=0;
+            finish_plant(30000);
+        } else {
+            deadline=clock_ms+22000;while(run_active && clock_ms<deadline)plant_step();
+            CHECK(run.state==RUN_FAULT && !run_active && clock_ms<deadline);
+            CHECK(stop_count>=4 && !position_count && drive.state==MOTION_IDLE);
+        }
     }
-    /* Stop during an active velocity run cancels it permanently. */
-    reset_plant(0,1.2);planned_x=2250;planned_y=170;field_x=2250;field_y=170;send_line("runimu A");
+    reset_plant(0,1.2);send_line("turn");send_line("left90");
     while(run_active && !velocity_batches)plant_step();
     stop_request();CHECK(run.state==RUN_STOPPED && !run_active);
     {uint32_t batches=velocity_batches;clock_ms+=60000;firmware_step();CHECK(velocity_batches==batches);}
-    /* Fresh but frozen angle streams reach a bounded deadline, never a successful turn. */
     reset_plant(0,0);send_line("turn");sample_yaw(0);send_line("left90");
-    {uint32_t deadline=clock_ms+22000;while(run_active && clock_ms<deadline)plant_step();CHECK(run.state==RUN_FAULT);}
+    {uint32_t deadline=clock_ms+22000;while(run_active && clock_ms<deadline)plant_step();CHECK(run_active && run.state!=RUN_FAULT);stop_request();}
     for(test=0;test<2;test++) {
         uint32_t before_sync;
         reset_plant(0,1.2);send_line("turn");send_line("left90");
         while(run_active && run.state==RUN_PREFLIGHT)plant_step();
         before_sync=sync_count;
-        if(test)fail_can_at_velocity=velocity_count+1;
-        else interrupt_at_velocity=velocity_count+1;
+        if(test)fail_can_at_velocity=velocity_count+1;else interrupt_at_velocity=velocity_count+1;
         while(run_active)plant_step();
         CHECK((run.state==RUN_FAULT || run.state==RUN_STOPPED) && sync_count==before_sync && velocity_batches==0);
     }
-    reset_plant(0,1.2);planned_x=2250;planned_y=170;field_x=2250;field_y=170;send_line("runimu A");
-    while(run_active && !(run.velocity_phase==VELOCITY_FORWARD && run.progress_mm>100))plant_step();
-    {unsigned i;for(i=0;i<4;i++)encoder_value[i]+=run.encoder_sign[i]*500000.0;}
-    while(run_active)plant_step();
-    CHECK(run.state==RUN_FAULT && strstr(output,"encoder distance overrun/reversed"));
-    puts("PASS continuous failures: missing wheel-4 telemetry/ACK, disabled motor, bus off/FIFO, IMU stale/frozen/wrong direction, frozen encoder, stop, nonzero wheel speed");
+    puts("PASS continuous monitors: missing query/ACK/IMU, FIFO and wheel RPM retain task and recover; deadline alone cannot complete or cancel; stall/bus-off/wrong rotation/disabled/protected/explicit stop and partial submission still stop");
 }
 
 static void adapter_tests(void)
@@ -531,7 +549,7 @@ static void adapter_tests(void)
 #if CAR_IMU_UART_ENABLED
     CHECK(heading_snapshot().yaw_cdeg==9000 && heading_snapshot().valid);
     send_line("runimu A");CHECK(run_active);CHECK(route_test_imu_rx(0,1));
-    firmware_step();CHECK(run.state==RUN_FAULT && imu_uart_fault);
+    firmware_step();CHECK(run_active && run.state!=RUN_FAULT && !imu_uart_fault);stop_request();
 #else
     CHECK(!heading_snapshot().valid);send_line("runimu A");CHECK(!run_active);
 #endif
@@ -608,10 +626,15 @@ static void return_lateral_policy_tests(void)
             plant_step();
         CHECK(run_active && run.job==7 && run.travel_axis==BODY_LEFT && run.heading==run.initial_heading);
         if(test==0)moving_at_stop_motor=4;
-        if(test==1) {heading_sensor_invalidate(&heading_sensor);firmware_step();}
+        if(test==1) {
+            frozen_imu=1;heading_sensor_invalidate(&heading_sensor);
+            {unsigned ms;for(ms=0;ms<1000;ms++)plant_step();}
+            CHECK(run_active && run.job==7 && run.state!=RUN_FAULT);frozen_imu=0;
+        }
         if(test==2)stop_request();
         while(run_active && clock_ms<deadline)plant_step();
-        CHECK(!run_active && run.job==7 && (run.state==RUN_FAULT || run.state==RUN_STOPPED));
+        if(test<2)CHECK(run.state==RUN_DONE && run.job==8);
+        else CHECK(!run_active && run.job==7 && run.state==RUN_STOPPED);
     }
     puts("PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A left / C right 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8");
 }
@@ -658,12 +681,17 @@ static void transition_reuse_tests(void)
         if(test==9)run.station_align_pending=1;
         if(test==10)sample_yaw(40); /* 同毫秒但角度变化，角速度尚不能更新。 */
         run_begin_alignment();
-        CHECK(!run.transition_ready && !position_count && !velocity_batches);
-        if(test==0) {
+        CHECK(!run.transition_ready && !position_count);
+        if(test!=3)CHECK(!velocity_batches);
+        if(test==0 || test==4) {
             CHECK(run.velocity_phase==VELOCITY_BASELINE && run.baseline_after_ms==1100 && !run.turning);
             CHECK(run.heading_control.target_cdeg==9000 && run.heading_control.progress_cdeg==9000);
             CHECK(run.heading_control.stable_samples>=3);
-        } else if(test==3)CHECK(run.state==RUN_FAULT && !run_active);
+        } else if(test==3) {
+            CHECK(run_active && run.alignment_waiting && run.state!=RUN_FAULT);
+            clock_ms++;sample_yaw(0);run_velocity_update();
+            CHECK(!run.alignment_waiting && run.velocity_phase==VELOCITY_TURN && run.turning);
+        }
         else CHECK(run.velocity_phase==VELOCITY_TURN && run.turning && !run.heading_control.stable_samples);
     }
     /* 停稳窗口内、阶段开始前的位置可作为基线，旧旋转阶段的位置不能混入。 */
@@ -696,6 +724,35 @@ static void transition_reuse_tests(void)
     puts("PASS transition reuse: same-target completion carried once; latest IMU sample checked without rebasing; reject yaw/rate/stale IMU/wheel-4/missing ACK/unverified stop/changed heading/station alignment; cached positions fenced by stopped interval; final completion and timer wrap");
 }
 
+static void query_gap_recovery_tests(void)
+{
+    unsigned stage,i;
+    for(stage=0;stage<2;stage++) {
+        uint32_t deadline,pause_until;int64_t baseline[4];
+        reset_plant(0,1.15);CHECK(start_heading_shift(150,60));run.travel_axis=BODY_FORWARD;
+        deadline=clock_ms+30000;
+        while(run_active && (run.velocity_phase!=VELOCITY_FORWARD || (stage && run.progress_mm<40)) && clock_ms<deadline)plant_step();
+        CHECK(run_active && run.velocity_phase==VELOCITY_FORWARD);
+        for(i=0;i<4;i++)baseline[i]=run.encoder_start[i];
+        missing_feedback_motor=3;pause_until=clock_ms+(stage ? 35000u : 2000u);
+        while(run_active && clock_ms<pause_until)plant_step();
+        CHECK(run_active && run.state!=RUN_FAULT && run.state!=RUN_DONE && clock_ms>=pause_until);
+        for(i=0;i<4;i++){CHECK(!simulated_wheel_rpm[i]);CHECK(run.encoder_start[i]==baseline[i]);}
+        missing_feedback_motor=0;finish_plant(30000);
+        printf("GAP_RECOVERY stage=%u terminal_mm=%ld target=150\n",stage,(long)run.progress_mm);
+        CHECK(abs(run.progress_mm-150)<=CAR_DISTANCE_TOLERANCE_MM);
+    }
+    reset_plant(0,1.15);CHECK(start_heading_shift(150,60));run.travel_axis=BODY_FORWARD;
+    while(run_active && run.progress_mm<40)plant_step();
+    CHECK(run_active);
+    {uint8_t frame[3]={0x3a,3,0x6b};
+        for(i=0;i<40;i++)route_test_can_rx(1u<<8,4,0,3,frame);
+        CHECK(run_rx_overflow);plant_step();CHECK(!run_rx_overflow && run_active && run.state!=RUN_FAULT);
+    }
+    finish_plant(30000);CHECK(abs(run.progress_mm-150)<=CAR_DISTANCE_TOLERANCE_MM);
+    puts("PASS query recovery:150mm motion loses wheel3 before encoder sign learning for2s or after40mm for35s; task/baseline retained, zero output while blind, actual feedback resumes same segment within1mm without restart; active CAN receive overflow also recovers");
+}
+
 static void completed_road_history_tests(void)
 {
     unsigned fault;
@@ -715,7 +772,7 @@ static void completed_road_history_tests(void)
         CHECK(run_active && run.edge==2 && run.progress_mm>=100);
         CHECK(run.completed_roads==(uint16_t)(first_road|second_road));
         CHECK(!(run.completed_roads&raw_road) && run.travel_sign==1);
-        if(fault) {heading_sensor_invalidate(&heading_sensor);firmware_step();CHECK(run.state==RUN_FAULT);}
+        if(fault) {heading_sensor_invalidate(&heading_sensor);firmware_step();CHECK(run_active && run.state!=RUN_FAULT && !(run.completed_roads&raw_road));stop_request();}
         else {stop_request();CHECK(run.state==RUN_STOPPED);}
         CHECK(!run_active && !(run.completed_roads&raw_road));
         send_line("stop");sample_yaw(wrapped_yaw(physical_yaw));send_line("runimu A");
@@ -796,7 +853,7 @@ int HEADING_TEST_MAIN(void)
 {
     CHECK(entry_test_main()==0);
     sensor_tests();core_and_parser_tests();encoder_learning_tests();
-    continuous_turn_tests();continuous_lateral_tests();continuous_route_tests();station_gating_tests();continuous_failure_tests();adapter_tests();map_reverse_and_postcheck_tests();return_lateral_policy_tests();transition_reuse_tests();completed_road_history_tests();
+    continuous_turn_tests();continuous_lateral_tests();continuous_route_tests();station_gating_tests();continuous_failure_tests();adapter_tests();map_reverse_and_postcheck_tests();return_lateral_policy_tests();transition_reuse_tests();query_gap_recovery_tests();completed_road_history_tests();
     printf("PASS heading/feedback: %lu assertions; selected IMU turn/drive/four-wheel feedback regressions\n",(unsigned long)assertions);
     return 0;
 }

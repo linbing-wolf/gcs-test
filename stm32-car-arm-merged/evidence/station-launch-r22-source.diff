@@ -1,0 +1,182 @@
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -1141,7 +1141,9 @@
+         || (mm != index_mm && mm != -index_mm && mm != STN_ALIGN_STEP_MM && mm != -STN_ALIGN_STEP_MM)) return 0;
+     for (i = 0; i < MOTOR_COUNT; i++) {
+         MotorFeedback *f = &motor_feedback[i];
+-        if (!f->speed_valid || f->speed_rpm != 0 || !(f->status_flags & MOTOR_FLAG_ENABLED)
++        /* 工位发车与已建立会话共用轮速容差，避免两处检查口径不一致。 */
++        if (!f->speed_valid || f->speed_rpm < -ARM_CHASSIS_SPEED_NOISE_RPM
++            || f->speed_rpm > ARM_CHASSIS_SPEED_NOISE_RPM || !(f->status_flags & MOTOR_FLAG_ENABLED)
+             || (f->status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))
+             || (uint32_t)(clock_ms - f->speed_ms) > ARM_FEEDBACK_TIMEOUT_MS
+             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
+@@ -2622,7 +2624,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261019-merge2-r21; accept DISC ok=1; reversed alignment direction; wheel guard15rpm/3000ms\r\n");
++    text("[drive] version=20261019-merge2-r22; station launch +/-15rpm; DISC ok=1; wheel guard3000ms\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/src/station_job.c
++++ src/station_job.c
+@@ -414,7 +414,7 @@
+     case SS_CHASSIS: {
+         char index_line[64];
+         if (!station_chassis_start(s->value)) {
+-            stn_fault("station index refused: retracted arm/fresh wheel stop/IMU required");
++            stn_fault("station index refused: retracted arm/fresh wheels within speed tolerance/IMU required");
+             return 0;
+         }
+         snprintf(index_line, sizeof(index_line), "[station index] ring=%u move_mm=%d\r\n",
+@@ -480,7 +480,7 @@
+     }
+     stn.align_travel=(uint16_t)(stn.align_travel+distance);
+     if (!station_chassis_start((int16_t)((error < 0 ? -distance : distance)*STN_ALIGN_MOVE_SIGN))) {
+-        stn_fault("station alignment motion refused; high/retracted arm and fresh zero wheels required");return;
++        stn_fault("station alignment motion refused; high/retracted arm and fresh wheels within speed tolerance required");return;
+     }
+     {
+         char line[128];
+--- before/tests/verify_station_vision.c
++++ tests/verify_station_vision.c
+@@ -557,12 +557,12 @@
+         send_line("station");CHECK(strstr(output,"task_ready=1"));
+         stop_request();
+     }
+-    /* 索引接口不能绕开已收臂、零速、工位类型和新鲜IMU限制。 */
++    /* 索引接口不能绕开已收臂、轮速容差、工位类型和新鲜IMU限制。 */
+     for(variant=0;variant<7;variant++) {
+         prepare_rough(0,"task 134+123+314+231");run.station_phase=1;
+         if(variant==0)CHECK(arm_command("arm pose 1 135 0 45",clock_ms));
+         if(variant==1)heading_sensor_invalidate(&heading_sensor);
+-        if(variant==2)motor_feedback[3].speed_rpm=1;
++        if(variant==2)motor_feedback[3].speed_rpm=16;
+         if(variant==3)motor_feedback[3].speed_ms=clock_ms-ARM_FEEDBACK_TIMEOUT_MS-1u;
+         if(variant==4)arm_lock.state=1;
+         if(variant==5)run.job=1;
+@@ -764,12 +764,12 @@
+         {RoadPoint point;CHECK(road_point(NODE_H,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
+         stop_request();
+     }
+-    /* 暂存区同样拒绝未收回、低位、忙碌和非零速，不能绕过工位联锁。 */
++    /* 暂存区同样拒绝未收回、低位、忙碌和超轮速容差，不能绕过工位联锁。 */
+     for(variant=0;variant<4;variant++) {
+         prepare_storage(0,"task 134+231+314+123");run.station_phase=1;
+         if(variant==0)CHECK(arm_command("arm pose 1 135 0 45",clock_ms));
+         if(variant==1)CHECK(arm_command("arm pose 0 105 0 45",clock_ms));
+-        if(variant==2)motor_feedback[0].speed_rpm=1;
++        if(variant==2)motor_feedback[0].speed_rpm=-16;
+         if(variant==3)CHECK(arm_command("arm yaw 10",clock_ms));
+         CHECK(!station_chassis_start(STN_STORAGE_INDEX_MM) && !run_active && !velocity_batches);
+     }
+@@ -781,6 +781,36 @@
+     return storage ? STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY :
+         STN_ROUGH_PLACE_READY && STN_ROUGH_PLATFORM_TAKE_READY
+         && (STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_YAW_DEG);
++}
++
++static void station_launch_tolerance_tests(void)
++{
++    unsigned storage,variant,move,wheel;
++    static const int distances[]={3,-3,150,-150};
++    for(storage=0;storage<2;storage++) {
++        if(!alignment_station_enabled(storage))continue;
++        for(move=0;move<4;move++)for(variant=0;variant<11;variant++) {
++            static const int16_t logged[]={0,4,2,-2};
++            if(storage)prepare_storage(0,"task 134+231+314+123");else prepare_rough(0,"task 134+231+314+123");
++            run.station_phase=1;
++            for(wheel=0;wheel<4;wheel++) {
++                motor_feedback[wheel].speed_rpm=variant==0 ? logged[wheel] :
++                    variant==1 ? (wheel&1u ? -15 : 15) : variant==2 ? (wheel&1u ? 15 : -15) : 0;
++            }
++            if(variant>=3)motor_feedback[(variant-3u)/2u].speed_rpm=(variant&1u) ? 16 : -16;
++            if(variant<3) {
++                CHECK(station_chassis_start((int16_t)distances[move]));
++                CHECK(run_active && run.station_shift && run.travel_axis==BODY_FORWARD);
++                CHECK(run.travel_sign==(distances[move]>0 ? 1 : -1));
++                CHECK(!arm_positions && !velocity_batches);
++                stop_request();
++            } else {
++                CHECK(!station_chassis_start((int16_t)distances[move]));
++                CHECK(!run_active && !run.station_shift && !velocity_batches && !arm_positions);
++            }
++        }
++    }
++    puts("PASS station launch tolerance: rough/storage +/-3mm and +/-150mm accept logged0/4/2/-2RPM and +/-15RPM on all wheels; each wheel +/-16RPM refused; fresh/status/pose/IMU gates retained");
+ }
+ 
+ static void station_alignment_tests(void)
+@@ -875,7 +905,7 @@
+ 
+ int main(void)
+ {
+-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_alignment_tests();
++    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_alignment_tests();
+     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
+     return 0;
+ }
+--- before/README.md
++++ README.md
+@@ -1,6 +1,6 @@
+ # 底盘＋机械机构独立合并工程
+ 
+-**当前版本：20261019-merge2-r21。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±15RPM/3000ms容差、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261019-merge2-r22。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；进站先125°视觉对准2号，各目标位及离站2号也需对准确认。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工55/70/125°，平台取料35/100/256°；暂存先125°观察对准，放料55/105/131°及平台取料35/110/256°保持。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每个目标只发一次D、持续按MOVE微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，但第二层目标105+60=165mm超过当前135mm上限，生产配置在第二批暂存取料前报超程；须重新实测可达的放料姿态后才能完成码垛。初次严格零速、机构会话±15RPM/3000ms容差，3mm微调及150mm索引启动共用±15RPM、急停、CAN/IMU/轴反馈保护保留。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -15,8 +15,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已验证r21固件为 `evidence/merged-keil-20261019T124507580Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r21`。只显示发送记录不代表板子已回复。
++3. 本次已验证r22固件为 `evidence/merged-keil-20261019T125312938Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261019-merge2-r22`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -2,7 +2,9 @@
+ 
+ > 本版默认接入自动到站作业、任务码、UART5视觉和 `arm load1/load3/@`，准备步骤、未标定边界及协议见 [merged2功能合并与自动作业](merged2功能合并与自动作业.md)。
+ 
+-> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r21支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++> 旧 `run A/C`、`tl/tr`、`pulses`、`ccw90/cw90` 已移除，详见 [runimu全程入口与旧代码清理](runimu全程入口与旧代码清理.md)。当前本地版本20261019-merge2-r22支持同向直行节点连续通过，以及 `runimu` 中串口 `obstacle` 触发后退回上一已记录节点并停等，见 [连续直行与障碍退回](连续直行与障碍退回.md)。当前没有自动障碍检测输入，保留 `yaw_win` 诊断和你确认的3000速度配置。
++
++r22将工位3mm视觉微调及150mm索引启动的轮速检查统一为±15RPM，复用ARM_CHASSIS_SPEED_NOISE_RPM；日志中的0/4/2/-2RPM不再直接拒绝启动。反馈须有效且500ms内，使能/堵转/保护状态及高位收臂、IMU等检查保持。首次arm on及移车完成后的互锁重新获取仍要求严格零速，已建立会话的3000ms非零期限保持。没有扩大未涉及的参数。
+ 
+ r21按操作者要求将已建立机械臂会话的轮速容差从±5RPM改为±15RPM。±15RPM内非零允许最多3000ms等待回零，超范围立即停止；初次获取互锁和工位移车发车仍要求严格零速。视觉、路线和抓放参数保持。
+ 
+@@ -40,7 +42,7 @@
+ 
+ ## 互锁和停止
+ 
+-`arm on`先要求底盘没有活动路线、待确认位置动作或导航流程，再下发四轮停车，轮询四轮的新使能/故障状态及零速反馈，连续保持200ms后启用5/7号机构电机。等待上限2秒，单项反馈时效500ms；缺少任一轮不能放行。此后每10ms查询一项轮状态/速度，持续监测四轮。当前r21在已建立的机构会话内允许±15RPM短时读数：首次非零打印告警，3000ms内回零则继续；连续3000ms非零或收到超过±15RPM的反馈立即停止。首次arm on的200ms严格零速要求和粗加工发车零速检查不变。失联、堵转、CAN错误或收包溢出仍会停止机构并请求底盘停车，锁仍保留，不自动恢复。
++`arm on`先要求底盘没有活动路线、待确认位置动作或导航流程，再下发四轮停车，轮询四轮的新使能/故障状态及零速反馈，连续保持200ms后启用5/7号机构电机。等待上限2秒，单项反馈时效500ms；缺少任一轮不能放行。此后每10ms查询一项轮状态/速度，持续监测四轮。当前r22在已建立的机构会话内允许±15RPM短时读数：首次非零打印告警，3000ms内回零则继续；连续3000ms非零或收到超过±15RPM的反馈立即停止。首次arm on的200ms严格零速要求保留；工位微调/索引发车轮速改用±15RPM容差。失联、堵转、CAN错误或收包溢出仍会停止机构并请求底盘停车，锁仍保留，不自动恢复。
+ 
+ 手动机构会话期间，`go`、模式切换、平移和转向等底盘命令均拒绝；自动 `runimu` 仅在机构已声明、收拢且平台为1号位时允许启动，行驶和工位独占地使用四轮CAN反馈。`info`、`imu`、`feedback`、扫码查询/配置及按钮更新继续运行。机械动作每步检查5/7号的新状态、零速、编码器基线，发出指令后检查ACK、到位、零速及有符号编码器位移；不以延时或一份旧到位标志推进。机构位置命令不使用广播同步，CAN回包按1～4和5/7分流。
+ 
+--- before/docs/按任务码作业与暂存叠放.md
++++ docs/按任务码作业与暂存叠放.md
+@@ -1,6 +1,6 @@
+ # 按任务码作业与暂存叠放
+ 
+-版本：20261019-merge2-r21。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
++版本：20261019-merge2-r22。来源是用户提供的作业方案文档及2026-10-19补充：暂存区前移到1号，物块高度60mm；新的两层松爪高度未测。本次只修改本地代码、生成固件与验证证据，没有烧录或实车动作。
+ 
+ ## 任务码和盘位
+ 
+@@ -22,6 +22,8 @@
+ 最后回2号基准并视觉确认，在125°高位收回时把平台恢复1号，再回车头0°并交回普通路线。两批共用这套几何与动作，仅任务靶位表不同。普通手动arm platform命令仍要求0°；粗加工与暂存状态机使用带指定观察角检查的内部换盘接口，仍执行双轴新鲜反馈预检、到位检查及PWM插值。
+ 
+ 例如第一批G1=314、G2=231：取1盘蓝放2号、取2盘红放3号、取3盘绿放1号；随后依次从2、3、1号抓回1、2、3盘。G4只影响第二批粗加工。
++
++r22将粗加工/暂存3mm微调和150mm索引的启动轮速检查统一为±15RPM，包含正负边界；每轮超过±15RPM仍拒绝。首次互锁及移车结束后重新获取互锁仍严格零速，反馈时效、机构姿态、IMU等检查保持。
+ 
+ r21将机构会话短时轮速容差调为±15RPM，3000ms回零期限保持；超过±15RPM立即停止，初次互锁/工位发车仍严格零速。
+ 

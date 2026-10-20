@@ -1,0 +1,141 @@
+{
+  "passed": true,
+  "version": "20261019-merge2-r18",
+  "scope": "粗加工和暂存每个对准步骤只发送一次D，连续接收MOVE纠偏，成功DISC结束任务；删除三次独立D确认，不自动发送R、不等待READY。移动中的偏差不排队执行，终包保留至车停稳。抓放参数、125度观察角及3000ms保护保持。",
+  "hostReports": {
+    "hostHeading": {
+      "passed": true,
+      "report": "evidence/heading-native-20261019T093728930Z/result.json",
+      "scope": "host mocks and simulated heading, not physical vehicle",
+      "assertions": [
+        1542198,
+        1544581
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostArm": {
+      "passed": true,
+      "report": "evidence/arm-native-20261019T093728976Z/result.json",
+      "scope": "host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime",
+      "assertions": [
+        127145
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostContinuous": {
+      "passed": true,
+      "report": "evidence/continuous-native-20261019T093822685Z/result.json",
+      "scope": "actual configured RPM; simulated nonstop node passing and obstacle return; no hardware accessed",
+      "assertions": [
+        2154054
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostDrive": {
+      "passed": true,
+      "report": "evidence/drive-native-20261019T093822678Z/result.json",
+      "scope": "host drive heading/ramp/stop/log checks and asymmetric-wheel simulation; not physical accuracy",
+      "assertions": [
+        614949
+      ],
+      "hardwareAccuracyVerified": false
+    },
+    "hostStationVision": {
+      "passed": true,
+      "report": "evidence/station-native-20261019T093704308Z/result.json",
+      "scope": "rough/storage125 single D session, continuous MOVE until final DISC; fake peer streams every300ms without new requests, exact one D per alignment; no R/READY cancellation, in-motion samples dropped, terminal DISC deferred until stopped; independent +/-9mm geometry, fresh3mm corrections, transport and camera/fault limits; rough100/70 and 3000ms tolerance retained; layer20/30 mocks complete routes, production layer60 refuses second storage; no hardware accessed",
+      "assertions": [
+        3118921,
+        4984099,
+        972855,
+        972855,
+        3119294,
+        2358325,
+        4983643
+      ],
+      "hardwareAccuracyVerified": false
+    }
+  },
+  "exactReportSourceHashesMatch": true,
+  "build": {
+    "passed": true,
+    "compiler": "ARM Compiler 5.06 update 5 build 528",
+    "units": 70,
+    "successfulToolExits": 72,
+    "errors": 0,
+    "warnings": 30,
+    "warningsScope": "30 inherited vendor warnings; no application warnings",
+    "log": "evidence/merged-keil-20261019T093836800Z/build.log",
+    "verification": "evidence/vision-session-r18-verification.json"
+  },
+  "firmware": {
+    "passed": true,
+    "loadBytes": 448620,
+    "start": "0x8000000",
+    "endExclusive": "0x806d86c",
+    "artifacts": {
+      "evidence/merged-keil-20261019T093836800Z/table_navigation.axf": "121f1b8cd7d6bd079ce18bc183f8b92a8c148e6b6e1473dcb7ac5a91680470d7",
+      "evidence/merged-keil-20261019T093836800Z/table_navigation.hex": "07bc16774fc96919c13edfffd6ecb05d898d1804007c266a162294856f546f3a",
+      "evidence/merged-keil-20261019T093836800Z/table_navigation.map": "90b780da7262fa2c6628738978f7e4b8d94b338d561c89b3701d733fb7318f86"
+    }
+  },
+  "stack": {
+    "reportedMaximumBytes": 608,
+    "configuredBytes": 1024,
+    "includesUnknownIndirectCalls": true,
+    "physicalWorstCaseNotMeasured": true
+  },
+  "stationVision": {
+    "verification": "evidence/vision-session-r18-verification.json",
+    "jobs": [
+      2,
+      3,
+      5,
+      6
+    ],
+    "alignYawDeg": 125,
+    "initialRing": 2,
+    "finalRing": 2,
+    "everyTargetRequiresVision": true,
+    "protocol": [
+      "one D per alignment -> continuous MOVE,dx -> final DISC,x,y,dx,1",
+      "MOVE -> move3mm -> stopped/relocked -> consume later MOVE, no new D"
+    ],
+    "moveStepMm": 3,
+    "positivePixelMeans": "vehicle forward; physical polarity requires verification",
+    "maxCorrectionTravelMmPerTarget": 75,
+    "maxAlignMs": 60000,
+    "storagePlaceYawDegUnchanged": 131,
+    "storageTakeLiftMmUnchanged": 110,
+    "storageFirstPlaceLiftMmUnchanged": 105,
+    "ringIdentity": "D reports center only, no ring ID; initial ring2 vicinity and correct ROI are required",
+    "sideAnglePlatformSelection": true,
+    "hardwareVerified": false,
+    "automaticResetFrames": false,
+    "requiresReadyHandshake": false,
+    "manualRangeRCommandRetained": true,
+    "rejectRepliesBeforeRequestFullyTransmitted": true,
+    "lateReplyLimitation": "No request ID; queued old bytes are cleared but in-flight cross-session late replies cannot be distinguished",
+    "requestsPerAlignmentStep": 1,
+    "successfulDiscEndsSession": true,
+    "moveKeepsSessionWaiting": true,
+    "latestMoveConsumedOnce": true,
+    "rejectMovesBeforeStopPlus100Ms": true,
+    "terminalDiscWaitsForStoppedChassis": true,
+    "sessionTimeoutMs": 25000,
+    "runningVisionSoftwareVerified": false,
+    "protocolEvidence": "evidence/vision-source-20261019/maixcam_app_v2/tasks.py: task_disc sends MOVE repeatedly and returns final DISC"
+  },
+  "mechanicalParametersUnchanged": true,
+  "defaultKeilOutputsPreserved": {
+    "keil/OBJ/table_navigation.axf": "ca2f64db0378b994e75eb1f596c2ddd453c4edb174daaa3a3af81f29bd014996",
+    "keil/OBJ/table_navigation.hex": "7b6ade14ee19624edb744f7a9a61b24ac8f035bcc3267e4f159d774a31c3d5da",
+    "keil/OBJ/table_navigation.map": "fe1f205ccd09394df9edb6b8bbda8ebb75fa8b43266d6d328730b33ea6c9a901"
+  },
+  "preChangeSnapshot": "evidence/vision-session-before-20261019T093553158857Z",
+  "sourceDiff": "evidence/vision-session-r18-source.diff",
+  "buildEnvironment": "Sandbox ARM5 DLL relocation failed; authorized outside-sandbox isolated build completed successfully",
+  "hardwareAccessed": false,
+  "flashed": false,
+  "physicalMotionVerified": false
+}

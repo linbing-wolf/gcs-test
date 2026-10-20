@@ -1,0 +1,838 @@
+--- before/docs/合并与串口操作.md
++++ docs/合并与串口操作.md
+@@ -1,4 +1,6 @@
+ # 合并范围与串口操作
++
++r32：接入USART6/PC6、9600波特率的既有只读状态屏，显示四组任务码、阶段、计时和已知调试数据；非阻塞发送，原运动/视觉流程和r31平台夹取100mm保持。使用screen main/chassis/arm/sensors切页，详见[串口屏接入](串口屏接入.md)。未连接、下载或验收真实屏幕。
+ 
+ r31：仅把第二次暂存作业从车载平台夹取的lift由110改为100mm，与第一次相同。平台放回110mm、第二层地面放料65mm、视觉对准与方向、其余抓放和r30节拍参数保持。未烧录或实车验收。
+ 
+--- before/keil/TableNavigation.uvprojx
++++ keil/TableNavigation.uvprojx
+@@ -730,9 +730,9 @@
+           <GroupName>ckp</GroupName>
+           <Files>
+             <File>
+-              <FileName>uart6_ckp.c</FileName>
+-              <FileType>1</FileType>
+-              <FilePath>..\vendor\stm32\ckp\uart6_ckp.c</FilePath>
++              <FileName>hmi_status.c</FileName>
++              <FileType>1</FileType>
++              <FilePath>..\src\hmi_status.c</FilePath>
+             </File>
+             <File>
+               <FileName>uart6_ckp.h</FileName>
+--- before/README.md
++++ README.md
+@@ -1,4 +1,6 @@
+ # 底盘＋机械机构独立合并工程
++
++r32：接入USART6/PC6、9600波特率的既有只读状态屏，显示四组任务码、阶段、计时和已知调试数据；非阻塞发送，原运动/视觉流程和r31平台夹取100mm保持。使用screen main/chassis/arm/sensors切页，详见[串口屏接入](docs/串口屏接入.md)。未连接、下载或验收真实屏幕。
+ 
+ r31：仅把第二次暂存作业从车载平台夹取的lift由110改为100mm，与第一次相同。平台放回110mm、第二层地面放料65mm、视觉对准与方向、其余抓放和r30节拍参数保持。未烧录或实车验收。
+ 
+@@ -23,7 +25,7 @@
+ 历史r25仅调整粗加工放料的lift目标：70mm→5mm；抓回仍70mm，平台取料仍100mm，其他作业参数和每次进站一次D/E保持。
+ 
+ 
+-**当前版本：20261020-merge2-r31。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/100/256°。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
++**当前版本：20261020-merge2-r32。按用户提供的作业文档改为任务码顺序：粗加工按盘位1→2→3对应的G2/G4靶位放下，再同序抓回原盘；每次进站先125°对准2号一次（粗加工D、暂存E），后续靶位与离站回2号均按150mm索引，不再请求视觉。暂存第一批查G2，第二批按G3颜色反查G1/G2同色叠放，G4只用于第二批粗加工。两区均前1、中2、后3，按150mm分段索引，1↔3经2中转，结束回2号基准。粗加工放料55/5/125°、抓回55/5/125°，平台取料35/100/256°；暂存先125°观察对准，首批放料55/5/125°、平台取料35/100/256°；第二批放料55/65/125°、平台取料35/100/256°。两区高位收回后保持125°做150mm索引或3mm视觉微调，视觉纠偏正偏差后退、负偏差前进；每次进站只发一次D/E、持续按MOVE完成这次基准微调，收到格式正确且ok=1的DISC、车已停稳后取放，单片机不再以偏差超过±5像素否决；不自动发R、不等READY、不再三次重发D确认。粗加工取放和抓回均直接在125/256°间转向，不插入0°；高位收回并保持125°换盘，全部作业完成回2号后才回车头0°。放回车上平台高度仍为110mm。物块高度已实测60mm，第二层目标5+60=65mm，在当前135mm上限内；两批工位及完整路线已通过r28电脑模拟，实际叠放姿态和稳定性仍待实车验证。工位轮速读数仅记录日志，覆盖进站互锁、3mm/150mm启动、底层预检、停车确认、重取互锁和离站预检，不再按轮速幅值或持续时间中断；手动机构会话的轮速幅值/持续时间也仅记录；主动obstacle仍要求停稳后倒车。急停与真实驱动器故障停机保留，CAN/IMU及轴反馈按r29告警/恢复策略处理。原料末块直接回车头0°；粗加工索引保持125°且先升高收回。路线、地图和runimu A/C入口保持。电脑模拟和构建不代表烧录或实车验收。详见[任务码作业与暂存叠放](docs/按任务码作业与暂存叠放.md)。**
+ 
+ 本目录是2026-10-17新建的完整工程，含底盘、机械臂、夹爪、云台及载物台。原 `stm32-car-test` 的应用文件保持任务开始时的状态。在GitHub仓库中，本工程单独放在 `stm32-car-arm-merged/`，原底盘位于 `stm32-car-test/`，各项独立测试位于 `test-code/`。
+ 
+@@ -38,8 +40,8 @@
+ 
+ 1. 克隆或下载整个仓库，进入本文件夹，用Keil打开 `keil/TableNavigation.uvprojx`，选择 `TableNavigation` 目标。
+ 2. 使用ARM Compiler 5，执行 **Rebuild all target files**。当前工程为70个编译单元，构建结果见 [当前验证](evidence/current-validation.json)。
+-3. 本次已核对r31固件为 `evidence/merged-keil-20261020T083937842Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
+-4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r31`。只显示发送记录不代表板子已回复。
++3. 本次已核对r32固件为 `evidence/merged-keil-20261020T085820091Z/table_navigation.hex`。本地另有并发Keil构建输出，默认 `keil/OBJ/` 已保留，不将其当作本次交付的固件。也可自行重新编译当前源码，不使用旁边原底盘工程的固件。
++4. 下载后复位并运行芯片。串口接收编码选择ASCII或UTF-8，应出现 `merged chassis + arm serial control; ! always emergency stop`，并看到 `[drive] version=20261020-merge2-r32`。只显示发送记录不代表板子已回复。
+ 
+ 工程预设CMSIS-DAP/SWD、STM32F407ZG，按实际下载器选择设置。随包固件通过软件验证，本次未由代理执行烧录或实车动作。
+ 
+--- before/src/arm_control.c
++++ src/arm_control.c
+@@ -251,6 +251,14 @@
+ }
+ int arm_failed(void) { return arm.state==ARM_FAULT; }
+ int arm_pose_known(void) { return arm.referenced; }
++void arm_target_now(int *slide,int *lift,float *yaw,float *claw)
++{
++    int moving=arm_busy() && arm.state!=ARM_YAW_TEST;
++    if(slide)*slide=moving ? arm.target.slide : arm.slide;
++    if(lift)*lift=moving ? arm.target.lift : arm.lift;
++    if(yaw)*yaw=moving ? arm.target.yaw : arm.yaw;
++    if(claw)*claw=moving ? arm.target.claw : arm.claw;
++}
+ int arm_platform_known(void) { return arm.platform_known; }
+ float arm_platform_angle(void) { return arm.platform; }
+ /* 自动工位用：已使能、姿态与载物台角度都已人工声明，且当前空闲。 */
+--- before/src/arm_control.h
++++ src/arm_control.h
+@@ -21,6 +21,8 @@
+ int arm_platform_at_yaw(uint8_t slot, float work_yaw, uint32_t now);
+ /* 工位高位收回时，载物台选杯与云台转向共用一次插值；完成后才可伸出/下降。 */
+ int arm_platform_with_yaw(uint8_t slot, float target_yaw, uint32_t now);
++/* 显示指令目标；不把舵机插值估计当作实测到位。 */
++void arm_target_now(int *slide,int *lift,float *yaw,float *claw);
+ void arm_pose_now(int *slide, int *lift, float *yaw, float *claw);
+ void arm_can_error(uint8_t flags);
+ void arm_can_rx(uint32_t id, uint8_t ide, uint8_t rtr,
+--- before/src/main_table_nav.c
++++ src/main_table_nav.c
+@@ -21,6 +21,7 @@
+ #include "station_job.h"
+ #include "station_config.h"
+ #include "vision_link.h"
++#include "hmi_status.h"
+ #include <stdio.h>
+ #include <string.h>
+ #include <math.h>
+@@ -55,6 +56,7 @@
+ #define MOTOR_FLAG_STALLED           4u
+ #define MOTOR_FLAG_PROTECTED         8u
+ /* ===== 1. 全局状态：Keil Watch 窗口可观察这些变量 ===== */
++static struct {uint32_t start_ms,elapsed_ms;uint8_t running,started;} screen_clock;
+ static volatile uint32_t clock_ms;       /* 系统毫秒计时，TIM5 中断更新。 */
+ #define SCANNER_RX_SIZE 128u
+ typedef enum {SCANNER_OFF, SCANNER_BOOT, SCANNER_SET_ENDING, SCANNER_SET_CONTINUOUS,
+@@ -1080,6 +1082,8 @@
+     run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
+     run_clear_rx();
+     run_active = 1;
++    screen_clock.start_ms=clock_ms;screen_clock.elapsed_ms=0;
++    screen_clock.started=screen_clock.running=1;
+     text("[run route] ");
+     for (i = 0; i < FULL_ROUTE_NODES; i++)
+     {
+@@ -2260,6 +2264,7 @@
+     text("ARM: arm load1 | arm load3 (or @) = calibrated loading sequences\r\n");
+     text("STATION: task 134+123+314+231 | station | station auto on/off (default on)\r\n");
+     text("VISION: vision status/ping/range/pick N/clear; UART5 AA55+CRC8\r\n");
++    text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
+     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
+     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
+     text("turn = IMU closed-loop rotation test | rpm 20..300\r\n");
+@@ -2358,6 +2363,75 @@
+     return accepted;
+ }
+ 
++/* 状态屏只读取控制现场，不查询电机、不推进任务、不消费视觉偏差。 */
++static void screen_snapshot(HmiSnapshot *snapshot)
++{
++    static const uint8_t addresses[4]={HMI_LF_ADDRESS,HMI_RF_ADDRESS,HMI_LR_ADDRESS,HMI_RR_ADDRESS};
++    unsigned i;int slide,lift;float yaw,claw;uint8_t healthy=1,seen=0;
++    HeadingSample imu=heading_snapshot();
++    for(i=0;i<HMI_FIELDS;i++)snapshot->value[i]=HMI_UNKNOWN;
++    station_task_words(&snapshot->value[HMI_TASKA],&snapshot->value[HMI_TASKB]);
++    snapshot->value[HMI_TASKOK]=station_task_ready();
++    snapshot->value[HMI_PICK]=snapshot->value[HMI_PLACE]=-1;
++    snapshot->value[HMI_VOLTAGE]=-1;
++    if(screen_clock.running) {
++        screen_clock.elapsed_ms=clock_ms-screen_clock.start_ms;
++        if(run.state==RUN_DONE || run.state==RUN_FAULT || run.state==RUN_STOPPED)screen_clock.running=0;
++    }
++    snapshot->value[HMI_ELAPSED]=(int32_t)(screen_clock.elapsed_ms/1000u);
++    snapshot->value[HMI_PHASE]=screen_clock.started ? (run.job>=7u ? 8 : run.job+1u) : 0;
++    if(run.state==RUN_DONE && !run.turn_only && !run.translation_only)snapshot->value[HMI_PHASE]=9;
++    if(run.state==RUN_STOPPED)snapshot->value[HMI_PHASE]=0;
++    if(run.state==RUN_FAULT || (run.state!=RUN_STOPPED && (arm_failed() || arm_lock.state==3)))
++        snapshot->value[HMI_PHASE]=10;
++    for(i=0;i<4;i++) {
++        MotorFeedback *f=&motor_feedback[i];
++        if(f->speed_valid || f->status_replies)seen=1;
++        if(!f->speed_valid || !f->status_replies || (uint32_t)(clock_ms-f->speed_ms)>500u
++            || (uint32_t)(clock_ms-f->status_ms)>500u || !(f->status_flags&1u) || (f->status_flags&12u))healthy=0;
++    }
++    snapshot->value[HMI_COMM]=!seen ? 0 : healthy && !can_rx_fault ? 1 : 2;
++    for(i=0;i<4;i++)if(addresses[i]>=1u && addresses[i]<=4u) {
++        unsigned index=addresses[i]-1u;MotorFeedback *f=&motor_feedback[index];
++        if(run_active)snapshot->value[HMI_LF_T+i*2u]=run.wheel_rpm[index];
++        else if(arm_lock.state==2)snapshot->value[HMI_LF_T+i*2u]=0;
++        if(f->speed_valid && (uint32_t)(clock_ms-f->speed_ms)<=500u)
++            snapshot->value[HMI_LF_R+i*2u]=f->speed_rpm;
++    }
++    snapshot->value[HMI_MECHANISM]=!arm_enabled() ? 0 : arm_busy() ? 1 : -1;
++    if(arm_pose_known()) {
++        arm_target_now(&slide,&lift,&yaw,&claw);
++        snapshot->value[HMI_LIFT]=lift;snapshot->value[HMI_PUSH]=slide;
++        snapshot->value[HMI_GRIP]=(int32_t)claw;snapshot->value[HMI_PAN]=(int32_t)yaw;
++    }
++    if(arm_platform_known())snapshot->value[HMI_TRAY]=arm_platform_slot() ? arm_platform_slot() : HMI_UNKNOWN;
++    snapshot->value[HMI_IMU_AGE]=imu.valid ? (int32_t)(clock_ms-imu.received_ms) : -1;
++    if(heading_sample_fresh(&imu,clock_ms,CAR_IMU_MAX_AGE_MS))snapshot->value[HMI_YAW]=imu.yaw_cdeg/10;
++    if(run_active || run.state==RUN_STATION)
++        snapshot->value[HMI_YAW_T]=heading_wrap_cdeg((int32_t)run.heading_control.last_yaw_cdeg+run.heading_control.error_cdeg)/10;
++    vision_display(clock_ms,&snapshot->value[HMI_COLOR],&snapshot->value[HMI_DX],
++        &snapshot->value[HMI_DY],&snapshot->value[HMI_VISION_AGE]);
++}
++static void screen_update(void)
++{
++    static HmiSnapshot snapshot;
++    screen_snapshot(&snapshot);hmi_update(&snapshot,clock_ms);
++}
++static int screen_command(const char *s)
++{
++    if(!strcmp(s,"screen") || !strcmp(s,"screen status")) {
++        text("[screen] USART6 PC6 TX 9600 8N1; read-only; tx_busy=");number(hmi_busy());
++        text("; physical screen reception unconfirmed\r\n");return 1;
++    }
++    if(!strcmp(s,"screen main"))hmi_select(0,0);
++    else if(!strcmp(s,"screen chassis"))hmi_select(1,0);
++    else if(!strcmp(s,"screen arm"))hmi_select(1,1);
++    else if(!strcmp(s,"screen sensors"))hmi_select(1,2);
++    else if(!strcmp(s,"screen refresh"))hmi_resync();
++    else return 0;
++    text("[screen] display update requested\r\n");return 1;
++}
++
+ /* 先处理公共命令和模式切换，再交给当前模式；只裁剪首尾空白。 */
+ static void command(char *command_text)
+ {
+@@ -2373,6 +2447,7 @@
+     * trimmed_end = 0;
+     if (! * command_text)
+         return;
++    if(screen_command(command_text))return;
+     if (!strcmp(command_text, "info"))
+     {
+         status();
+@@ -2581,6 +2656,7 @@
+             rx_overflow = 1;
+         }
+     }
++    screen_update();
+     if (!stop_pending)
+     {
+         if (arm_lock.state==2) arm_update(clock_ms);
+@@ -2647,7 +2723,7 @@
+     uart_init();
+     clock_init_ms();
+     arm_init();
+-    vision_init();station_init();
++    vision_init();station_init();hmi_init(clock_ms);
+     start_button_init();
+     scanner_init(CAR_SCANNER_UART_BAUD);
+     heading_sensor_reset(&heading_sensor);
+@@ -2670,7 +2746,7 @@
+     }
+     text("== runimu full route + manual single-step diagnostics ==\r\n");
+     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
+-    text("[drive] version=20261020-merge2-r31; storage take100 both batches; vision unchanged\r\n");
++    text("[drive] version=20261020-merge2-r32; USART6 read-only status display; storage take100\r\n");
+     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
+     help();
+     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
+--- before/src/station_job.c
++++ src/station_job.c
+@@ -609,6 +609,15 @@
+ }
+ int station_auto_enabled(void) {return automatic;}
+ int station_task_ready(void) {return task_ready;}
++void station_task_words(int32_t *first,int32_t *second)
++{
++    unsigned batch,i;int32_t words[2]={0,0};
++    if(task_ready)for(batch=0;batch<2;batch++) {
++        for(i=0;i<3;i++)words[batch]=words[batch]*10+task_colors[batch][i];
++        for(i=0;i<3;i++)words[batch]=words[batch]*10+task_rings[batch][i];
++    }
++    *first=words[0];*second=words[1];
++}
+ 
+ void station_status(void)
+ {
+--- before/src/station_job.h
++++ src/station_job.h
+@@ -16,6 +16,7 @@
+ int station_auto_enabled(void);
+ /* 本轮有效任务是否已接收；扫码接收窗口由底盘首次抵达B控制。 */
+ int station_task_ready(void);
++void station_task_words(int32_t *first,int32_t *second);
+ /* 返回 1 已启动作业，0 该节点无动作，-1 拒绝执行（已打印原因）。 */
+ int station_start(uint8_t node, uint8_t job_index, uint32_t now);
+ void station_update(uint32_t now);
+--- before/src/vision_link.c
++++ src/vision_link.c
+@@ -35,11 +35,26 @@
+     int16_t pick_x, pick_y;
+     uint32_t request_ms, pick_warning_ms, align_warning_ms;
+     uint8_t busy_reported, mismatch_reported;
++    uint8_t display_known,display_color;
++    int16_t display_dx,display_dy;
++    uint32_t display_ms;
+     char message[VISION_PAYLOAD_MAX + 1u];
+     uint32_t frames, crc_errors, bad_frames, overflows, timeouts;
+     char line[256]; /* 中文UTF-8状态和最长协议原文。 */
+ } vision;
+ 
++void vision_display(uint32_t now,int32_t *color,int32_t *dx,int32_t *dy,int32_t *age)
++{
++    uint32_t elapsed=now-vision.display_ms;
++    *age=vision.display_known ? (elapsed>0x7fffffffu ? 0x7fffffff : (int32_t)elapsed) : -1;
++    *color=vision.display_known && elapsed<=1000u ? vision.display_color : 0;
++    *dx=vision.display_dx;*dy=vision.display_dy;
++}
++static void vision_observed(uint8_t color,int x,int y,uint32_t now)
++{
++    vision.display_known=1;vision.display_color=color;
++    vision.display_dx=(int16_t)x;vision.display_dy=(int16_t)y;vision.display_ms=now;
++}
+ static uint8_t vision_crc8(const uint8_t *data, uint16_t length)
+ {
+     uint8_t crc = 0;
+@@ -109,7 +124,7 @@
+ {
+     char message[VISION_PAYLOAD_MAX + 1u];
+     const char *cursor;
+-    int value, x = 0, y = 0;
++    int value, x = 0, y = 0, has_coordinates = 0;
+     if (memchr(payload,0,length)) {vision.bad_frames++;return;}
+     memcpy(message, payload, length);
+     message[length] = 0;
+@@ -125,6 +140,7 @@
+                 vision.bad_frames++;arm_output("[vision warning] invalid MOVE; request retained\r\n");return;
+             }
+             if (!offset) return;
++            vision_observed(0,offset,0,now);
+             vision.align_error=(int16_t)offset;
+             vision.align_move_ms=now;vision.align_move_pending=1;
+             return;
+@@ -139,6 +155,7 @@
+                 vision.bad_frames++;arm_output("[vision warning] DISC not successful/valid; request retained\r\n");return;
+             }
+             /* 对准是否成功由视觉ok决定；不再用像素偏差幅值二次否决。 */
++            vision_observed(0,dx,cy-240,now);
+             vision.align_move_pending=0;
+             vision.align_error=0;vision.align_state=VISION_PICK_READY;return;
+         }
+@@ -170,9 +187,13 @@
+             if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y) || *cursor) {
+                 vision.bad_frames++;return;
+             }
++            has_coordinates=1;
+         }
+         vision.pick_x = (int16_t)x;vision.pick_y = (int16_t)y;
+         vision.pick_color = vision.request_color;
++        if(has_coordinates && x>=0 && x<640 && y>=0 && y<480)
++            vision_observed(vision.pick_color,x-320,y-240,now);
++        else vision_observed(0,0,0,now);
+         vision.pick_state = VISION_PICK_READY;
+         snprintf(vision.line, sizeof(vision.line),
+                  "[vision] PICK color=%u x=%d y=%d at fixed pick port; %lu ms\r\n",
+--- before/src/vision_link.h
++++ src/vision_link.h
+@@ -34,5 +34,7 @@
+ /* 一次性取走最新MOVE及接收时刻，不累计排队；调用方丢弃移车期间的过时偏差。 */
+ int vision_align_take_move(int16_t *offset, uint32_t *received_ms);
+ const char *vision_last_message(void);
++/* 最近真实观测仅供显示，不消耗MOVE，不修改视觉状态或完成判据。 */
++void vision_display(uint32_t now,int32_t *color,int32_t *dx,int32_t *dy,int32_t *age);
+ 
+ #endif
+--- before/tests/verify_entry.c
++++ tests/verify_entry.c
+@@ -210,6 +210,7 @@
+     memset((void *)rx_buffer,0,sizeof(rx_buffer));memset(line,0,sizeof(line));
+     memset(sent,0,sizeof(sent));position_count=sync_count=stop_count=velocity_count=0;
+     interrupt_at_position=fail_can_at_position=0;output_size=0;output[0]=0;
++    hmi_init(0);memset(&screen_clock,0,sizeof(screen_clock));
+     vision_init();station_init();(void)station_command("station auto off");output_size=0;output[0]=0;
+     memset(&run,0,sizeof(run));run_active=run_rx_head=run_rx_tail=run_rx_overflow=0;
+     memset(&turn_postcheck,0,sizeof(turn_postcheck));
+--- before/tools/verify-arm-integration.ps1
++++ tools/verify-arm-integration.ps1
+@@ -11,7 +11,7 @@
+     $env:PATH=(Split-Path -Parent $entryGccPath)+';'+$env:PATH
+     $entryRelativeExe='evidence/'+(Split-Path -Leaf $entryOut)+'/verify_arm_integration.exe'
+     & $entryGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
+-        tests/verify_arm_integration.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
++        tests/verify_arm_integration.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
+         lookup/route_table.c -lm -o $entryRelativeExe
+     if($LASTEXITCODE -ne 0){throw 'Host test compilation failed'}
+     $entryText=& $entryExe
+@@ -19,7 +19,7 @@
+     $entryText | Tee-Object -FilePath (Join-Path $entryOut 'result.log')
+     if($entryExit -ne 0){throw 'Arm integration behavior test failed'}
+     $armHashes=[ordered]@{}
+-    foreach($armName in @('src/main_table_nav.c','src/arm_control.c','src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','tests/vision_host_io.h','vendor/stm32/lanya/usart5.c','src/arm_control.h','src/arm_config.h','tests/verify_entry.c','tests/verify_arm_integration.c','tests/entry_host_io.h','tests/arm_host_io.h')) {
++    foreach($armName in @('src/main_table_nav.c','src/arm_control.c','src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','src/hmi_status.c','src/hmi_status.h','tests/vision_host_io.h','vendor/stm32/lanya/usart5.c','src/arm_control.h','src/arm_config.h','tests/verify_entry.c','tests/verify_arm_integration.c','tests/entry_host_io.h','tests/arm_host_io.h')) {
+         $armHashes[$armName]=(Get-FileHash -LiteralPath (Join-Path $entryRoot $armName) -Algorithm SHA256).Hash.ToLowerInvariant()
+     }
+     [ordered]@{sourceHashes=$armHashes;passed=$true;exitCode=$entryExit;scope='host arm recipes, shared CAN, emergency stop and chassis interlock; not board runtime';sourceSha256=(Get-FileHash -LiteralPath (Join-Path $entryRoot 'src/main_table_nav.c') -Algorithm SHA256).Hash.ToLowerInvariant();output=$entryText} |
+--- before/tools/verify-continuous.ps1
++++ tools/verify-continuous.ps1
+@@ -10,7 +10,7 @@
+     $env:PATH=(Split-Path -Parent $checkCompiler)+';'+$env:PATH
+     $checkExe='evidence/'+(Split-Path -Leaf $checkOut)+'/verify_continuous.exe'
+     & $checkCompiler -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
+-        tests/verify_continuous.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c `
++        tests/verify_continuous.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c src/navigation.c src/road_map.c `
+         src/heading_sensor.c src/heading_control.c lookup/route_table.c -lm -o $checkExe
+     if($LASTEXITCODE -ne 0){throw 'Continuous route test compilation failed'}
+     $checkText=& (Join-Path $checkRoot $checkExe)
+@@ -18,7 +18,7 @@
+     $checkText | Tee-Object -FilePath (Join-Path $checkOut 'result.log')
+     if($checkExit -ne 0){throw 'Continuous route/obstacle behavior test failed'}
+     $checkHashes=[ordered]@{}
+-    foreach($name in @('src/main_table_nav.c','src/car_config.h','src/full_route.h','src/structure.h',
++    foreach($name in @('src/main_table_nav.c','src/hmi_status.c','src/hmi_status.h','src/arm_control.c','src/arm_control.h','src/station_job.c','src/station_job.h','src/vision_link.c','src/vision_link.h','src/car_config.h','src/full_route.h','src/structure.h',
+         'src/heading_control.c','src/heading_sensor.c','tests/verify_entry.c','tests/verify_heading.c',
+         'tests/verify_continuous.c','tools/verify-continuous.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+--- before/tools/verify-drive.ps1
++++ tools/verify-drive.ps1
+@@ -11,7 +11,7 @@
+     $env:PATH=(Split-Path -Parent $entryGccPath)+';'+$env:PATH
+     $entryRelativeExe='evidence/'+(Split-Path -Leaf $entryOut)+'/verify_drive.exe'
+     & $entryGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
+-        tests/verify_drive.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
++        tests/verify_drive.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
+         lookup/route_table.c -lm -o $entryRelativeExe
+     if($LASTEXITCODE -ne 0){throw 'Host test compilation failed'}
+     $entryText=& $entryExe
+@@ -19,7 +19,7 @@
+     $entryText | Tee-Object -FilePath (Join-Path $entryOut 'result.log')
+     if($entryExit -ne 0){throw 'Drive control behavior test failed'}
+     $driveHashes=[ordered]@{}
+-    foreach($driveName in @('src/main_table_nav.c','src/arm_control.c','src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','tests/vision_host_io.h','vendor/stm32/lanya/usart5.c','src/arm_control.h','src/arm_config.h',
++    foreach($driveName in @('src/main_table_nav.c','src/arm_control.c','src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','src/hmi_status.c','src/hmi_status.h','tests/vision_host_io.h','vendor/stm32/lanya/usart5.c','src/arm_control.h','src/arm_config.h',
+         'src/car_config.h','src/heading_control.c','src/heading_control.h',
+         'tests/verify_entry.c','tests/verify_drive.c','tests/verify_heading.c','tests/entry_host_io.h','tests/arm_host_io.h','tools/verify-drive.ps1')) {
+         $driveHashes[$driveName]=(Get-FileHash -LiteralPath (Join-Path $entryRoot $driveName) -Algorithm SHA256).Hash.ToLowerInvariant()
+--- before/tools/verify-entry.ps1
++++ tools/verify-entry.ps1
+@@ -11,7 +11,7 @@
+     $env:PATH=(Split-Path -Parent $entryGccPath)+';'+$env:PATH
+     $entryRelativeExe='evidence/'+(Split-Path -Leaf $entryOut)+'/verify_entry.exe'
+     & $entryGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
+-        tests/verify_entry.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
++        tests/verify_entry.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c `
+         lookup/route_table.c -lm -o $entryRelativeExe
+     if($LASTEXITCODE -ne 0){throw 'Host test compilation failed'}
+     $entryText=& $entryExe
+--- before/tools/verify-heading.ps1
++++ tools/verify-heading.ps1
+@@ -13,7 +13,7 @@
+         $headingExe=Join-Path $headingOut ('verify_heading_'+$headingEnabled+'.exe')
+         $headingRelativeExe='evidence/'+(Split-Path -Leaf $headingOut)+'/verify_heading_'+$headingEnabled+'.exe'
+         & $headingGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror ('-DCAR_IMU_UART_ENABLED='+$headingEnabled) `
+-            -Isrc -Ilookup tests/verify_heading.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c `
++            -Isrc -Ilookup tests/verify_heading.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c src/navigation.c src/road_map.c `
+             src/heading_sensor.c src/heading_control.c lookup/route_table.c -lm -o $headingRelativeExe
+         if($LASTEXITCODE -ne 0){throw 'Heading test compilation failed'}
+         $headingText=& $headingExe
+@@ -29,7 +29,7 @@
+     & $headingCanExe | Tee-Object -FilePath (Join-Path $headingOut 'can-rx.log')
+     if($LASTEXITCODE -ne 0){throw 'CAN IRQ test failed'}
+     $headingHashes=[ordered]@{}
+-    foreach($headingName in @('src/arm_control.c','src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','tests/vision_host_io.h','vendor/stm32/lanya/usart5.c','src/arm_control.h','src/arm_config.h','tests/arm_host_io.h','src/main_table_nav.c','src/car_config.h','src/heading_sensor.c','src/heading_sensor.h','src/heading_control.c','src/heading_control.h',
++    foreach($headingName in @('src/arm_control.c','src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','src/hmi_status.c','src/hmi_status.h','tests/vision_host_io.h','vendor/stm32/lanya/usart5.c','src/arm_control.h','src/arm_config.h','tests/arm_host_io.h','src/main_table_nav.c','src/car_config.h','src/heading_sensor.c','src/heading_sensor.h','src/heading_control.c','src/heading_control.h',
+         'src/motion.c','src/navigation.c','src/road_map.c','lookup/route_table.c','lookup/table_data.h','lookup/generation.json',
+         'src/full_route.h','src/structure.h','src/road_map.h','src/motion.h','src/navigation.h',
+         'tests/verify_entry.c','tests/entry_host_io.h','tests/verify_heading.c','tests/verify_can_rx.c','tools/verify-heading.ps1',
+--- before/tools/verify-station-vision.ps1
++++ tools/verify-station-vision.ps1
+@@ -20,7 +20,7 @@
+         if($flowMock -eq 7){$checkDefines=@('-DSTN_STORAGE_LAYER_LIFT_MM=131')}
+         $checkExe='evidence/'+(Split-Path -Leaf $checkOut)+'/verify_station_vision_'+$flowMock+'.exe'
+         & $checkCompiler -DARM_HOST_TEST @checkDefines -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
+-            tests/verify_station_vision.c src/arm_control.c src/station_job.c src/vision_link.c src/motion.c src/navigation.c src/road_map.c `
++            tests/verify_station_vision.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c src/navigation.c src/road_map.c `
+             src/heading_sensor.c src/heading_control.c lookup/route_table.c -lm -o $checkExe
+         if($LASTEXITCODE -ne 0){throw 'Station/vision test compilation failed'}
+         $checkText=& (Join-Path $checkRoot $checkExe)
+@@ -30,7 +30,7 @@
+         $checkVariants+=@{testOnlyOverrides=[bool]$flowMock;configuration=@('production_first5_second65_full_flow','mock_layer20_full_flow','ready_without_pose','rough_platform_take_not_ready','layer_height_unknown','storage_not_ready','mock_layer130_upper_boundary','mock_layer131_exceeds_travel')[$flowMock];defines=$checkDefines;exitCode=$checkExit;output=$checkText}
+     }
+     $checkHashes=[ordered]@{}
+-    foreach($name in @('src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','src/arm_control.c','src/arm_control.h','src/arm_config.h','tests/vision_host_io.h','src/main_table_nav.c','src/car_config.h','src/full_route.h','src/structure.h',
++    foreach($name in @('src/station_job.c','src/station_job.h','src/station_config.h','src/vision_link.c','src/vision_link.h','src/hmi_status.c','src/hmi_status.h','src/arm_control.c','src/arm_control.h','src/arm_config.h','tests/vision_host_io.h','src/main_table_nav.c','src/car_config.h','src/full_route.h','src/structure.h',
+         'src/heading_control.c','src/heading_sensor.c','tests/verify_entry.c','tests/verify_heading.c',
+         'tests/verify_station_vision.c','tools/verify-station-vision.ps1')) {
+         $checkHashes[$name]=(Get-FileHash -LiteralPath (Join-Path $checkRoot $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+--- /dev/null
++++ src/hmi_status.c
+@@ -0,0 +1,134 @@
++#include "hmi_status.h"
++#include <stdio.h>
++#include <string.h>
++#ifndef ARM_HOST_TEST
++#include "stm32f4xx.h"
++#endif
++
++#define HMI_TX_CAPACITY 1024u
++static const char *const names[HMI_FIELDS]={
++    "taska","taskb","taskok","phase","elapsed","pick","place",
++    "lf_t","lf_r","rf_t","rf_r","lr_t","lr_r","rr_t","rr_r",
++    "lift","push","grip","tray","pan","mechanism",
++    "yaw","yaw_t","color","dx","dy","vision_age","imu_age","voltage","comm"
++};
++static struct {
++    uint8_t bytes[HMI_TX_CAPACITY];
++    volatile uint16_t length,offset;
++    uint16_t building;
++    uint8_t initialized,sent,force,view_pending,page,group;
++    uint32_t boot_ms,refresh_ms,resync_ms;
++    HmiSnapshot previous;
++} screen;
++
++static int append(const char *text)
++{
++    size_t n=strlen(text);
++    if(screen.building+n+3u>sizeof(screen.bytes))return 0;
++    memcpy(screen.bytes+screen.building,text,n);screen.building+=(uint16_t)n;
++    memset(screen.bytes+screen.building,0xff,3);screen.building+=3u;
++    return 1;
++}
++static int assign(const char *name,int32_t value)
++{
++    char line[40];
++    snprintf(line,sizeof(line),"%s=%ld",name,(long)value);
++    return append(line);
++}
++int hmi_busy(void) {return screen.offset<screen.length;}
++int hmi_tx_next(uint8_t *byte)
++{
++    if(!hmi_busy())return 0;
++    *byte=screen.bytes[screen.offset++];return 1;
++}
++#ifndef ARM_HOST_TEST
++void USART6_IRQHandler(void)
++{
++    uint8_t byte;
++    if(USART_GetITStatus(USART6,USART_IT_TXE)!=RESET) {
++        if(hmi_tx_next(&byte))USART_SendData(USART6,byte);
++        else USART_ITConfig(USART6,USART_IT_TXE,DISABLE);
++    }
++}
++static void uart_start(void) {USART_ITConfig(USART6,USART_IT_TXE,ENABLE);}
++static void uart_init(void)
++{
++    GPIO_InitTypeDef gpio;
++    USART_InitTypeDef uart;
++    NVIC_InitTypeDef irq;
++    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC,ENABLE);
++    RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART6,ENABLE);
++    GPIO_PinAFConfig(GPIOC,GPIO_PinSource6,GPIO_AF_USART6);
++    GPIO_StructInit(&gpio);gpio.GPIO_Pin=GPIO_Pin_6;gpio.GPIO_Mode=GPIO_Mode_AF;
++    gpio.GPIO_OType=GPIO_OType_PP;gpio.GPIO_Speed=GPIO_Speed_50MHz;gpio.GPIO_PuPd=GPIO_PuPd_UP;
++    GPIO_Init(GPIOC,&gpio);
++    USART_StructInit(&uart);uart.USART_BaudRate=9600;uart.USART_Mode=USART_Mode_Tx;
++    USART_Init(USART6,&uart);
++    USART_ITConfig(USART6,USART_IT_RXNE,DISABLE);
++    USART_ITConfig(USART6,USART_IT_TXE,DISABLE);
++    USART_Cmd(USART6,ENABLE);
++    irq.NVIC_IRQChannel=USART6_IRQn;irq.NVIC_IRQChannelPreemptionPriority=3;
++    irq.NVIC_IRQChannelSubPriority=0;irq.NVIC_IRQChannelCmd=ENABLE;NVIC_Init(&irq);
++}
++#endif
++void hmi_init(uint32_t now)
++{
++    memset(&screen,0,sizeof(screen));screen.initialized=1;screen.force=screen.view_pending=1;
++    screen.boot_ms=now;
++#ifndef ARM_HOST_TEST
++    uart_init();
++#endif
++}
++void hmi_select(uint8_t page,uint8_t group)
++{
++    if(page>1u || group>2u)return;
++    screen.page=page;screen.group=group;screen.view_pending=screen.force=1;
++}
++void hmi_resync(void) {screen.force=1;}
++void hmi_update(const HmiSnapshot *snapshot,uint32_t now)
++{
++    unsigned i;int full,changed=0,task_changed;
++    if(!screen.initialized || hmi_busy() || (uint32_t)(now-screen.boot_ms)<HMI_BOOT_MS)return;
++    full=!screen.sent || screen.force || (uint32_t)(now-screen.resync_ms)>=HMI_RESYNC_MS;
++    if(!full && (uint32_t)(now-screen.refresh_ms)<HMI_REFRESH_MS)return;
++    screen.building=0;
++    if(!screen.sent) {
++        /* 清掉屏幕接收端可能残留的半帧，再设置无应答模式。 */
++        memset(screen.bytes,0xff,3);screen.building=3;
++        if(!append("bkcmd=0"))return;
++    }
++    task_changed=full || snapshot->value[HMI_TASKA]!=screen.previous.value[HMI_TASKA]
++        || snapshot->value[HMI_TASKB]!=screen.previous.value[HMI_TASKB]
++        || snapshot->value[HMI_TASKOK]!=screen.previous.value[HMI_TASKOK];
++    /* 两个六位任务码先写全，最后置有效标志，避免半新半旧任务。 */
++    if(task_changed) {
++        if(!assign("taskok",0) || !assign("taska",snapshot->value[HMI_TASKA])
++            || !assign("taskb",snapshot->value[HMI_TASKB])
++            || !assign("taskok",snapshot->value[HMI_TASKOK]))return;
++        changed=1;
++    }
++    for(i=HMI_PHASE;i<HMI_FIELDS;i++)
++        if(full || snapshot->value[i]!=screen.previous.value[i]) {
++            if(!assign(names[i],snapshot->value[i]))return;
++            changed=1;
++        }
++    if(screen.view_pending) {
++        if(!assign("group",screen.group) || !append(screen.page ? "page 1" : "page 0"))return;
++        changed=1;
++    } else if(changed && !append("click b0,1"))return;
++    screen.refresh_ms=now;
++    if(!changed)return;
++    screen.previous=*snapshot;screen.sent=1;screen.force=screen.view_pending=0;
++    if(full)screen.resync_ms=now;
++    /* 数据全部构造后才发布长度；中断绝不会消费未写完的命令。 */
++#ifndef ARM_HOST_TEST
++    __disable_irq();
++#endif
++    screen.offset=0;screen.length=screen.building;
++#ifndef ARM_HOST_TEST
++    __enable_irq();
++#endif
++#ifndef ARM_HOST_TEST
++    uart_start();
++#endif
++}
+--- /dev/null
++++ src/hmi_status.h
+@@ -0,0 +1,39 @@
++#ifndef HMI_STATUS_H
++#define HMI_STATUS_H
++#include <stdint.h>
++
++/* robot-status.tft只读协议；显示故障/掉线不得改变控制状态。 */
++#define HMI_UNKNOWN (-32768)
++#define HMI_REFRESH_MS 500u
++#define HMI_RESYNC_MS 5000u
++#define HMI_BOOT_MS 1000u
++/* 旧代码只定义地址和运动符号，未标注物理轮位；0表示尚未确认。 */
++#ifndef HMI_LF_ADDRESS
++#define HMI_LF_ADDRESS 0u
++#endif
++#ifndef HMI_RF_ADDRESS
++#define HMI_RF_ADDRESS 0u
++#endif
++#ifndef HMI_LR_ADDRESS
++#define HMI_LR_ADDRESS 0u
++#endif
++#ifndef HMI_RR_ADDRESS
++#define HMI_RR_ADDRESS 0u
++#endif
++enum {
++    HMI_TASKA,HMI_TASKB,HMI_TASKOK,HMI_PHASE,HMI_ELAPSED,HMI_PICK,HMI_PLACE,
++    HMI_LF_T,HMI_LF_R,HMI_RF_T,HMI_RF_R,HMI_LR_T,HMI_LR_R,HMI_RR_T,HMI_RR_R,
++    HMI_LIFT,HMI_PUSH,HMI_GRIP,HMI_TRAY,HMI_PAN,HMI_MECHANISM,
++    HMI_YAW,HMI_YAW_T,HMI_COLOR,HMI_DX,HMI_DY,HMI_VISION_AGE,HMI_IMU_AGE,
++    HMI_VOLTAGE,HMI_COMM,HMI_FIELDS
++};
++typedef struct {int32_t value[HMI_FIELDS];} HmiSnapshot;
++void hmi_init(uint32_t now);
++void hmi_update(const HmiSnapshot *snapshot,uint32_t now);
++/* 仅更改显示页面；不转发屏幕返回数据为车辆命令。 */
++void hmi_select(uint8_t page,uint8_t group);
++void hmi_resync(void);
++int hmi_busy(void);
++/* USART6 TXE中断消费；电脑测试用同一接口验证逐字节和堵塞恢复。 */
++int hmi_tx_next(uint8_t *byte);
++#endif
+--- /dev/null
++++ tests/verify_hmi.c
+@@ -0,0 +1,113 @@
++#define HEADING_TEST_MAIN heading_regression_main
++#include "verify_heading.c"
++#include <limits.h>
++
++static char display_text[4096];
++static void drain_display(void)
++{
++    uint8_t byte;unsigned n=0,terminators=0,bytes=0;
++    while(hmi_tx_next(&byte)) {
++        CHECK(++bytes<=1024);
++        if(byte==0xff) {
++            if(++terminators==3){display_text[n++]='\n';terminators=0;}
++        } else {
++            CHECK(!terminators && byte>=32 && byte<=126);
++            display_text[n++]=(char)byte;
++        }
++    }
++    CHECK(!terminators && !hmi_busy());display_text[n]=0;
++}
++static void serializer_tests(void)
++{
++    HmiSnapshot snapshot;unsigned i;
++    hmi_init(0);memset(&snapshot,0,sizeof(snapshot));
++    snapshot.value[HMI_TASKA]=134123;snapshot.value[HMI_TASKB]=314231;
++    snapshot.value[HMI_TASKOK]=1;snapshot.value[HMI_PHASE]=3;
++    snapshot.value[HMI_PICK]=snapshot.value[HMI_PLACE]=-1;
++    hmi_update(&snapshot,999);CHECK(!hmi_busy());
++    hmi_update(&snapshot,1000);CHECK(hmi_busy());
++    /* 数据正在发送时，页面请求和新状态不能插入半条旧指令。 */
++    snapshot.value[HMI_PHASE]=6;hmi_select(1,2);hmi_update(&snapshot,1200);
++    drain_display();CHECK(strstr(display_text,"bkcmd=0\n") && strstr(display_text,"phase=3\n"));
++    CHECK(strstr(display_text,"taska=134123\ntaskb=314231\ntaskok=1\n"));
++    CHECK(strstr(display_text,"pick=-1\nplace=-1\n") && strstr(display_text,"page 0\n"));
++    hmi_update(&snapshot,1201);CHECK(hmi_busy());drain_display();
++    CHECK(strstr(display_text,"phase=6\n") && strstr(display_text,"group=2\npage 1\n"));
++    hmi_update(&snapshot,1701);CHECK(!hmi_busy());
++    snapshot.value[HMI_PHASE]=7;hmi_update(&snapshot,2201);drain_display();
++    CHECK(!strcmp(display_text,"phase=7\nclick b0,1\n"));
++    hmi_update(&snapshot,6201);drain_display();CHECK(strstr(display_text,"taska=134123"));
++    for(i=0;i<HMI_FIELDS;i++)snapshot.value[i]=INT_MIN;
++    hmi_resync();hmi_update(&snapshot,6202);drain_display();
++    CHECK(strstr(display_text,"vision_age=-2147483648\n") && strstr(display_text,"comm=-2147483648\n"));
++    hmi_init(UINT32_MAX-499u);hmi_update(&snapshot,499);CHECK(!hmi_busy());
++    hmi_update(&snapshot,500);CHECK(hmi_busy());drain_display();
++    puts("PASS HMI serializer: ASCII/three FF, full task transaction, atomic batch, busy transport/page changes, delta refresh, periodic resync, signed32 bounds, boot and timer wrap");
++}
++static void display_peer(const char *text)
++{
++    uint8_t frame[64],crc=0;unsigned i,bit,n=(unsigned)strlen(text);
++    frame[0]=0xaa;frame[1]=0x55;frame[2]=(uint8_t)n;memcpy(frame+3,text,n);
++    for(i=2;i<n+3;i++){crc^=frame[i];for(bit=0;bit<8;bit++)crc=(uint8_t)((crc<<1)^((crc&128)?7:0));}
++    frame[n+3]=crc;frame[n+4]=13;
++    for(i=0;i<n+5;i++)vision_receive_byte(frame[i],0);
++    vision_update(clock_ms);
++}
++static void hmi_adapter_tests(void)
++{
++    HmiSnapshot s;FullRouteState original;unsigned i,positions;int16_t offset;uint32_t received;
++    reset_plant(0,1.15);screen_snapshot(&s);
++    CHECK(s.value[HMI_PHASE]==0 && s.value[HMI_TASKOK]==0 && !s.value[HMI_TASKA]);
++    CHECK(s.value[HMI_PICK]==-1 && s.value[HMI_PLACE]==-1 && s.value[HMI_VOLTAGE]==-1);
++    CHECK(s.value[HMI_LIFT]==HMI_UNKNOWN && s.value[HMI_MECHANISM]==0);
++    send_line("task 134+123+314+231");screen_snapshot(&s);
++    CHECK(s.value[HMI_TASKA]==134123 && s.value[HMI_TASKB]==314231 && s.value[HMI_TASKOK]==1);
++    send_line("runimu A");screen_snapshot(&s);CHECK(s.value[HMI_PHASE]==1);
++    for(i=1;i<8;i++) {run.job=(uint8_t)i;screen_snapshot(&s);CHECK(s.value[HMI_PHASE]==(int32_t)i+1);}
++    run.job=1;clock_ms=screen_clock.start_ms+3500;screen_snapshot(&s);CHECK(s.value[HMI_ELAPSED]==3);
++    run.state=RUN_DONE;screen_snapshot(&s);CHECK(s.value[HMI_PHASE]==9);
++    clock_ms+=5000;screen_snapshot(&s);CHECK(s.value[HMI_ELAPSED]==3);
++    run.state=RUN_FAULT;screen_snapshot(&s);CHECK(s.value[HMI_PHASE]==10);
++    reset_plant(0,1.15);sample_yaw(-9050);clock_ms+=10;
++    motor_feedback[0].speed_valid=1;motor_feedback[0].speed_rpm=-37;motor_feedback[0].speed_ms=clock_ms;
++    screen_snapshot(&s);CHECK(s.value[HMI_YAW]==-905 && s.value[HMI_IMU_AGE]==10);
++#if HMI_LF_ADDRESS == 1
++    CHECK(s.value[HMI_LF_R]==-37);
++    clock_ms+=501;screen_snapshot(&s);CHECK(s.value[HMI_LF_R]==HMI_UNKNOWN);
++#else
++    CHECK(s.value[HMI_LF_R]==HMI_UNKNOWN);
++    clock_ms+=501;screen_snapshot(&s);
++#endif
++    CHECK(s.value[HMI_YAW]==HMI_UNKNOWN && s.value[HMI_COMM]==2);
++    reset_plant(0,1.15);send_line("arm on");
++    for(i=0;i<500;i++)plant_step();
++    send_line("arm pose 0 135 0 45");send_line("arm platform pose 20");
++    send_line("arm lift 100");screen_snapshot(&s);
++    CHECK(s.value[HMI_LIFT]==100 && s.value[HMI_MECHANISM]==1);
++    CHECK(s.value[HMI_PICK]==-1 && s.value[HMI_PLACE]==-1);
++    original=run;positions=arm_positions;
++    screen_snapshot(&s);send_line("screen sensors");send_line("screen refresh");
++    CHECK(!memcmp(&original,&run,sizeof(run)) && arm_positions==positions);
++    /* 屏幕不取走MOVE，不确认视觉成功，也不重复发送D。 */
++    vision_request_align('D',2,clock_ms);
++    for(i=0;i<12;i++)vision_update(clock_ms);
++    display_peer("MOVE,27");screen_snapshot(&s);
++    CHECK(s.value[HMI_DX]==27 && s.value[HMI_COLOR]==0 && s.value[HMI_VISION_AGE]==0);
++    CHECK(vision_align_state()==VISION_PICK_WAITING && vision_align_take_move(&offset,&received) && offset==27);
++    vision_cancel_pick();vision_request_pick(2,clock_ms);for(i=0;i<12;i++)vision_update(clock_ms);
++    display_peer("PICK,2,351,253");screen_snapshot(&s);
++    CHECK(s.value[HMI_COLOR]==2 && s.value[HMI_DX]==31 && s.value[HMI_DY]==13);
++    clock_ms+=1001;screen_snapshot(&s);CHECK(!s.value[HMI_COLOR] && s.value[HMI_VISION_AGE]==1001);
++    vision_cancel_pick();vision_request_pick(2,clock_ms);for(i=0;i<12;i++)vision_update(clock_ms);
++    display_peer("PICK,2");screen_snapshot(&s);
++    CHECK(vision_pick_state()==VISION_PICK_READY && !s.value[HMI_COLOR]); /* Legacy PICK still accepted, coordinates are not invented. */
++    /* 不消费任何屏幕TX，急停仍走原始优先路径。 */
++    hmi_resync();screen_update();CHECK(hmi_busy());stop_request();
++    CHECK(!run_active && arm_failed() && arm_lock.state==3 && hmi_busy());
++    puts("PASS HMI adapter: four task groups, all phases/time freeze, unknown counts/voltage/servo arrival, fresh/stale feedback, readonly page commands, MOVE ownership, visual age, disconnected TX cannot block emergency");
++}
++int main(void)
++{
++    serializer_tests();hmi_adapter_tests();
++    printf("PASS HMI integration: %u assertions; no screen/vehicle accessed\n",assertions);return 0;
++}
+--- /dev/null
++++ tools/verify-hmi.ps1
+@@ -0,0 +1,34 @@
++param([string]$Gcc='gcc')
++$ErrorActionPreference='Stop'
++$hmiRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
++$hmiOut=Join-Path $hmiRoot ('evidence/hmi-native-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
++[void][IO.Directory]::CreateDirectory($hmiOut)
++$hmiCompiler=(Get-Command $Gcc -ErrorAction Stop).Source
++$hmiOldPath=$env:PATH
++Push-Location -LiteralPath $hmiRoot
++try {
++    $env:PATH=(Split-Path -Parent $hmiCompiler)+';'+$env:PATH
++    $variants=@()
++    foreach($mapped in @(0,1)) {
++        $defines=@()
++        if($mapped){$defines=@('-DHMI_LF_ADDRESS=1','-DHMI_RF_ADDRESS=2','-DHMI_LR_ADDRESS=3','-DHMI_RR_ADDRESS=4')}
++        $exe='evidence/'+(Split-Path -Leaf $hmiOut)+'/verify_hmi_'+$mapped+'.exe'
++        & $hmiCompiler -DARM_HOST_TEST @defines -std=c99 -Wall -Wextra -Werror -Isrc -Ilookup `
++            tests/verify_hmi.c src/arm_control.c src/station_job.c src/vision_link.c src/hmi_status.c src/motion.c `
++            src/navigation.c src/road_map.c src/heading_sensor.c src/heading_control.c lookup/route_table.c -lm -o $exe
++        if($LASTEXITCODE -ne 0){throw 'HMI test compilation failed'}
++        $output=& (Join-Path $hmiRoot $exe)
++        $result=$LASTEXITCODE
++        $output | Tee-Object -FilePath (Join-Path $hmiOut ('result-'+$mapped+'.log'))
++        if($result -ne 0){throw 'HMI behavior test failed'}
++        $variants+=@{testOnlyWheelMapping=[bool]$mapped;exitCode=$result;output=$output}
++    }
++    $hashes=[ordered]@{}
++    $names=@(Get-ChildItem -LiteralPath 'src' -File | Where-Object {$_.Extension -in '.c','.h'} | ForEach-Object {'src/'+$_.Name})
++    $names+=@('tests/verify_hmi.c','tests/verify_heading.c','tests/verify_entry.c','tests/entry_host_io.h',
++        'tests/arm_host_io.h','tests/vision_host_io.h','tools/verify-hmi.ps1','keil/TableNavigation.uvprojx')
++    foreach($name in $names){$hashes[$name]=(Get-FileHash -LiteralPath $name -Algorithm SHA256).Hash.ToLowerInvariant()}
++    [ordered]@{passed=$true;exitCode=0;scope='read-only serial screen host integration; no screen or vehicle accessed; synthetic wheel mapping is test-only';sourceHashes=$hashes;variants=$variants} |
++        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $hmiOut 'result.json') -Encoding UTF8
++    Write-Output $hmiOut
++} finally {$env:PATH=$hmiOldPath;Pop-Location}
+--- /dev/null
++++ docs/串口屏接入.md
+@@ -0,0 +1,50 @@
++# 串口屏接入（r32）
++
++本次在r31上接入既有robot-status只读状态屏，不修改HMI界面、运动路线、抓放参数或视觉对准判据。屏幕不发车辆命令，显示发送不等待屏幕应答，掉线或发不出去不会取消车辆任务。
++
++## 文件与接线
++
++配套屏幕为480×272横屏TJC4827T143_011N_P20；工程中screen/robot-status.tft是既有serial-screen-ui导出文件的逐字节副本，1002304字节，SHA256为cd9b536a1402383a5edbe8375ab877ee70ceab51eeac1d0e0dc05f44873c6c0c。不是本轮重新编辑或重新编译的屏幕工程。原始HMI和TFT均未修改。
++
++| 连接 | 设置 |
++| --- | --- |
++| MCU PC6 / USART6_TX → 屏幕RX | 9600，8N1，普通指令模式 |
++| MCU GND → 屏幕GND | 共地，供电沿用已确认的屏幕电源接线 |
++| 屏幕TX / MCU PC7 | 本版不需要连接；USART6接收及RXNE中断均未启用 |
++
++USART3调试、USART1扫码、USART2 IMU、UART5视觉保持原通道。Keil原本编入但未调用的阻塞uart6_ckp.c替换为src/hmi_status.c，编译单元仍为70；旧文件保留。新模块独占USART6，不能再调用旧HMISends/HMISendb或将printf输出到屏幕串口。
++
++MCU复位后应显示version=20261020-merge2-r32。若屏上尚未下载这份TFT，需要用户自行下载配套屏幕文件；本次没有对实屏或单片机执行下载。
++
++## 显示内容
++
++主界面显示四组任务码、阶段、主控计时；从runimu接受启动时开始计时，完成、故障或主动停止后冻结，下轮重新开始。taska=134123、taskb=314231对应134+123+314+231。任务是否有效及整轮结束后的清空跟随当前车辆状态，不由屏幕决定。
++
++阶段为0待启动，1扫码，2第一批抓取，3第一批粗加工，4第一批暂存，5第二批抓取，6第二批粗加工，7第二批码垛，8返回，9完成，10故障。没有独立的“主动停止”阶段，主动停止回0；细节看调试串口日志。
++
++机构页显示升降/平推指令目标、夹爪/云台指令角和已确认的载物台杯位。没有夹持传感器或舵机到位传感器，因此pick/place正确次数始终-1（屏幕--）；机构不忙也不冒充“全部已到位”，使能后空闲状态使用未知值。电压尚无可靠数据，保持未知。
++
++感知页显示新鲜IMU角度、目标角度、最近有效视觉坐标的偏差和数据年龄。超过250ms的IMU角度显示未知，超过1000ms的视觉颜色隐藏；缺坐标的旧PICK仍按原控制规则接受，但不虚构屏幕坐标。D/E只有环中心、没有颜色，既有屏幕在color=0时隐藏dx/dy，因此环偏差仍以串口station correction日志为准。comm是四轮CAN反馈汇总，不是屏幕应答或屏幕在线证明。
++
++旧底盘代码只给出1～4地址和运动符号，没有左前/右前/左后/右后标签；gcs-gold-medal-main/gcs-gold-medal-main/docs/hardware_reverse_analysis.md的轮位分析也记为无法确认。本版HMI_LF/RF/LR/RR_ADDRESS默认0，四轮8格显示--，没有把猜测的轮位当事实。确认物理位置后，只需在src/hmi_status.h填写对应1～4地址，不改底盘控制映射。专项测试中1/2/3/4的轮位定义仅为测试覆盖，不是实车标定。
++
++## 串口调试命令
++
++下面命令发到既有USART3调试串口，不是直接发到屏幕。运行中也可切换显示，不会触发车辆动作。
++
++| 命令 | 作用 |
++| --- | --- |
++| screen / screen status | 显示发送状态；不宣称屏幕已收到 |
++| screen main | 比赛页 |
++| screen chassis | 底盘调试页 |
++| screen arm | 机构调试页 |
++| screen sensors | 感知调试页 |
++| screen refresh | 请求完整状态重发 |
++
++每条屏幕ASCII指令都带FF FF FF原始结束字节；先提交完整任务码，再提交有效标志，最后刷新。上电1秒后开始发送，常规最多每500ms组织一批变化字段，每5秒完整重发，以覆盖屏幕晚启动或重启。USART6 TXE中断逐字节发送；缓冲尚未发完时保留完整旧批次，下一轮再取最新状态，不交错半条命令。屏幕回包不进入车辆控制入口。
++
++## 当前验证边界
++
++新增verify-hmi.ps1覆盖协议字节/任务更新顺序/背压/页面切换/签名整数边界/上电与时间回绕、11阶段与计时冻结、真实/过期反馈、未知计数、视觉观测不消费MOVE、屏幕不发送时急停仍有效；并运行既有底盘、连续路线、机构和两批工位回归及完整ARM构建。精确结果、源码哈希和固件见evidence/current-validation.json。
++
++没有连接、下载或操作真实串口屏；屏幕上电时长、电平、实际刷新速度和显示效果未实屏验收。实际车辆的抓取、行程、视觉对准也不由本次显示回归证明。r31两批平台取料100mm、r30并行旋转和转向/扫码节拍保持。

@@ -8,7 +8,7 @@
  * 单条道路的距离/方向在 structure.h，全程节点顺序在 full_route.h。
  */
 
-/* 1. 常用速度与加速度，RPM 为电机转速，150 为驱动器加速度档位。 */
+/* 1. 常用速度与加速度，RPM 为电机转速，驱动器加速度档位为200（与下面RPM/s速度斜坡不同）。 */
 #define CAR_TEST_RPM                60       /* test 模式上电默认速度；可用 rpm 命令改。 */
 #define CAR_RUN_RPM                 3000      /* runimu 全程直行速度；覆盖道路表速度。 */
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
@@ -29,7 +29,7 @@
 #error Invalid_map_inset
 #endif
 #define CAR_ROAD_DEFAULT_RPM        100       /* 人工导航 rpm 0 时，道路表的默认速度。 */
-#define CAR_MOTION_ACCELERATION    150       /* 单段标定和道路表的默认加速度档位。 */
+#define CAR_MOTION_ACCELERATION    200       /* 单段标定和道路表的默认加速度档位。 */
 
 /* 2. 距离换算，单位：脉冲/mm；左右共用 X，前后共用 Y。 */
 #define CALIBRATED_PPM_X     11.052632f       /* 原 10.5；60 RPM 下 1000/950 比例修正。 */
@@ -63,9 +63,9 @@
 #define CAR_HEADING_STABLE_SAMPLES     3u
 #define CAR_HEADING_SETTLE_MS        100u
 #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
-#define CAR_HEADING_KP_X100          120       /* 1.20 RPM/度，角度误差到电机速度。 */
+#define CAR_HEADING_KP_X100          200       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
 #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
-#define CAR_HEADING_MIN_RPM           3       /* 误差超容差时的低速修正初值。 */
+#define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
 /* 直行保持航向独立于原地转向：沿用PD增益初值，小角度仍保留角速度阻尼。 */
@@ -73,9 +73,9 @@
 #define CAR_DRIVE_HEADING_KD_X100     30       /* RPM/(度/秒) ×100。 */
 #define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
 #define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
-#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向3RPM跳变。 */
-#define CAR_DRIVE_ACCEL_RPM_PER_S    120u      /* 前进/后退速度指令上升率，0到90RPM至少750ms。 */
-#define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速的指令变化率；急停/故障不经过斜坡。 */
+#define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向的最低转速跳变。 */
+#define CAR_DRIVE_ACCEL_RPM_PER_S    120u      /* 速度指令上升率RPM/s；0到90RPM至少750ms，沿用可跟随斜坡，与驱动器200档位不是同一单位。 */
+#define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速及制动距离计算共用RPM/s；沿用120的可跟随制动斜坡，不能由驱动器200档位推定制动能力。 */
 #define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 100u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */
 #define CAR_DRIVE_SLEW_MAX_DT_MS      50u      /* 吸收正常日志开销；长时间延迟最多推进50ms的斜坡。 */
 #define CAR_VELOCITY_CONTROL_MS      25u      /* 目标控制周期；只采用新IMU样本更新角度。 */
@@ -146,7 +146,7 @@
 #define CAR_MOTION_MIN_ESTIMATE_MS    200u
 #define CAR_MOTION_TIMEOUT_FACTOR      3u
 #define CAR_MOTION_TIMEOUT_EXTRA_MS  5000u
-#define CAR_STOP_ACCELERATION        150       /* 停车时的速度零命令，独立于运动参数。 */
+#define CAR_STOP_ACCELERATION        200       /* 停车时的速度零命令，独立于运动参数。 */
 
 /* 只供日志显示宏值，日常不用修改。 */
 #define CAR_STRING_VALUE_INNER(value) #value

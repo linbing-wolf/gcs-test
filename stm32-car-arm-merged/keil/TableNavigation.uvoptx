@@ -998,8 +998,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\vendor\stm32\ckp\uart6_ckp.c</PathWithFileName>
-      <FilenameWithoutPath>uart6_ckp.c</FilenameWithoutPath>
+      <PathWithFileName>..\src\hmi_status.c</PathWithFileName>
+      <FilenameWithoutPath>hmi_status.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -1407,7 +1407,7 @@
 
   <Group>
     <GroupName>ArmControl</GroupName>
-    <tvExp>0</tvExp>
+    <tvExp>1</tvExp>
     <tvExpOptDlg>0</tvExpOptDlg>
     <cbSel>0</cbSel>
     <RteFlg>0</RteFlg>
