@@ -22,8 +22,8 @@ payload 文本约定：
   A            识别启停区              → START,<区号>,x,y,w,h
   T,<任务码>    下发任务码(扫码模块给的) → TASK,<第一批颜色>,<第二批颜色>
   C,<颜色码>    原料区三选一：找该色物料 → PICK,color,x,y
-  D            粗加工区圆盘中心         → DISC,x,y
-  E            暂存区圆盘中心           → DISC,x,y
+  D            粗加工区圆盘中心/对齐     → DISC,x,y,dx,ok
+  E            暂存区圆盘中心/对齐       → DISC,x,y,dx,ok
   F            码垛中心               → STACK,x,y     (高度由下位机自己算)
   G            前方障碍物              → OBST,x,y,w,h,dist / CLEAR
   R            复位/重新握手            → READY
@@ -31,8 +31,10 @@ payload 文本约定：
 失败统一回：NONE[,<tag>]    异常回：ERR,<msg>
 
 视觉端→下位机的主动指令（仅圆盘对齐时使用）：
-  MOVE,<dx>          请求把目标移到画面中心（dx = 水平偏差像素，符号见 ALIGN_INVERT）；
+  MOVE,<dx>          水平微调：dx = 水平偏差像素（符号见 ALIGN_INVERT_D/E）；
+  MOVEY,<dy>         垂直微调：dy = 垂直偏差像素（符号见 ALIGN_INVERT_DY_D/E）；
                      单片机执行后不用回帧，视觉端等 ALIGN_SETTLE_MS 再重新测量。
+                     两轴同时超差时，视觉端会连发 MOVE 和 MOVEY。
 
 一问一答模型（重要）：
   视觉端是**阻塞单线程**：跑一个任务期间不主动读命令（最长 TASK_TIMEOUT_MS）。
@@ -49,6 +51,7 @@ payload 文本约定：
 from maix import uart, pinmap
 
 from timing import ticks_ms, sleep_ms
+import serial_log
 
 # 串口参数唯一来源：config.py
 try:
@@ -230,11 +233,21 @@ class VisionLink:
             _fto = 200
         self.parser = FrameParser(_fto)
         self._rxq = []          # 已解出的命令，待消费
+        try:
+            import config as _lc
+            _on = bool(getattr(_lc, "SERIAL_LOG_ON", True))
+            _dir = getattr(_lc, "SERIAL_LOG_DIR", "/root/yyb_mover_serial")
+            _raw = bool(getattr(_lc, "SERIAL_LOG_RAW", True))
+        except Exception:
+            _on, _dir, _raw = True, "/root/yyb_mover_serial", True
+        self.slog = serial_log.SerialLog(_on, _dir, _raw)
+        self.slog.event("LINK OPEN %s @ %d" % (dev, baud))
 
     # ---------------- 发送 ----------------
     def send_payload(self, payload):
         pkt = encode_frame(payload)
         self.ser.write(pkt)
+        self.slog.tx(payload, pkt)
         if _verbose():
             print("[发送] %r  <- %s" % (pkt.hex(" "), payload))
         return pkt
@@ -249,13 +262,18 @@ class VisionLink:
         except Exception:
             return None
         if data:
+            self.slog.rx_raw(data)
             for p in self.parser.feed(data):
-                self._rxq.append(p.decode("utf-8", "ignore"))
+                s = p.decode("utf-8", "ignore")
+                self._rxq.append(s)
+                self.slog.rx(s)
         if self._rxq:
             return self._rxq.pop(0)
         return None
 
     def close(self):
+        self.slog.event("LINK CLOSE")
+        self.slog.close()
         try:
             self.ser.close()
         except Exception:
@@ -338,12 +356,20 @@ def pack_disc(x, y, dx=0, ok=1):
 
 
 def pack_move(dx):
-    """【视觉端 → 下位机】请求微调：dx 像素（目标在画面上的水平偏差）
+    """【视觉端 → 下位机】请求水平微调：dx 像素（目标在画面上的水平偏差）
 
     具体是前进/后退还是左右平移，由下位机自己映射（本车是前后动）。
-    方向反了就把 config.ALIGN_INVERT 置 True。
+    方向反了就把 config.ALIGN_INVERT_D/E 置 True。
     """
     return "MOVE,%d" % int(dx)
+
+
+def pack_movey(dy):
+    """【视觉端 → 下位机】请求垂直微调：dy 像素（目标在画面上的垂直偏差）
+
+    方向反了就把 config.ALIGN_INVERT_DY_D/E 置 True。
+    """
+    return "MOVEY,%d" % int(dy)
 
 
 def pack_stack(x, y):

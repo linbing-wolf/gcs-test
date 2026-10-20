@@ -48,8 +48,8 @@ ROAD_AI_LABEL          = "other"         # AI 复确认：判成这个类才算�
 AI_VETO_OTHER = True
 ROI_QRCODE     = []                      # 二维码：全画面
 ROI_MATERIAL   = [140, 100, 360, 300]    # 原料区转盘（放 3 个物料）
-ROI_DISC_ROUGH = [160, 120, 320, 240]    # 粗加工区圆盘
-ROI_DISC_TEMP  = [160, 120, 320, 240]    # 暂存区圆盘
+ROI_DISC_ROUGH = [160, 20, 320, 340]     # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
+ROI_DISC_TEMP  = [160, 20, 320, 340]     # 暂存区圆盘（同上）
 ROI_STACK      = [160, 120, 320, 240]    # 码垛区（暂存区同一块）
 
 # ============================== 稳定性判定 ==============================
@@ -78,28 +78,117 @@ QR_REPEAT        = 3        # 二维码连续 N 次一致才确认
 QR_REGEX         = r"^\d{3}\+\d{3}\+\d{3}\+\d{3}$"   # 15 字符任务码
 
 # ============================== 圆盘 / 圆环 ==============================
-DISC_R_MIN     = 60         # 圆盘半径范围（find_circles）
-DISC_R_MAX     = 200
+DISC_R_MIN     = 40         # 圆盘半径范围（find_circles）
+DISC_R_MAX     = 90         # 靶环外径约 60~70px，超过 90 基本都是假圆
 DISC_THRESHOLD = 2000       # find_circles 累加器阈值
 # 环距（像素，640x480 口径）。视觉只给圆盘中心，各环位置由 STM32 按此环距
 # + 平行关系推算（官方：环为同心/等距，视觉看不到所有环）。
 RING_SPACING_PX = 22
 
+# ---- 圆盘识别增强（D/E 专用）----
+DISC_REFINE_ON         = True   # 粗定位后用「径向边缘点 + 最小二乘」拟合亚像素圆心
+DISC_REFINE_RAYS       = 72     # 径向采样条数（越大越准、越慢）
+DISC_REFINE_BAND       = 10     # 在粗半径 ±band(px) 内找边缘（应小于环距的一半）
+DISC_REFINE_STEP       = 2      # 径向采样步长(px)
+DISC_REFINE_MIN_GRAD   = 6      # 边缘最小亮度梯度(0~255)，抗噪
+DISC_REFINE_MIN_POINTS = 24     # 有效边缘点少于此值 → 放弃拟合，用粗结果
+DISC_REFINE_MAX_SHIFT  = 6      # 拟合圆心相对粗圆心最大偏移(px)，超了视为不可信
+DISC_REFINE_MAX_RMS    = 3.0    # 拟合残差 RMS 上限(px)，超了视为不可信
+DISC_REFINE_TRY        = 2      # 粗候选最多尝试几个（第一个拟合失败时再试下一个）
+DISC_CLUSTER_PX        = 15     # 圆心聚类半径(px)：同心环的圆心应落在这个范围内
+DISC_CLUSTER_MAX_INPUT = 80     # 聚类前最多取多少个候选（按半径从大到小截断，防 O(n^2) 过慢）
+DISC_RING_FALLBACK     = True   # find_circles 完全找不到时，用同心圆环兜底
+DISC_RING_R_MIN        = 20     # 圆环兜底半径范围（px）
+DISC_RING_R_MAX        = 140
+DISC_RING_THRESHOLD    = 1200   # 圆环霍夫累加阈值（环线细，比圆盘低）
+DISC_TIMEOUT_MS        = 8000   # D/E 专属兜底超时（比通用 TASK_TIMEOUT_MS 短）
+DISC_START_DELAY_MS    = 800    # 收到 D/E 后先等这么久再读第一次相机（让车/机构停稳）
+DISC_LOST_FRAMES       = 2      # 连续 N 帧看不到圆 → 立即回 NONE（1=第一帧就回）
+DISC_TRACK_MAX_JUMP    = 50     # 优先选离上一次圆心 ≤N px 的候选（0=不启用）
+
+# ---- D/E 频率与跑飞保护 ----
+DISC_MIN_INTERVAL_MS   = 100    # 两次 D/E 检测最小间隔；更快的重复 D 直接回 BUSY
+DISC_RUNAWAY_GUARD     = True   # 连续同方向且 |dx| 持续增大 → 判定方向反了/跑飞
+DISC_RUNAWAY_COUNT     = 4      # 连续 N 次“同方向 + |dx| 变大”触发保护（锁死直到 R）
+DISC_RUNAWAY_GROW_PX   = 2      # |dx| 至少增大 2px 才算“变大”
+
+# ---- D/E 同心环靶：黑色像素质心（比 Hough 稳，现场实测抖动 ~3px）----
+DISC_BLACK_CENTER_ON   = True   # True=优先用黑色环像素质心定位（靶是黑环+白底）
+DISC_BLACK_MIN_PIXELS  = 300    # 黑色像素少于此值 → 退回 Hough
+DISC_BLACK_ROI         = [190, 45, 240, 195]  # 黑色质心专用子区域（640x480）：包住中间靶，避开左右靶和机械臂
+DISC_BLACK_SUB_RATIO   = 0.65   # DISC_BLACK_ROI 为空时才用：取任务 ROI 上部 65%
+DISC_BLACK_TOP_N       = 8      # 取最大的 N 个黑色 blob 做加权质心
+
+# ---- D/E 最内圈小圆（靶心白块）----
+# 同心环靶最内圈是一个亮色小圆盘；只认它，避免 Hough 在多层环之间跳。
+DISC_CENTER_ON         = True
+TH_CENTER_LIGHT        = [55, 100, -18, 18, -18, 18]  # 白色/亮色（LAB）
+DISC_CENTER_MIN_D      = 25     # 中心白块直径范围(px)
+DISC_CENTER_MAX_D      = 140
+DISC_CENTER_MIN_PIXELS = 200
+DISC_CENTER_PICK_RADIUS = 20    # 距黑色质心多少 px 内优先取“最小”的白块（最内圈）
+
+# ---- D/E 内容校验：圆内必须能匹配到数字“2” ----
+# 只有模板匹配通过才画绿圆/回 DISC；否则回 NONE。解决“没圆也产生绿圆”。
+DISC_TEMPLATE_ON        = True
+DISC_TEMPLATE_PATH      = "/maixapp/apps/yyb_mover/assets/target2.png"
+DISC_TEMPLATE_THRESHOLD = 0.55   # NCC 阈值（0~1）；当前物料挡住数字下半部，实测 2 号环 ~0.59，1/3 号环 <0.30
+DISC_TEMPLATE_SCALES    = [0.9, 1.0]  # 0.9 覆盖稍远距离；两个尺度仍然很快
+DISC_TEMPLATE_ROI_W     = 120    # 在候选圆心周围搜“2”的窗口
+DISC_TEMPLATE_ROI_H     = 110
+DISC_TEMPLATE_ROI_DX    = 0      # 窗口中心相对候选圆心的偏移
+DISC_TEMPLATE_ROI_DY    = 0
+
+# ---- D/E 调试抓图（现场分析用；正式比赛可关）----
+DISC_DEBUG_SAVE          = True   # True=每次 D/E 保存关键帧 + 逐帧检测数据
+DISC_DEBUG_DIR           = "/maixapp/apps/yyb_mover/data/disc_debug"
+DISC_DEBUG_MAX_FRAMES    = 24     # 单次任务最多存多少张图（数据行不受限）
+DISC_DEBUG_QUALITY       = 85     # JPEG 质量 1~100
+DISC_DEBUG_KEEP_TASKS    = 20     # 只保留最近 N 次任务目录，自动删旧
+DISC_DEBUG_MIN_INTERVAL_MS = 100  # 两张图之间至少间隔 ms（0=不限）
+# 不接 STM32 也能抓一次：SSH 上 `touch /tmp/run_disc_once`，
+# 空闲循环会跑一次 D（或 E）任务，只记录不发 MOVE。
+DISC_DEBUG_TRIGGER_FILE  = "/tmp/run_disc_once"
+DISC_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_disc_move"  # 存在时直接跑一次真实 D（发 MOVE + DISC）
+DISC_DEBUG_TRIGGER_CMD   = "D"    # "D"=粗加工区，"E"=暂存区
+DISC_DEBUG_TRIGGER_MS    = 2000   # 触发抓图持续时长(ms)
+
 # ============================== 圆盘对齐（P6：环2 到水平正中心）==============================
-# 视觉端主动发 MOVE,<axis>,<dx> 驱动下位机微调，直到 |x-W/2| <= ALIGN_TOL
-ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（退回旧行为）
-ALIGN_TOL         = 5       # 对齐容差（px）
-ALIGN_STABLE_FRAMES = 5     # 进入容差后还要连续 N 帧稳定才回 ok=1
-ALIGN_STEP_MAX    = 40      # 单次 MOVE 最大步长（px），防止一大步冲过头
-ALIGN_SETTLE_MS   = 300     # 发完 MOVE 等多久再重新测量（给机构运动时间）
-ALIGN_MAX_ITER    = 20      # 最多微调次数，超过就回 DISC,...,0（不再死等）
-ALIGN_INVERT      = False   # True = 把 MOVE 的 dx 取负（现场发现越调越远就打开）
+# 视觉端主动发 MOVE,<dx> / MOVEY,<dy> 驱动下位机微调，直到 |x-W/2|<=ALIGN_TOL 且 |y-H/2|<=ALIGN_DY_TOL
+ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（中心稳定就带偏差回复）
+ALIGN_ONE_SHOT    = False   # False = 闭环调整（最多 ALIGN_MAX_ITER 轮 MOVE/MOVEY）
+ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定为 1
+ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 5px
+ALIGN_GAIN        = 0.8     # 比例系数：MOVE 步长 = dx * GAIN（1.0=一步到位，易过冲）
+ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 0
+ALIGN_STEP_MAX    = 0       # 单次 MOVE 最大步长（px）；0 = 不限制（已删除上限）
+MOVE_SCALE        = 1.0     # MOVE 数值系数：最终 MOVE = step × MOVE_SCALE（先改回 1x）
+ALIGN_DX_OFFSET   = 5       # dx 修正值(px)：dx = cx - W/2 + ALIGN_DX_OFFSET；物料偏左就加大
+# ---- 垂直方向（MOVEY）：与水平轴独立配置 ----
+ALIGN_DY_ON       = True    # False = 不校正垂直偏差，只发 MOVE
+ALIGN_DY_TOL      = 5       # 垂直对齐容差(px)
+ALIGN_DY_OFFSET   = 0       # dy 修正值(px)：dy = cy - H/2 + ALIGN_DY_OFFSET
+MOVEY_SCALE       = 1.0     # MOVEY 数值系数：最终 MOVEY = step × MOVEY_SCALE
+ALIGN_INVERT_DY_D = False   # D：MOVEY 方向（反了就置 True）
+ALIGN_INVERT_DY_E = False   # E：MOVEY 方向（反了就置 True）
+MOVE_ECHO_HOLD_MS = 300     # 发完 MOVE 后屏幕回显停留时间(ms)
+ALIGN_STABLE_FRAMES = 3     # 进入容差后还要连续 N 帧稳定才回 ok=1
+ALIGN_SETTLE_MS   = 1200    # 发完 MOVE 等多久再重新测量（已加大到 1.2s）
+ALIGN_MAX_ITER    = 3       # 最多调整 3 次，超过就回 DISC,...,1（不再死等）
+ALIGN_INVERT_D    = False   # D：按要求先保持不反
+ALIGN_INVERT_E    = False   # E：MOVE 方向保持（当前 E 是正确的）
 
 # ============================== 码垛 ==============================
 MATERIAL_HEIGHT_MM = 40     # 固定物料高度常量，随 STACK 帧下发（STM32 用于减去高度）
 
 # ============================== 超时 ==============================
 TASK_TIMEOUT_MS = 20000     # 每个任务的兜底超时（原程序是死等）
+
+# ============================== 串口全量日志 ==============================
+# 每次 APP 启动在 SERIAL_LOG_DIR 下新建一个文件，记录全部 RX/TX（含原始帧 hex）。
+SERIAL_LOG_ON  = True
+SERIAL_LOG_DIR = "/root/yyb_mover_serial"
+SERIAL_LOG_RAW = True       # True=同时记录原始帧 hex
 
 # ============================== 串口（MaixCAM2）==============================
 # 唯一来源：protocol.py 会读这里。

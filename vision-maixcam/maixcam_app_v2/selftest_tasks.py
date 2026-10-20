@@ -61,14 +61,16 @@ class FakeImage:
     road=True 时右侧 ROI（x>=300）返回铺满 ROI 的块，用来模拟「有灰色道路」。
     """
 
-    def __init__(self, blob_code=1, road=False, circle_x=640, blobs=None,
-                 circles=None, blob_x=600):
+    def __init__(self, blob_code=1, road=False, circle_x=640, circle_y=480,
+                 blobs=None, circles=None, blob_x=600, no_circle=False):
         self.blob_code = blob_code
         self.road = road
         self.circle_x = circle_x
+        self.circle_y = circle_y
         self.blobs = blobs          # [(code,x,y,w,h), ...] 指定多目标
         self.circles = circles      # [(x,y,r), ...] 指定多个圆
         self.blob_x = blob_x        # 物料中心 x（转盘测试用）
+        self.no_circle = no_circle  # True = 模拟画面里没有圆
 
     def find_blobs(self, *a, **kw):
         roi = kw.get('roi') or (a[1] if len(a) > 1 else None)
@@ -79,9 +81,11 @@ class FakeImage:
         return [FakeBlob(self.blob_code, self.blob_x, 400, 100, 80)]
 
     def find_circles(self, *a, **kw):
+        if self.no_circle:
+            return []
         if self.circles:
             return [FakeCircle(*c) for c in self.circles]
-        return [FakeCircle(self.circle_x, 480, 100)]
+        return [FakeCircle(self.circle_x, self.circle_y, 100)]
 
     def width(self): return 1280
     def height(self): return 960
@@ -96,17 +100,21 @@ class FakeImage:
 
 class FakeCam:
     def __init__(self, code=1, blob_code=None, road=False, circle_x=640,
-                 blobs=None, circles=None, blob_x=600):
+                 circle_y=480, blobs=None, circles=None, blob_x=600,
+                 no_circle=False):
         self.code = blob_code or code
         self.road = road
         self.circle_x = circle_x
+        self.circle_y = circle_y
         self.blobs = blobs
         self.circles = circles
         self.blob_x = blob_x
+        self.no_circle = no_circle
 
     def read(self):
-        return FakeImage(self.code, self.road, self.circle_x,
-                         self.blobs, self.circles, self.blob_x)
+        return FakeImage(self.code, self.road, self.circle_x, self.circle_y,
+                         self.blobs, self.circles, self.blob_x,
+                         no_circle=self.no_circle)
     def skip_frames(self, n): pass
 
 
@@ -134,6 +142,9 @@ sys.modules.update({'maix': maix, 'maix.image': image, 'maix.app': app,
                     'maix.uart': uart, 'maix.pinmap': pinmap})
 
 import config                      # noqa: E402
+config.DISC_DEBUG_SAVE = False     # 单测不写抓图目录
+config.DISC_BLACK_CENTER_ON = False  # 单测用假圆验证 Hough 路径
+config.DISC_CENTER_ON = False        # 单测不走“最内圈白块”路径
 import precision                   # noqa: E402
 import tasks                       # noqa: E402
 import vision                      # noqa: E402
@@ -220,11 +231,12 @@ class _FlipCam(FakeCam):
 
     def read(self):
         self.n += 1
-        return FakeImage(1 if self.n % 2 else 2, self.road, self.circle_x)
+        return FakeImage(1 if self.n % 2 else 2, self.road, self.circle_x,
+                         self.circle_y)
 
 
 class _AlignLink(_Link):
-    """假下位机：收到 MOVE,x,dx 后把圆往反方向挪 dx（模拟机构真的动了）"""
+    """假下位机：收到 MOVE/MOVEY 后把圆往反方向挪，模拟机构真的动了"""
 
     def __init__(self, cam):
         super().__init__([])
@@ -238,6 +250,12 @@ class _AlignLink(_Link):
             except Exception:
                 return
             self.cam.circle_x = max(0, min(self.cam.circle_x - dx, 1280))
+        elif p.startswith('MOVEY,'):
+            try:
+                dy = int(p.split(',')[1])
+            except Exception:
+                return
+            self.cam.circle_y = max(0, min(self.cam.circle_y - dy, 960))
 
 
 class _AI:
@@ -351,31 +369,120 @@ def main():
     print('\n== 圆盘对齐（MOVE 闭环）==')
     old_settle = config.ALIGN_SETTLE_MS
     old_iter = config.ALIGN_MAX_ITER
+    old_oneshot = config.ALIGN_ONE_SHOT
+    old_oneshot_ok = config.ALIGN_ONE_SHOT_OK
+    old_invert_d = config.ALIGN_INVERT_D
+    old_echo_hold = config.MOVE_ECHO_HOLD_MS
+    old_dx_offset = config.ALIGN_DX_OFFSET
+    old_start_delay = config.DISC_START_DELAY_MS
+    old_move_scale = config.MOVE_SCALE
+    old_dy_on = config.ALIGN_DY_ON
+    old_dy_tol = config.ALIGN_DY_TOL
     try:
         config.ALIGN_SETTLE_MS = 0
+        config.ALIGN_ONE_SHOT = False    # 先验证旧的闭环路径
+        config.ALIGN_INVERT_D = False    # 假机构按正向运动，测试闭环逻辑
+        config.MOVE_ECHO_HOLD_MS = 0     # 测试不等屏幕回显
+        config.ALIGN_DX_OFFSET = 0       # 控制逻辑测试不带偏置
+        config.DISC_START_DELAY_MS = 0   # 测试不等启动延时
+        config.ALIGN_MAX_ITER = 12       # 容差 5px 时从 320px 收敛需要更多次
+        config.MOVE_SCALE = 1.0          # 控制逻辑测试先用 1x
+        tasks.reset_guard()
 
-        cam = FakeCam(1, circle_x=640)      # 目标偏右 320px
+        cam = FakeCam(1, circle_x=640, circle_y=240)      # 目标偏右 320px
         lk = _AlignLink(cam)
         out = frame_str(tasks.task_disc(cam, None, config.ROI_DISC_ROUGH, 'D',
                                         p=P_ID, ctl=tasks.TaskCtl(lk))).split(',')
         check('对齐成功 ok=1', out[0] == 'DISC' and out[-1] == '1', out)
-        check('最终 |dx|<=5', abs(int(out[3])) <= 5, out)
+        check('最终 |dx|<=ALIGN_TOL', abs(int(out[3])) <= config.ALIGN_TOL, out)
         check('确实发过 MOVE', any(x.startswith('MOVE,') for x in lk.sent),
               lk.sent[:3])
         check('收敛到中心', abs(cam.circle_x - 640) > 0, 'circle_x=%d' % cam.circle_x)
 
         # 机构不动 → 次数用尽后带偏差回复 ok=0
         config.ALIGN_MAX_ITER = 3
-        cam2 = FakeCam(1, circle_x=640)
+        cam2 = FakeCam(1, circle_x=640, circle_y=240)
         lk2 = _Link([])
         out2 = frame_str(tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk2))).split(',')
-        check('超次数 → ok=0', out2[0] == 'DISC' and out2[-1] == '0', out2)
+        check('超次数 → 仍回 ok=1', out2[0] == 'DISC' and out2[-1] == '1', out2)
         check('超次数仍发了 3 条 MOVE',
               sum(1 for x in lk2.sent if x.startswith('MOVE,')) == 3, lk2.sent)
+
+        # 一次性模式：只发 1 条 MOVE，立即回 DISC
+        config.ALIGN_MAX_ITER = old_iter
+        config.ALIGN_ONE_SHOT = True
+        config.ALIGN_ONE_SHOT_OK = 0
+        cam5 = FakeCam(1, circle_x=640, circle_y=240)
+        lk5 = _Link([])
+        out5 = frame_str(tasks.task_disc(cam5, None, config.ROI_DISC_ROUGH, 'D',
+                                         p=P_ID, ctl=tasks.TaskCtl(lk5))).split(',')
+        check('一次性模式：只发 1 条 MOVE',
+              sum(1 for x in lk5.sent if x.startswith('MOVE,')) == 1, lk5.sent)
+        check('一次性模式：立即回 DISC ok=1',
+              out5[0] == 'DISC' and out5[-1] == '1', out5)
+
+        # MOVE 系数：dx=320，限幅 40，10x → MOVE,400
+        config.ALIGN_ONE_SHOT = True
+        config.MOVE_SCALE = 100.0
+        tasks.reset_guard()
+        cam6 = FakeCam(1, circle_x=640, circle_y=240)
+        lk6 = _Link([])
+        out6 = frame_str(tasks.task_disc(cam6, None, config.ROI_DISC_ROUGH, 'D',
+                                         p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
+        check('MOVE 100x 系数（无上限）', any(x == 'MOVE,25600' for x in lk6.sent), lk6.sent)
+        check('MOVE 100x 仍回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
+        config.MOVE_SCALE = 1.0
+
+        # MOVEY 垂直闭环：dy=+60px → 发 MOVEY 并收敛
+        config.ALIGN_ONE_SHOT = False
+        config.ALIGN_MAX_ITER = 12
+        config.ALIGN_DY_ON = True
+        config.ALIGN_DY_TOL = 5
+        config.MOVE_SCALE = 1.0
+        tasks.reset_guard()
+        cam7 = FakeCam(1, circle_x=320, circle_y=300)   # x 居中，y 偏下 60px
+        lk7 = _AlignLink(cam7)
+        out7 = frame_str(tasks.task_disc(cam7, None, config.ROI_DISC_ROUGH, 'D',
+                                         p=P_ID, ctl=tasks.TaskCtl(lk7))).split(',')
+        check('DY 超差发过 MOVEY',
+              any(x.startswith('MOVEY,') for x in lk7.sent), lk7.sent)
+        check('DY 收敛到中心', abs(cam7.circle_y - 240) <= 5, 'y=%d' % cam7.circle_y)
+        check('DY 对齐仍回 ok=1', out7[0] == 'DISC' and out7[-1] == '1', out7)
+
+        # 跑飞保护：连续同方向 + |dx| 持续增大 → 锁死
+        tasks.reset_guard()
+        seq = [10, 16, 24, 31]
+        res = [tasks._runaway_check(x) for x in seq]
+        check('跑飞保护：连续增大触发', res == [False, False, False, True], res)
+        tasks.reset_guard()
+        seq = [40, 30, 20, 10]
+        res = [tasks._runaway_check(x) for x in seq]
+        check('跑飞保护：误差收敛不触发', not any(res), res)
+        tasks.reset_guard()
     finally:
         config.ALIGN_SETTLE_MS = old_settle
         config.ALIGN_MAX_ITER = old_iter
+        config.ALIGN_ONE_SHOT = old_oneshot
+        config.ALIGN_ONE_SHOT_OK = old_oneshot_ok
+        config.ALIGN_INVERT_D = old_invert_d
+        config.MOVE_ECHO_HOLD_MS = old_echo_hold
+        config.ALIGN_DX_OFFSET = old_dx_offset
+        config.DISC_START_DELAY_MS = old_start_delay
+        config.MOVE_SCALE = old_move_scale
+        config.ALIGN_DY_ON = old_dy_on
+        config.ALIGN_DY_TOL = old_dy_tol
+        tasks.reset_guard()
+
+    # 看不到圆 → 连续 DISC_LOST_FRAMES 帧立即回 NONE，不等 8s 超时
+    cam3 = FakeCam(1, no_circle=True)
+    out3 = frame_str(tasks.task_disc(cam3, None, config.ROI_DISC_ROUGH, 'D', p=P_ID))
+    check('看不到圆 → NONE,D', out3 == 'NONE,D', out3)
+
+    # 调试抓图模式（不发 MOVE）不崩、返回 NONE,D
+    out4 = frame_str(tasks.task_snapshot(FakeCam(1), None, config.ROI_DISC_ROUGH, 'D',
+                                         duration_ms=120, p=P_ID))
+    check('抓图模式 task_snapshot', out4 == 'NONE,D', out4)
 
     print()
     if FAILED:

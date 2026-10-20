@@ -1,0 +1,38 @@
+app_info:
+  author: YYB Team
+  desc: 'MaixCAM2 vision head for the STM32 smart-transport robot: 4-color blob (+
+    optional YOLO11n-cls AI color judgement), disc center, stacking center; distortion-corrected
+    coordinates; variable-length UART frame protocol (request-response, BUSY, R-interrupt).'
+  desc[zh]: MaixCAM2 视觉上位机：4 色识别（可选 YOLO11n-cls AI 判色）、圆盘中心、码垛中心；坐标去畸变 + 多帧平均；变长帧串口协议（一问一答
+    + BUSY + R 中断）；供 STM32 智能搬运车使用。
+  files:
+    ai_model.py: ai_model.py
+    app.yaml: app.yaml
+    assets: assets
+    assets/yyb_mover.png: assets/yyb_mover.png
+    config.py: config.py
+    disc_debug.py: disc_debug.py
+    main.py: main.py
+    precision.py: precision.py
+    protocol.py: protocol.py
+    run.sh: run.sh
+    screen_echo.py: screen_echo.py
+    selftest.py: selftest.py
+    selftest_ai.py: selftest_ai.py
+    selftest_echo.py: selftest_echo.py
+    selftest_tasks.py: selftest_tasks.py
+    serial_log.py: serial_log.py
+    tasks.py: tasks.py
+    timing.py: timing.py
+    touch_ui.py: touch_ui.py
+    vision.py: vision.py
+  icon: assets/yyb_mover.png
+  id: yyb_mover
+  name: YYB Mover
+  name[zh]: YYB 智能搬运视觉端
+  version: 3.8.1
+date: '2026-10-20 18:41:29'
+filename: yyb_mover_v3.8.1.zip
+filesize: 89106
+path: /home/linbing/gcs-test/vision-maixcam/maixcam_app_v2/dist/yyb_mover_v3.8.1.zip
+sha256sum: 454ead56014aa4a28cfb922ac79008f6203dfdb0b9aac3d5a31a1a042d20f1c3

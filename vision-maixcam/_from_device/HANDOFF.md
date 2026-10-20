@@ -1,7 +1,7 @@
 # 交接文档 · MaixCAM 视觉迁移（最新）
 
 > 用途：把 Windows 上做完的一切带到 **Linux** 继续（Linux 上跑 Docker/Pulsar2 完成 MaixCAM2 模型转换 + 写最终程序）。
-> 工作区根：`maixcam-migration/` 　最后更新：2026-10-17
+> 工作区根：`maixcam-migration/` 　最后更新：2026-10-20
 
 ---
 
@@ -182,7 +182,7 @@ USE_AI = True; AI_KIND = "classify"; AI_MODEL = "/root/models/cls11n.mud"
 | `ai_model.py` | 可选 AI 层（分类/检测，CV 兜底）|
 | `app.yaml` `assets/` `run.sh` `pack.ps1` `selftest.py` | 打包/资源/自检 |
 
-回复帧：`START,<区号>,x,y,w,h` · `TASK,<G1>,<G3>` · `PICK,color,x,y` · `DISC,x,y,dx,ok` · `STACK,x,y,h` · `OBST,x,y,w,h,dist`/`CLEAR` · `READY`/`OK` · `BUSY` · `NONE[,tag]`/`ERR,msg`
+回复帧：`START,<区号>,x,y,w,h` · `TASK,<G1>,<G3>` · `PICK,color,x,y` · `DISC,x,y,dx,ok` · `STACK,x,y` · `OBST,x,y,w,h,dist`/`CLEAR` · `READY`/`OK` · `BUSY` · `NONE[,tag]`/`ERR,msg`
 
 ### 7.1 状态机（v3.3.0）
 
@@ -204,22 +204,27 @@ RUNNING: 阻塞跑一个任务（最长 TASK_TIMEOUT_MS=20s；G 为 OBST_TIMEOUT
 道路判据（需现场标定）：`ROI_ROAD=[384,120,256,300]`，`TH_ROAD` 灰色 LAB，
 `ROAD_MIN_RATIO=0.30`，连续 `ROAD_STABLE_FRAMES=5` 帧一致才确认。
 
-**任务 D/E（圆盘）对齐约定（v2.9.0）**：
-视觉端要保证「环 2（同心环组中心）」落在画面水平中心 `|x-W/2| <= ALIGN_TOL(5px)` 才回 `ok=1`。
+**任务 D/E（圆盘）对齐约定（v3.8.1，2026-10-20）**：
+视觉端要保证「环 2（同心环组中心）」落在画面中心：`|x-W/2| <= ALIGN_TOL(5px)` 且
+`|y-H/2| <= ALIGN_DY_TOL(5px)`。
 `ALIGN_ON=True` 时视觉端会**主动发运动指令**：
 
 ```
-视觉端 → 下位机：MOVE,x,<dx>     dx>0 = 目标偏右，需要向右修正；执行后不用回帧
-视觉端等 ALIGN_SETTLE_MS(300ms) 后重新测量，最多 ALIGN_MAX_ITER(20) 次
+视觉端 → 下位机：MOVE,<dx>      水平偏差；执行后不用回帧
+视觉端 → 下位机：MOVEY,<dy>     垂直偏差；执行后不用回帧
 ```
 
-下位机只需实现 `MOVE,<axis>,<dx>` 这一个反向指令（按像素或自己换算成步数）。
-超次数/超时仍未对齐 → `DISC,x,y,dx,0`（带偏差，便于下位机自己补救）。
+- 收到 `D/E` 后先等 `DISC_START_DELAY_MS(800ms)` 再读第一帧；
+- 两轴都超差时，一轮会先发 `MOVE` 再发 `MOVEY`；
+- 每轮等 `ALIGN_SETTLE_MS(1200ms)` 后重新测量，最多 `ALIGN_MAX_ITER(3)` 轮；
+- 方向反了改视觉端的 `ALIGN_INVERT_D/E` 或 `ALIGN_INVERT_DY_D/E`，不要改 STM32 符号；
+- `DISC` 的 `ok` 当前固定为 `1`，即使超差也会回 1，不能只靠 `ok` 判断是否对准；
+- 忽略 `MOVEY` → 垂直方向永远不收敛，这是 2026-10-20 实测确认的现象。
 
 **STM32 侧必须配合的五点**：
 1. 一问一答：收到结果帧再发下一条（任务没结束前发会收到 `BUSY`）。
 2. 超时要 > 20s（`TASK_TIMEOUT_MS`），且把 `BUSY` 当「还在算」，不要当失败。
-3. `STACK,x,y,h` 的 `h` 是**毫米**（固定 `MATERIAL_HEIGHT_MM=40`），不是像素。
+3. `STACK,x,y` 只有中心，**没有高度字段**（旧文档里的 `h` 已移除）。
 4. `C,<颜色码>` 只接受 `1/2/3/4`，其它值立即回 `NONE,C`。
 5. 所有 `x,y,w,h` 都是 **640×480 口径、已去畸变**；`DISC` 只给中心不给半径。
 
@@ -340,6 +345,9 @@ APP 目录  : /maixapp/apps/yyb_mover/     安装：app_store_cli install <zip>
 | **3.2.1** | pinmap 诊断日志修正（区分真失败/已生效）；AI 模型缺失时打印排查提示 |
 | **3.3.0** | 原料区（转盘）**停稳才回复**：`StopDetector` + `PICK_STOP_ONLY/SPEED_PX_S/HOLD_MS` |
 | **3.4.0** | **屏幕命令回显条**（`screen_echo.py`）：画面底部常驻 RX/TX/状态+收发计数+坏帧数；空闲时每 100ms 刷预览（不再冻屏）；`R/T/Z` 也有痕迹。开关 `SCREEN_ECHO / SCREEN_ECHO_IDLE_MS / SCREEN_ECHO_LINES` |
+| **3.5.x ~ 3.7.x** | 圆盘识别改为「最内圈白块 / 黑色环质心 / 霍夫细化 / 圆环兜底」；增加数字“2”模板校验；D/E 启动延时、跑飞保护、串口全量日志、真实 D 调试触发；MOVE 系数可调 |
+| **3.8.0** | **新增 `MOVEY,<dy>` 垂直微调**；D/E 同时校水平和垂直，两轴独立跑飞保护；`DISC` 回复格式不变、`ok` 固定 1 |
+| **3.8.1** | 模板阈值 `0.65 → 0.55`、尺度增加 `0.9`，解决物料挡住数字下半部时 2 号环被误判 `NONE`；上板实测可识别并发出 `MOVEY` |
 
 ### 11.4 新增文档
 

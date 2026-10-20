@@ -18,6 +18,16 @@ main.py —— 新流程视觉主程序（上位机服务端）
 from maix import camera, display, app
 from timing import ticks_ms, sleep_ms
 
+import sys
+import os
+# launcher 把 stdout 重定向到 /maixapp/tmp/last_run.log，默认是块缓冲；
+# 改成行缓冲后现场日志/调试信息能实时看到（Python 3.7+）。
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 import config
 import vision
 import ai_model
@@ -26,7 +36,7 @@ import protocol
 import tasks
 import screen_echo
 from protocol import (VisionLink, preflight, parse_command, pack_ready, pack_ok,
-                      pack_error, pack_none)
+                      pack_error, pack_none, pack_busy)
 
 # ------------------------------ 初始化 ------------------------------
 def _open_camera():
@@ -119,6 +129,28 @@ def reply(payload):
     screen_echo.set_tx(payload)
 
 
+_last_disc_ms = 0
+
+
+def _disc_gate():
+    """D/E 最快每 DISC_MIN_INTERVAL_MS 处理一次；太快的重复 D 回 BUSY。"""
+    global _last_disc_ms
+    now = ticks_ms()
+    gap = now - _last_disc_ms
+    min_gap = max(0, int(getattr(config, "DISC_MIN_INTERVAL_MS", 100)))
+    if _last_disc_ms and gap < min_gap:
+        log("[D/E] 距上次检测 %dms < %dms，回 BUSY（等机构停稳/下位机降频）"
+            % (gap, min_gap))
+        reply(pack_busy())
+        return False
+    return True
+
+
+def _disc_done():
+    global _last_disc_ms
+    _last_disc_ms = ticks_ms()
+
+
 def dispatch(cmd, arg):
     global TASK
 
@@ -137,10 +169,14 @@ def dispatch(cmd, arg):
             reply(tasks.task_pick(cam, clf, disp, arg, p=pline, ctl=ctl))
 
     elif cmd == protocol.CMD_DISC_ROUGH:
-        reply(tasks.task_disc(cam, disp, config.ROI_DISC_ROUGH, "D", p=pline, ctl=ctl))
+        if _disc_gate():
+            reply(tasks.task_disc(cam, disp, config.ROI_DISC_ROUGH, "D", p=pline, ctl=ctl))
+            _disc_done()
 
     elif cmd == protocol.CMD_DISC_TEMP:
-        reply(tasks.task_disc(cam, disp, config.ROI_DISC_TEMP, "E", p=pline, ctl=ctl))
+        if _disc_gate():
+            reply(tasks.task_disc(cam, disp, config.ROI_DISC_TEMP, "E", p=pline, ctl=ctl))
+            _disc_done()
 
     elif cmd == protocol.CMD_STACK:
         if arg and not protocol.is_color_code(arg):
@@ -156,10 +192,12 @@ def dispatch(cmd, arg):
     elif cmd == protocol.CMD_RESET:
         log("[R] 复位/握手")
         TASK = None
+        tasks.reset_guard()
         reply(pack_ready())
 
     elif cmd == protocol.CMD_END:
         log("[Z] 结束")
+        tasks.reset_guard()
         reply(pack_ok())
 
     else:
@@ -241,6 +279,39 @@ def main():
         while not app.need_exit():
             raw = link.poll_command()
             if raw is None:
+                # 调试触发：SSH 上 touch /tmp/run_disc_move → 直接跑一次真实 D
+                # （会发 MOVE + DISC，车会动，确保周围留空间）
+                real_trig = getattr(config, "DISC_DEBUG_TRIGGER_REAL_FILE", "")
+                if real_trig and os.path.exists(real_trig):
+                    try:
+                        os.remove(real_trig)
+                    except Exception:
+                        pass
+                    log("[调试] 直接触发一次 D（真实 MOVE + DISC）")
+                    tasks.reset_guard()
+                    reply(tasks.task_disc(cam, disp, config.ROI_DISC_ROUGH, "D",
+                                          p=pline, ctl=ctl))
+                    screen_echo.set_state("IDLE")
+                    _disc_done()
+                    continue
+                # 调试触发：SSH 上 touch /tmp/run_disc_once → 抓一段 D/E 画面
+                # 只记录，不发 MOVE，不影响正常串口协议。
+                trig = getattr(config, "DISC_DEBUG_TRIGGER_FILE", "")
+                if trig and os.path.exists(trig):
+                    try:
+                        os.remove(trig)
+                    except Exception:
+                        pass
+                    tcmd = getattr(config, "DISC_DEBUG_TRIGGER_CMD", "D")
+                    log("[调试] 触发一次 %s 抓图（只记录，不发 MOVE）" % tcmd)
+                    if tcmd == protocol.CMD_DISC_TEMP:
+                        tasks.task_snapshot(cam, disp, config.ROI_DISC_TEMP, "E",
+                                            p=pline)
+                    else:
+                        tasks.task_snapshot(cam, disp, config.ROI_DISC_ROUGH, "D",
+                                            p=pline)
+                    screen_echo.set_state("IDLE")
+                    continue
                 if show_idle:
                     now = ticks_ms()
                     if (now - last_echo) >= idle_ms:

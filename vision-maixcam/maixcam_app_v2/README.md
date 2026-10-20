@@ -1,6 +1,6 @@
 # YYB Mover —— MaixCAM2 智能搬运视觉端（标准 MaixCAM APP）
 
-> id: `yyb_mover` · version: `2.0.0` · 入口：`main.py`
+> id: `yyb_mover` · version: `3.8.1` · 入口：`main.py`
 > 配套：STM32 智能搬运车（UART5 / 115200），协议见 `protocol.py`
 
 ## 这是什么
@@ -10,15 +10,59 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 
 | 命令 | 含义 | 回复 |
 | --- | --- | --- |
-| `A` | 识别启停区 | `START,x,y,w,h` |
+| `A` | 识别启停区 | `START,<区号>,x,y,w,h` |
 | `T,<任务码>` | 下发任务码，确定颜色 | `TASK,<G1>,<G3>` |
 | `C,<颜色码>` | 原料区三选一 | `PICK,color,x,y` |
-| `D` / `E` | 粗加工区 / 暂存区 圆盘中心 | `DISC,x,y` |
-| `F` | 码垛中心 + 固定物料高 | `STACK,x,y,h` |
+| `D` / `E` | 粗加工区 / 暂存区 圆盘中心 + 双轴对齐 | `DISC,x,y,dx,ok` |
+| `F` | 码垛中心 | `STACK,x,y` |
 | `G` | 前进状态：检测前方黑色障碍物 | 有：`OBST,x,y,w,h,dist`／无：`CLEAR` |
 | `R` / `Z` | 复位 / 结束 | `READY` / `OK` |
 
 帧格式（双向）：`AA 55 LEN payload CRC8 0D`
+
+### D/E 圆盘识别与对齐（加工区 / 暂存区）
+
+- **识别**：`find_circles` 粗定位 → 径向边缘点 + 最小二乘拟合（亚像素）→ 找不到大圆再用同心圆环兜底。
+- **对齐**：视觉端发 `MOVE,<step>`（水平）和 `MOVEY,<step>`（垂直）闭环微调，
+  `step = dx/dy × ALIGN_GAIN`，限幅 `±ALIGN_STEP_MAX`。
+- **闭环模式**（`ALIGN_ONE_SHOT=False`，当前默认）：最多 `ALIGN_MAX_ITER=3` 轮，
+  每轮只发超差轴的指令（两轴都超差时先 `MOVE` 再 `MOVEY`），
+  每次等 `ALIGN_SETTLE_MS` 后重新测量；对齐回 `DISC,...,1`，
+  3 轮仍未对齐回 `DISC,...,1`（`ok` 按要求固定 1）。
+- **一次性模式**（`ALIGN_ONE_SHOT=True`）：只发一轮 `MOVE` / `MOVEY`，随后立即回
+  `DISC,x,y,dx,1`，不再闭环等待。
+- **完成**：`|dx| <= ALIGN_TOL` 且 `|dy| <= ALIGN_DY_TOL` 连续
+  `ALIGN_STABLE_FRAMES` 帧 → 回 `DISC,x,y,dx,1`。
+- **未完成**：微调超过 `ALIGN_MAX_ITER` 轮 / 超时 → `DISC,x,y,dx,1`。
+- **看不到圆**：连续 `DISC_LOST_FRAMES` 帧 → 立即回 `NONE,D` / `NONE,E`。
+- **内容校验**：候选圆周围必须在 `assets/target2.png` 模板中匹配到数字“2”，
+  否则不画绿圆、直接回 `NONE`（解决“没圆也产生绿圆”）。
+  当前 `DISC_TEMPLATE_THRESHOLD=0.55`，尺度 `[0.9, 1.0]`；实测物料挡住数字下半部时
+  2 号环约 0.59，1/3 号环 <0.30。
+- **启动延时**：收到 D/E 后先等 `DISC_START_DELAY_MS=800ms` 再读第一帧。
+- **超时**：`DISC_TIMEOUT_MS = 8000`（D/E 专用，比通用 `TASK_TIMEOUT_MS` 短）。
+- 例：`DISC,321,238,2,1` 表示圆心 (321,238)，水平偏差 +2px，已对齐。
+
+### D/E 调试抓图（3.6.0）
+
+`config.DISC_DEBUG_SAVE = True` 时，每次 D/E 会在
+`/maixapp/apps/yyb_mover/data/disc_debug/<时间戳>-<D|E>/` 下保存：
+
+- `000_start.jpg`、`001_iter0_before.jpg`、`final_ok.jpg` … 关键帧
+- `meta.jsonl`：每帧的 `dx/cx/cy/r/src/circles/refined/refine_reason/...`
+- `summary.json`：本次任务结果、存图数量、时长
+
+画面标注：**蓝色细圆 = 所有候选圆，绿色 = 采用的圆，红十字 = 最终圆心，黄线 = 画面中心**。
+可以直接看出是不是 `find_circles` 选了假圆/别的环。
+
+拉回电脑分析：
+
+```bash
+scp -r root@<板子IP>:/maixapp/apps/yyb_mover/data/disc_debug ./disc_debug
+python3 maix_toolkit/pc/analyze_disc_debug.py ./disc_debug
+```
+
+正式比赛可把 `DISC_DEBUG_SAVE` 改回 `False`，避免占存储。
 
 ## 文件
 
@@ -28,6 +72,7 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 | `protocol.py` | 变长帧编解码 + 命令解析 + 回复构造 |
 | `vision.py` | 4 色 / 启停区 / 圆盘 / 码垛 识别 |
 | `tasks.py` | 各视觉任务（带超时 + 稳定性判定）|
+| `disc_debug.py` | D/E 调试抓图：关键帧 JPEG + 逐帧检测数据 |
 | `config.py` | 唯一参数来源（颜色 / ROI / 串口 / 精度 / AI 开关）|
 | `precision.py` | 精度库：缩放 / 去畸变 / 手眼 / 圆拟合 / 多帧平均 |
 | `ai_model.py` | 可选 AI 层（分类 / 检测，CV 兜底）|
@@ -53,8 +98,11 @@ pwsh -File pack.ps1
 # ① 上传 zip 到设备后，命令行安装
 app_store_cli install /root/yyb_mover_v2.0.0.zip
 
-# ② 本地二维码安装（设备与电脑同一局域网）
-maixtool deploy             # 显示二维码，用设备 App Store 扫
+# ② 安装后务必清掉旧字节码，否则可能继续跑上一版
+#    （旧 pyc 的时间戳比新源码新时，Python 会优先加载 pyc）
+rm -rf /maixapp/apps/yyb_mover/__pycache__
+
+# ③ 重启应用
 ```
 
 装好后回到 launcher，列表里会出现 **YYB Mover**。

@@ -13,9 +13,12 @@ from timing import ticks_ms, sleep_ms
 import config
 import precision
 import vision
+import disc_debug
+import screen_echo
 from protocol import (pack_start, pack_task, pack_pick, pack_disc, pack_stack,
                       pack_none, parse_task_code, pack_obstacle, pack_clear,
-                      pack_ready, pack_busy, pack_move, parse_command, CMD_RESET)
+                      pack_ready, pack_busy, pack_move, pack_movey,
+                      parse_command, CMD_RESET)
 
 
 def log(*a):
@@ -29,6 +32,61 @@ _IDENTITY = precision.Pipeline(config.W, config.H, config.W, config.H)
 
 def _pipeline(p):
     return p if p is not None else _IDENTITY
+
+
+# ======================================================================
+# D/E 跑飞保护：连续同方向 + |误差| 持续增大 → 锁死，不再发对应轴的指令
+# 水平(MOVE)和垂直(MOVEY)各自独立计数，避免一个轴正常、另一个轴跑飞时互相干扰。
+# ======================================================================
+_GUARDS = {
+    "x": {"sign": 0, "abs": 0, "count": 0, "latched": False},
+    "y": {"sign": 0, "abs": 0, "count": 0, "latched": False},
+}
+
+
+def reset_guard(axis=None):
+    """清掉跑飞锁；axis=None 清两轴，axis='x'/'y' 只清一个轴。"""
+    names = [axis] if axis in _GUARDS else list(_GUARDS.keys())
+    for name in names:
+        g = _GUARDS[name]
+        g["sign"] = 0
+        g["abs"] = 0
+        g["count"] = 0
+        g["latched"] = False
+
+
+def _runaway_check(value, axis="x"):
+    """连续同方向且 |value| 持续增大 → 判定方向反了/跑飞。
+
+    水平轴传 dx（默认 axis='x'），垂直轴传 dy 且 axis='y'。
+    触发后该轴锁死，直到 R/Z 或成功对齐调用 reset_guard()。
+    """
+    name = axis if axis in _GUARDS else "x"
+    g = _GUARDS[name]
+    if not bool(getattr(config, "DISC_RUNAWAY_GUARD", True)):
+        return False
+    if g["latched"]:
+        return True
+    sign = 1 if value > 0 else (-1 if value < 0 else 0)
+    absv = abs(int(value))
+    grow = int(getattr(config, "DISC_RUNAWAY_GROW_PX", 2))
+    if sign == 0:
+        reset_guard(name)
+        return False
+    if sign == g["sign"] and absv > g["abs"] + grow:
+        g["count"] += 1
+    elif sign == g["sign"]:
+        # 同方向但误差没有继续变大（机构还没动/正在收敛）→ 不算跑飞
+        g["count"] = 0
+    else:
+        g["sign"] = sign
+        g["count"] = 1
+    g["abs"] = absv
+    limit = max(2, int(getattr(config, "DISC_RUNAWAY_COUNT", 4)))
+    if g["count"] >= limit:
+        g["latched"] = True
+        return True
+    return False
 
 
 def _confirm_road(ai, img, roi):
@@ -344,89 +402,420 @@ def task_pick(cam, clf, disp, color_code, timeout_ms=config.TASK_TIMEOUT_MS, p=N
 # ======================================================================
 # 任务 D / E：圆盘中心（粗加工区 / 暂存区）
 # ======================================================================
-def task_disc(cam, disp, roi, tag, timeout_ms=config.TASK_TIMEOUT_MS, p=None, ctl=None):
-    """任务 D/E：圆盘中心 + 环2 水平对齐
+def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
+    """任务 D/E：圆盘中心 + 环2 水平/垂直对齐
 
-    目标是让「环 2（同心环组的中心）」落在画面水平中心 |x-W/2| <= ALIGN_TOL：
-      · ALIGN_ON=True  → 视觉端主动发 MOVE,<axis>,<dx> 让下位机微调，自己闭环
-      · ALIGN_ON=False → 只等待，够稳定就带当前偏差回复（退化为旧行为）
-    成功：DISC,x,y,dx,1    未对齐/超次数：DISC,x,y,dx,0    看不到圆：NONE,<tag>
+    识别：find_circles 候选 → 径向边缘 + 最小二乘细化 → 找不到再用圆环兜底。
+    对齐：视觉端发 MOVE,<step> 和/或 MOVEY,<step> 闭环微调；
+          |dx| <= ALIGN_TOL 且 |dy| <= ALIGN_DY_TOL 连续 N 帧 → ok=1。
+          ALIGN_ON=False 时不发指令，中心稳定就带当前偏差回复。
+    回复：DISC,x,y,dx,1  对齐完成
+          DISC,x,y,dx,0  未对齐（超次数/超时/只报告模式偏差过大）
+          NONE,<tag>     连续 DISC_LOST_FRAMES 帧看不到圆
+
+    调试：DISC_DEBUG_SAVE=True 时，每次任务在 DISC_DEBUG_DIR 下保存
+          关键帧 JPEG + meta.jsonl（所有候选圆/拟合结果/每帧 dx/dy）。
     """
     P = _pipeline(p)
     droi = P.roi(roi)
-    r_min = max(1, int(round(config.DISC_R_MIN * P.sx)))
-    r_max = max(2, int(round(config.DISC_R_MAX * P.sx)))
+    # 半径配置是「对外 640x480 口径」，检测分辨率更高时要换算到检测域
+    sx = getattr(P, "sx", 1.0) or 1.0
+    r_min = max(1, int(round(config.DISC_R_MIN / sx)))
+    r_max = max(2, int(round(config.DISC_R_MAX / sx)))
     link = getattr(ctl, "link", None) if ctl is not None else None
     align_on = bool(getattr(config, "ALIGN_ON", True)) and link is not None
-    tol = int(getattr(config, "ALIGN_TOL", 5))
-    need_stable = max(1, int(getattr(config, "ALIGN_STABLE_FRAMES", 5)))
-    step_max = max(1, int(getattr(config, "ALIGN_STEP_MAX", 40)))
-    settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 300)))
-    max_iter = max(1, int(getattr(config, "ALIGN_MAX_ITER", 20)))
+    # D 和 E 的 MOVE / MOVEY 方向可能不同
+    invert = (bool(getattr(config, "ALIGN_INVERT_D", True)) if tag == "D"
+              else bool(getattr(config, "ALIGN_INVERT_E", False)))
+    dy_invert = (bool(getattr(config, "ALIGN_INVERT_DY_D", False)) if tag == "D"
+                 else bool(getattr(config, "ALIGN_INVERT_DY_E", False)))
+    tol = int(getattr(config, "ALIGN_TOL", 8))
+    dy_on = bool(getattr(config, "ALIGN_DY_ON", True))
+    dy_tol = int(getattr(config, "ALIGN_DY_TOL", tol))
+    need_stable = max(1, int(getattr(config, "ALIGN_STABLE_FRAMES", 3)))
+    gain = float(getattr(config, "ALIGN_GAIN", 0.8))
+    step_min = max(1, int(getattr(config, "ALIGN_STEP_MIN", 2)))
+    step_max = int(getattr(config, "ALIGN_STEP_MAX", 0))
+    if step_max > 0:
+        step_max = max(step_min, step_max)
+    dx_offset = int(getattr(config, "ALIGN_DX_OFFSET", 0))
+    dy_offset = int(getattr(config, "ALIGN_DY_OFFSET", 0))
+    settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 200)))
+    max_iter = max(1, int(getattr(config, "ALIGN_MAX_ITER", 8)))
+    lost_limit = max(1, int(getattr(config, "DISC_LOST_FRAMES", 2)))
+    refine = bool(getattr(config, "DISC_REFINE_ON", True))
+    ring_fb = bool(getattr(config, "DISC_RING_FALLBACK", True))
+    if timeout_ms is None:
+        timeout_ms = int(getattr(config, "DISC_TIMEOUT_MS", config.TASK_TIMEOUT_MS))
     center_x = config.W // 2
+    center_y = config.H // 2
+    det_center_x = int(getattr(P, "det_w", config.W) // 2)
+    det_center_y = int(getattr(P, "det_h", config.H) // 2)
 
-    log("[%s] 圆盘中心定位（对齐容差 ±%dpx，MOVE %s）"
-        % (tag, tol, "开" if align_on else "关"))
-    tracker = StabilityTracker(config.STABLE_FRAMES)
+    # ---- 调试抓图：每次 D/E 在 DISC_DEBUG_DIR 下建一个任务目录 ----
+    rec = None
+    if bool(getattr(config, "DISC_DEBUG_SAVE", False)):
+        rec = disc_debug.DiscDebug(
+            tag,
+            getattr(config, "DISC_DEBUG_DIR", "/maixapp/apps/yyb_mover/data/disc_debug"),
+            max_frames=getattr(config, "DISC_DEBUG_MAX_FRAMES", 24),
+            quality=getattr(config, "DISC_DEBUG_QUALITY", 85),
+            keep_tasks=getattr(config, "DISC_DEBUG_KEEP_TASKS", 20),
+            min_interval_ms=getattr(config, "DISC_DEBUG_MIN_INTERVAL_MS", 100))
+        rec.start()
+
+    def finish(payload):
+        if rec is not None:
+            rec.close(payload)
+        return payload
+
+    def fields_of(c, cx, cy, dx, dy, meta, extra=None):
+        f = {"iter": iters, "lost": lost, "stable": stable}
+        if c is not None:
+            f.update({"cx": int(cx), "cy": int(cy), "r": int(c[2]),
+                      "dx": int(dx), "dy": int(dy)})
+        if meta:
+            for k in ("src", "circles", "coarse", "refined", "ring",
+                      "refine_reason", "refine_points", "ms", "near_count",
+                      "picked", "attempts", "inner", "inner_ref",
+                      "inner_blobs", "inner_reason",
+                      "tpl", "tpl_scale", "tpl_roi", "tpl_reject", "tpl_error"):
+                if k in meta:
+                    f[k] = meta[k]
+        if extra:
+            f.update(extra)
+        return f
+
+    def axis_step(err, scale, do_invert):
+        """误差 → 单轴步长（含增益、最小/最大限幅、方向反转、数值系数）"""
+        s = int(round(err * gain))
+        if s == 0:
+            s = 1 if err > 0 else -1
+        if step_max > 0:
+            s = max(-step_max, min(step_max, s))
+        if abs(s) < step_min:
+            s = step_min if s > 0 else -step_min
+        if do_invert:
+            s = -s
+        if abs(scale - 1.0) > 1e-9:
+            s = int(round(s * scale))
+        return s
+
+    log("[%s] 圆盘中心定位（对齐容差 dx±%dpx / dy%s，MOVE %s，超时 %dms）"
+        % (tag, tol, ("±%dpx" % dy_tol) if dy_on else "关",
+           "开" if align_on else "关", timeout_ms))
+    log("[%s] MOVE 系数=%.1fx, MOVEY 系数=%.1fx, dx 修正=%+dpx, dy 修正=%+dpx, 步长上限=%s"
+        % (tag, float(getattr(config, "MOVE_SCALE", 1.0)),
+           float(getattr(config, "MOVEY_SCALE", 1.0)), dx_offset, dy_offset,
+           "无" if step_max <= 0 else str(step_max)))
+    # 收到 D/E 后先等一会，让车/机构停稳，再读第一帧
+    start_delay = max(0, int(getattr(config, "DISC_START_DELAY_MS", 0)))
+    if start_delay > 0:
+        log("[%s] 收到命令，等待 %dms 后再读第一帧" % (tag, start_delay))
+        t_delay = ticks_ms()
+        while ticks_ms() - t_delay < start_delay:
+            if ctl is not None and not ctl.tick():
+                return finish(pack_ready())
+            sleep_ms(20)
+    P.reset(tag)                         # 清掉上一次同名任务的多帧平均缓存
+    tracker = StabilityTracker(need_stable)
     t0 = ticks_ms()
     stable = 0
     iters = 0
+    lost = 0
+    last_center = None
+    first_frame = True
     while not app.need_exit():
         if ctl is not None and not ctl.tick():
-            return pack_ready()
+            return finish(pack_ready())
         img = cam.read()
         draw_roi(img, droi)
-        c = vision.find_disc_center(img, droi, r_min, r_max)
-        item = None
-        dx = 0
-        cx = cy = 0
-        if c:
-            cx, cy = P.point(c[0], c[1])
-            dx = cx - center_x
-            item = {"cx": cx, "cy": cy}
-            img.draw_circle(c[0], c[1], int(c[2]), image.COLOR_GREEN, 2)
-            img.draw_cross(cx, cy, image.COLOR_RED, 6, 2)
-            img.draw_line(center_x, 0, center_x, config.H - 1, image.COLOR_YELLOW, 1)
-            img.draw_string(2, 2, "dx=%+d %s" % (dx, "OK" if abs(dx) <= tol else "MOVE"),
-                            image.COLOR_GREEN if abs(dx) <= tol else image.COLOR_YELLOW, 2)
+        meta = {}
+        c = vision.find_disc_center(img, droi, r_min, r_max,
+                                    refine=refine, ring_fallback=ring_fb,
+                                    prefer=last_center, meta=meta)
 
-        if item is not None and abs(dx) <= tol:
-            stable += 1
-            tracker.update(item)
-            if stable >= need_stable:
-                log("[%s] 圆盘中心 (%d,%d) dx=%+d 已对齐（%d 次微调）"
-                    % (tag, cx, cy, dx, iters))
-                if disp:
-                    disp.show(img)
-                return pack_disc(cx, cy, dx, 1)
-        else:
+        # ---- 看不到圆：连续 N 帧就立即回 NONE，不再干等到超时 ----
+        if c is None:
+            lost += 1
             stable = 0
-            if item is not None and align_on and iters < max_iter:
-                step = max(-step_max, min(step_max, dx))
-                if getattr(config, "ALIGN_INVERT", False):
-                    step = -step
-                log("[%s] dx=%+d 超差 → MOVE,%d%s" %
-                    (tag, dx, step, "（已反转）" if getattr(config, "ALIGN_INVERT", False) else ""))
-                link.send_payload(pack_move(step))
-                iters += 1
+            img.draw_string(2, 2, "%s: no disc %d/%d" % (tag, lost, lost_limit),
+                            image.COLOR_RED, 2)
+            f = fields_of(None, 0, 0, 0, 0, meta, {"action": "no_disc"})
+            if rec:
+                rec.snap(img, f, "no_disc" if not first_frame else "start",
+                         force=first_frame)
+                first_frame = False
+            if disp:
+                disp.show(img)
+            if lost >= lost_limit:
+                log("[%s] 连续 %d 帧看不到圆 → NONE" % (tag, lost))
+                if rec:
+                    rec.snap(img, dict(f, action="final_none"), "final_none", force=True)
+                return finish(pack_none(tag))
+            if ticks_ms() - t0 > timeout_ms:
+                log("[%s] 超时（看不到圆）" % tag)
+                if rec:
+                    rec.snap(img, dict(f, action="final_none_timeout"),
+                             "final_none_timeout", force=True)
+                return finish(pack_none(tag))
+            continue
+
+        lost = 0
+        last_center = (c[0], c[1])
+        cx, cy = P.point(c[0], c[1])
+        dx = cx - center_x + dx_offset
+        dy = cy - center_y + dy_offset
+        item = {"cx": cx, "cy": cy}
+
+        # 画所有候选圆（蓝=候选，绿=采用，红=最终中心）——抓图时一眼能看出是不是选错圆
+        for cc in (meta.get("circles") or [])[:8]:
+            try:
+                img.draw_circle(int(cc[0]), int(cc[1]), int(cc[2]),
+                                image.COLOR_BLUE, 1)
+            except Exception:
+                pass
+        img.draw_circle(c[0], c[1], int(c[2]), image.COLOR_GREEN, 2)
+        img.draw_cross(c[0], c[1], image.COLOR_RED, 6, 2)
+        img.draw_line(det_center_x, 0, det_center_x, img.height() - 1,
+                      image.COLOR_YELLOW, 1)
+        img.draw_line(0, det_center_y, img.width() - 1, det_center_y,
+                      image.COLOR_YELLOW, 1)
+        ok_xy = abs(dx) <= tol and (not dy_on or abs(dy) <= dy_tol)
+        img.draw_string(2, 2, "dx=%+d dy=%+d %s src=%s" %
+                        (dx, dy, "OK" if ok_xy else "MOVE",
+                         meta.get("src", "?")),
+                        image.COLOR_GREEN if ok_xy else image.COLOR_YELLOW, 2)
+        img.draw_string(2, 24, "r=%d n=%d %s" %
+                        (int(c[2]), len(meta.get("circles") or []),
+                         str(meta.get("refine_reason", ""))[:24]),
+                        image.COLOR_YELLOW, 1)
+
+        f = fields_of(c, cx, cy, dx, dy, meta)
+        if rec:
+            rec.snap(img, f, "start" if first_frame else "frame",
+                     force=first_frame)
+            first_frame = False
+
+        # ---- 只报告模式：中心连续稳定就回，ok 表示是否在容差内 ----
+        if not align_on:
+            okc, _, _ = tracker.update(item)
+            if okc:
+                sx_out, sy_out = P.smooth(tag, cx, cy)
+                log("[%s] 圆盘中心 (%d,%d) dx=%+d dy=%+d（只报告）"
+                    % (tag, sx_out, sy_out, dx, dy))
+                if rec:
+                    rec.snap(img, dict(f, action="report"), "final_report", force=True)
                 if disp:
                     disp.show(img)
-                if settle:
-                    sleep_ms(settle)
-                continue
-            if item is not None and align_on and iters >= max_iter:
-                log("[%s] 微调 %d 次仍未对齐（dx=%+d），带偏差回复" % (tag, iters, dx))
+                return finish(pack_disc(sx_out, sy_out, dx, 1))
+
+        # ---- 容差内：连续 N 帧稳定才算完成 ----
+        if abs(dx) <= tol and (not dy_on or abs(dy) <= dy_tol):
+            reset_guard()          # 已经进容差，清掉两轴跑飞锁
+            stable += 1
+            if stable >= need_stable:
+                sx_out, sy_out = P.smooth(tag, cx, cy)
+                log("[%s] 圆盘中心 (%d,%d) dx=%+d dy=%+d 已对齐（%d 次微调）"
+                    % (tag, sx_out, sy_out, dx, dy, iters))
+                if rec:
+                    rec.snap(img, dict(f, action="ok"), "final_ok", force=True)
                 if disp:
                     disp.show(img)
-                return pack_disc(cx, cy, dx, 0)
+                return finish(pack_disc(sx_out, sy_out, dx, 1))
+            if disp:
+                disp.show(img)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[%s] 超时（等待稳定），带偏差回复" % tag)
+                if rec:
+                    rec.snap(img, dict(f, action="timeout_stable"),
+                             "final_timeout", force=True)
+                return finish(pack_disc(cx, cy, dx, 1))
+            continue
+
+        # ---- 超差：发 MOVE / MOVEY 闭环微调 ----
+        stable = 0
+        if align_on and iters < max_iter:
+            actions = []
+            guard_hit = None
+            if abs(dx) > tol:
+                if _runaway_check(dx, "x"):
+                    guard_hit = ("x", dx)
+                else:
+                    sx_step = axis_step(dx, float(getattr(config, "MOVE_SCALE", 1.0)),
+                                        invert)
+                    actions.append(("MOVE", sx_step, pack_move(sx_step)))
+            else:
+                _runaway_check(dx, "x")     # 水平已收敛 → 清水平跑飞计数
+            if dy_on:
+                if abs(dy) > dy_tol:
+                    if _runaway_check(dy, "y"):
+                        guard_hit = guard_hit or ("y", dy)
+                    else:
+                        sy_step = axis_step(dy, float(getattr(config, "MOVEY_SCALE", 1.0)),
+                                            dy_invert)
+                        actions.append(("MOVEY", sy_step, pack_movey(sy_step)))
+                else:
+                    _runaway_check(dy, "y")  # 垂直已收敛 → 清垂直跑飞计数
+            if guard_hit:
+                axis, val = guard_hit
+                log("[%s] [保护] %s 连续同方向且 |%s| 持续增大（%s=%+d），"
+                    "停止发指令，回 DISC,...,1；发 R 可解除"
+                    % (tag, "MOVE" if axis == "x" else "MOVEY",
+                       "dx" if axis == "x" else "dy",
+                       "dx" if axis == "x" else "dy", val))
+                if rec:
+                    rec.snap(img, dict(f, action="runaway_guard_%s" % axis),
+                             "guard_%s" % axis, force=True)
+                if disp:
+                    disp.show(img)
+                return finish(pack_disc(cx, cy, dx, 1))
+            parts = []
+            for name, step, payload in actions:
+                if name == "MOVE":
+                    log("[%s] dx=%+d 超差(±%d) → MOVE,%d%s"
+                        % (tag, dx, tol, step,
+                           "（已反转）" if invert else ""))
+                else:
+                    log("[%s] dy=%+d 超差(±%d) → MOVEY,%d%s"
+                        % (tag, dy, dy_tol, step,
+                           "（已反转）" if dy_invert else ""))
+                if rec:
+                    rec.snap(img, dict(f, action="move_%s" % name.lower(),
+                                       step=step),
+                             "iter%d_before_%s" % (iters, name.lower()),
+                             force=True)
+                link.send_payload(payload)
+                parts.append(payload)
+            iters += 1
+            # 屏幕回显本轮所有指令，并停留 MOVE_ECHO_HOLD_MS，让现场看得到
+            screen_echo.set_tx(" ".join(parts))
+            if disp:
+                disp.show(img)
+            hold = int(getattr(config, "MOVE_ECHO_HOLD_MS", 250))
+            if hold > 0:
+                sleep_ms(hold)
+            if bool(getattr(config, "ALIGN_ONE_SHOT", False)):
+                sx_out, sy_out = P.smooth(tag, cx, cy)
+                ok = 1  # 回复 ok 固定为 1
+                log("[%s] 一次性模式：已发 %s，立即回 DISC,%d,%d,%+d,%d"
+                    % (tag, " ".join(parts), sx_out, sy_out, dx, ok))
+                if rec:
+                    rec.snap(img, dict(f, action="move_oneshot",
+                                       steps=[s for _, s, _ in actions]),
+                             "final_oneshot", force=True)
+                return finish(pack_disc(sx_out, sy_out, dx, ok))
+            if settle:
+                sleep_ms(settle)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[%s] 超时（微调中），带偏差回复" % tag)
+                if rec:
+                    rec.snap(img, dict(f, action="timeout_move"),
+                             "final_timeout", force=True)
+                return finish(pack_disc(cx, cy, dx, 1))
+            continue
+
+        if align_on and iters >= max_iter:
+            log("[%s] 微调 %d 次仍未对齐（dx=%+d dy=%+d），带偏差回复"
+                % (tag, iters, dx, dy))
+            if rec:
+                rec.snap(img, dict(f, action="fail_max_iter"),
+                         "final_fail", force=True)
+            if disp:
+                disp.show(img)
+            return finish(pack_disc(cx, cy, dx, 1))
 
         if disp:
             disp.show(img)
         if ticks_ms() - t0 > timeout_ms:
             log("[%s] 超时" % tag)
-            if item is not None:
-                return pack_disc(cx, cy, dx, 0)
-            return pack_none(tag)
+            if rec:
+                rec.snap(img, dict(f, action="timeout"), "final_timeout", force=True)
+            return finish(pack_disc(cx, cy, dx, 1))
+    return finish(pack_none(tag))
+
+
+# ======================================================================
+# 调试：连续抓一段画面（不发 MOVE，不需要 STM32）
+# ======================================================================
+def task_snapshot(cam, disp, roi, tag, duration_ms=None, p=None):
+    """连续记录一段时间的圆盘检测结果，用于现场分析「为什么选错圆/跳变」。
+
+    与 task_disc 的区别：不发 MOVE、不做稳定判定，只按固定节奏抓图 + 记数据。
+    触发方式：SSH 上 `touch /tmp/run_disc_once`（见 config.DISC_DEBUG_TRIGGER_FILE）。
+    """
+    P = _pipeline(p)
+    droi = P.roi(roi)
+    sx = getattr(P, "sx", 1.0) or 1.0
+    r_min = max(1, int(round(config.DISC_R_MIN / sx)))
+    r_max = max(2, int(round(config.DISC_R_MAX / sx)))
+    refine = bool(getattr(config, "DISC_REFINE_ON", True))
+    ring_fb = bool(getattr(config, "DISC_RING_FALLBACK", True))
+    dur = int(duration_ms if duration_ms is not None
+              else getattr(config, "DISC_DEBUG_TRIGGER_MS", 2000))
+    rec = None
+    if bool(getattr(config, "DISC_DEBUG_SAVE", False)):
+        rec = disc_debug.DiscDebug(
+            tag,
+            getattr(config, "DISC_DEBUG_DIR", "/maixapp/apps/yyb_mover/data/disc_debug"),
+            max_frames=getattr(config, "DISC_DEBUG_MAX_FRAMES", 24),
+            quality=getattr(config, "DISC_DEBUG_QUALITY", 85),
+            keep_tasks=getattr(config, "DISC_DEBUG_KEEP_TASKS", 20),
+            min_interval_ms=min(50, int(getattr(config, "DISC_DEBUG_MIN_INTERVAL_MS", 100))))
+        rec.start()
+
+    log("[%s] 抓图模式：%dms，检测候选圆/拟合结果（不发 MOVE）" % (tag, dur))
+    t0 = ticks_ms()
+    n = 0
+    last = None
+    f = {}
+    img = None
+    while not app.need_exit() and (ticks_ms() - t0) < dur:
+        img = cam.read()
+        draw_roi(img, droi)
+        meta = {}
+        c = vision.find_disc_center(img, droi, r_min, r_max,
+                                    refine=refine, ring_fallback=ring_fb,
+                                    prefer=last, meta=meta)
+        f = {"n": n}
+        if c:
+            last = (c[0], c[1])
+            cx, cy = P.point(c[0], c[1])
+            dx = cx - config.W // 2
+            dy = cy - config.H // 2
+            f.update({"cx": int(cx), "cy": int(cy), "r": int(c[2]),
+                      "dx": int(dx), "dy": int(dy)})
+            for cc in (meta.get("circles") or [])[:8]:
+                try:
+                    img.draw_circle(int(cc[0]), int(cc[1]), int(cc[2]),
+                                    image.COLOR_BLUE, 1)
+                except Exception:
+                    pass
+            img.draw_circle(c[0], c[1], int(c[2]), image.COLOR_GREEN, 2)
+            img.draw_cross(c[0], c[1], image.COLOR_RED, 6, 2)
+            img.draw_string(2, 2, "SNAP dx=%+d dy=%+d src=%s" %
+                            (dx, dy, meta.get("src", "?")), image.COLOR_YELLOW, 2)
+        else:
+            img.draw_string(2, 2, "SNAP: no disc", image.COLOR_RED, 2)
+        for k in ("src", "circles", "coarse", "refined", "ring",
+                  "refine_reason", "refine_points", "ms", "near_count",
+                  "picked", "attempts", "inner", "inner_ref",
+                  "inner_blobs", "inner_reason",
+                  "tpl", "tpl_scale", "tpl_roi", "tpl_reject", "tpl_error"):
+            if k in meta:
+                f[k] = meta[k]
+        if rec:
+            rec.snap(img, f, "snap%02d" % n)
+        if disp:
+            disp.show(img)
+        n += 1
+        sleep_ms(50)
+
+    if rec:
+        if img is not None:
+            rec.snap(img, dict(f, action="final"), "final", force=True)
+        rec.close("SNAPSHOT,%d" % n)
+    log("[%s] 抓图完成：%d 帧" % (tag, n))
     return pack_none(tag)
 
 
