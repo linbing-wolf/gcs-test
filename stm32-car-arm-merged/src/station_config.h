@@ -18,18 +18,25 @@ typedef struct {
     int lift_mm;
     float yaw_deg;
 } StationPose;
-/* 两区共用现有MaixCAM D/MOVE/DISC对准：只用像素偏差的方向，每次移动3mm。
- * 每次进站仅对准2号一次（粗加工D、暂存E），连续MOVE纠偏，成功DISC结束；移动期间不排队执行偏差。 */
-#define STN_ALIGN_STEP_MM 3
-#define STN_ALIGN_MOVE_SIGN -1 /* 2026-10-19按操作者要求反转：正偏差后退，负偏差前进；实车待核验。 */
+/* 两区D/MOVE/DISC对准：MOVE是像素偏差，按完整幅值换算毫米。
+ * 粗加工及首次暂存进站对准2号一次（D/E），连续MOVE纠偏；第二次暂存直接F定位已有物块。 */
+#define STN_ALIGN_MOVE_SIGN -1 /* 正像素偏差后退、负偏差前进；实车待核验。 */
+/* 操作者假定1px=1mm，非实测；修改此处统一影响MOVE及STACK水平修正。 */
+#ifndef STN_VISION_MM_PER_PX_X1000
+#define STN_VISION_MM_PER_PX_X1000 1000
+#endif
+#define STN_STACK_CENTER_X_PX 320
+#define STN_STACK_CENTER_Y_PX 240
+#define STN_ALIGN_Y_MOVE_SIGN       1  /* 实车反馈反向：MOVEY正值向左、负值向右；接口正值向左。 */
+#define STN_STACK_Y_MOVE_SIGN -1 /* 操作者确认：y>240向右（车体横移负向），y<240向左。 */
 #define STN_ALIGN_TRAVEL_MM 75
 #define STN_ALIGN_TIMEOUT_MS 60000u
 
 /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
- * 进站先视觉对准2号基准一次，此后按150mm索引进行取放。
+ * 进站先视觉对准2号基准一次，此后相邻150mm、1↔3直接300mm索引取放。
  * 2026-10-19指定粗加工平推55mm、放料高度5mm、抓回高度5mm、平台取料高度100mm。
- * 作业内云台只在125/256度间直转，离站回0度；不等于实车验收。
+ * 作业内云台只在126.5/256度间直转，离站回0度；不等于实车验收。
  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
 #ifndef STN_ROUGH_PLACE_READY
 #define STN_ROUGH_PLACE_READY   1
@@ -47,7 +54,7 @@ typedef struct {
 #define STN_ROUGH_LIFT_MM       5
 #endif
 #ifndef STN_ROUGH_YAW_DEG
-#define STN_ROUGH_YAW_DEG     125.0f
+#define STN_ROUGH_YAW_DEG     126.5f
 #endif
 static const StationPose stn_rough_place = {
     STN_ROUGH_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_YAW_DEG
@@ -69,7 +76,7 @@ static const StationPose stn_rough_grip = {
 /* ===== 暂存区 ===== 同一侧向姿态，通过底盘索引覆盖1/2/3号靶位。
  * 方向由操作者2026-10-19确认：前1、中2、后3，不能由工位航向推断。
  * 第二层松爪高度=单层放料高度+物块高度；0表示层高未测，拒绝第二批暂存。
- * 第一层沿用粗加工55mm/5mm/125度；物块60mm，第二层lift=5+60=65mm。
+ * 第一层沿用粗加工55mm/5mm/126.5度；物块60mm，第二层lift=5+60=65mm。
  * 配置值来自作业方案，并不等于实车标定或叠放验收。 */
 #ifndef STN_STORAGE_PLACE_READY
 #define STN_STORAGE_PLACE_READY 1
@@ -79,8 +86,8 @@ static const StationPose stn_rough_grip = {
 #define STN_STORAGE_INDEX_RPM 60
 #define STN_STORAGE_SLIDE_MM 55
 #define STN_STORAGE_LIFT_MM 5
-#define STN_STORAGE_YAW_DEG 125.0f
-#define STN_STORAGE_ALIGN_YAW_DEG 125.0f /* 观察/换盘/微调角；放料角同为125度。 */
+#define STN_STORAGE_YAW_DEG 126.5f
+#define STN_STORAGE_ALIGN_YAW_DEG 126.5f /* 观察/换盘/微调角；放料角同为126.5度。 */
 #ifndef STN_STORAGE_LAYER_LIFT_MM
 #define STN_STORAGE_LAYER_LIFT_MM 60
 #endif
@@ -97,8 +104,7 @@ static const StationPose stn_storage_place = {
     STN_STORAGE_LAYER_LIFT_MM < 0
 #error Invalid_storage_station_configuration
 #endif
-#if STN_ALIGN_STEP_MM < 3 || STN_ALIGN_STEP_MM > 20 || \
-    (STN_ALIGN_MOVE_SIGN != 1 && STN_ALIGN_MOVE_SIGN != -1)
+#if STN_ALIGN_MOVE_SIGN != 1 && STN_ALIGN_MOVE_SIGN != -1
 #error Invalid_station_alignment_configuration
 #endif
 

@@ -16,7 +16,7 @@ typedef struct {
     int64_t position, baseline;
     uint32_t pulses, status_ms, speed_ms, position_ms;
     int32_t rpm;
-    uint8_t flags, samples, ack, submitted, dir;
+    uint8_t flags, samples, ack, submitted, dir, status_warned;
 } ArmAxis;
 typedef struct {
     uint8_t axis, length, data[7];
@@ -338,7 +338,7 @@ static void arm_receive(void)
     ArmFrame f;
     ArmAxis *a;
     uint32_t magnitude;
-    uint8_t i;
+    uint8_t i,previous_flags;
     while (arm_tail!=arm_head) {
         f.axis=arm_rx[arm_tail].axis; f.length=arm_rx[arm_tail].length; f.ms=arm_rx[arm_tail].ms;
         for(i=0;i<f.length;i++) f.data[i]=arm_rx[arm_tail].data[i];
@@ -349,8 +349,21 @@ static void arm_receive(void)
         if (!arm.waiting || f.axis!=arm.query_axis || f.data[0]!=kinds[arm.query_kind]
             || (int32_t)(f.ms-arm.query_ms)<0) continue;
         arm.waiting=0; a->samples |= (uint8_t)(1u<<arm.query_kind);
-        if (arm.query_kind==0) { a->flags=f.data[1]; a->status_ms=f.ms;
-            if (!(a->flags&1u) || (a->flags&12u)) {arm_fail("axis disabled/stalled/protected");return;}
+        if (arm.query_kind==0) {
+            previous_flags=a->flags;a->flags=f.data[1];a->status_ms=f.ms;
+            if (!(a->flags&1u) || (a->flags&12u)) {
+                /* 轴状态异常仅记录；保留原始flags，后续仍等待实际位置/到位反馈。 */
+                if (!a->status_warned || previous_flags!=a->flags) {
+                    static char message[224];
+                    snprintf(message,sizeof(message),"[arm axis warning] addr=%u flags_dec=%u enabled=%u arrived=%u stalled=%u protected=%u step=%u target_slide_mm=%d target_lift_mm=%d; logged only\r\n",
+                             (unsigned)axis_address(f.axis),(unsigned)a->flags,
+                             (unsigned)((a->flags&1u)!=0),(unsigned)((a->flags&2u)!=0),
+                             (unsigned)((a->flags&4u)!=0),(unsigned)((a->flags&8u)!=0),
+                             (unsigned)arm.step,arm.target.slide,arm.target.lift);
+                    arm_output(message);
+                }
+                a->status_warned=1;
+            } else a->status_warned=0;
         } else if (arm.query_kind==1) {
             a->rpm=(int32_t)(((uint16_t)f.data[2]<<8)|f.data[3]);
             if(f.data[1])a->rpm=-a->rpm;

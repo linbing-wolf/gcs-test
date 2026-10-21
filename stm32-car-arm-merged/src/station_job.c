@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM_YAW, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN };
+enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM_YAW, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN, SS_STACK, SS_STACK_RETURN };
 typedef struct {
     uint8_t kind;
     int16_t value;
@@ -29,8 +29,9 @@ enum {
 static struct {
     uint8_t phase, job, batch, cursor, count, issued;
     uint32_t step_ms;
-    uint32_t align_ms, align_sample_ms;
-    uint8_t align_moving;
+    uint32_t align_ms;
+    uint8_t align_moving, align_next_axis, stack_moving, stack_axis;
+    int32_t stack_offset_mm[2]; /* 0前后，1左右；放完按左右、前后的顺序恢复。 */
     uint32_t align_travel, warning_ms;
     uint8_t warning_seen;
     char reason[192]; /* 中文UTF-8故障原因。 */
@@ -43,6 +44,18 @@ static uint8_t automatic = 1;
 
 static int storage_job(void) {return stn.job==3u || stn.job==6u;}
 static float station_align_yaw(void) {return storage_job() ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;}
+
+/* 像素→毫米的控制比例由操作者指定，整数四舍五入；保留正负和完整幅值。 */
+static int32_t vision_pixel_mm(int16_t pixels)
+{
+    int32_t magnitude=pixels<0 ? -(int32_t)pixels : pixels;
+    magnitude=(magnitude*STN_VISION_MM_PER_PX_X1000+500)/1000;
+    return pixels<0 ? -magnitude : magnitude;
+}
+static int32_t vision_move_mm(int16_t pixels)
+{
+    return vision_pixel_mm(pixels)*STN_ALIGN_MOVE_SIGN;
+}
 
 static void stn_text(const char *s) { arm_output(s); }
 
@@ -169,8 +182,7 @@ static int push_station_index_step(int delta, uint8_t target, uint8_t *ring, int
 
 static int push_station_index(uint8_t target, uint8_t *ring, int sign, int mm)
 {
-    if (*ring != 2u && *ring != target)
-        if (!push_station_index_step(2 - (int)*ring, 2u, ring, sign, mm)) return 0;
+    /* 相邻150mm，1↔3直接300mm；途中不在2号停车重取互锁。 */
     if (*ring != target)
         if (!push_station_index_step((int)target - (int)*ring, target, ring, sign, mm)) return 0;
     return 1;
@@ -207,7 +219,7 @@ static int build_rough(void)
         push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
         push_move_to(stn_rough_place.slide_mm, stn_rough_place.lift_mm, (int)(stn_rough_place.yaw_deg * 10.0f));
         push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
-        push_retract(); /* 保持125度，直接前后移动到下一环。 */
+        push_retract(); /* 保持126.5度，直接前后移动到下一环。 */
     }
     /* 按原装车颜色顺序抓回，即G2/G4靶位顺序，恢复原杯位。 */
     for (i = 0; i < 3u; i++) {
@@ -260,17 +272,49 @@ static int build_storage(void)
     }
     push_retract();
     push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
-    push(SS_ALIGN, 2);
+    if(!stn.batch)push(SS_ALIGN,2); /* 首次对空环用E；第二次直接在目标环位F识别已有物块。 */
+    else stn_text("[station stack entry] second storage: skip E; F,color at each target\r\n");
     for (i = 0; i < 3u; i++) {
         if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+        if(stn.batch) {
+            push(SS_STACK,task_colors[stn.batch][i]);
+            program[stn.count-1u].ring=targets[i];
+        }
         push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM);
         push_release_at(&pose);
         push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
+        if(stn.batch)push(SS_STACK_RETURN,0); /* 空爪高位恢复F前基准，避免偏移累入后续150mm索引。 */
     }
     if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
     push_retract();
     push_platform_yaw(1u,ARM_YAW_HOME_DEG);
     return 1;
+}
+
+/* 只按作业表中前面已安排的目标去重，不以进站时人工声明的姿态省略首次动作。
+ * 前一步未完成时执行器不会推进；保留每次目标变化及全部视觉/底盘交接。 */
+static uint8_t compact_station_program(void)
+{
+    int16_t last[4]={0,0,0,0};
+    uint8_t known=0,slot_known=0,last_slot=0,read,write=0,before=stn.count;
+    for(read=0;read<before;read++) {
+        StationStep s=program[read];
+        if(s.kind<=SS_CLAW) {
+            uint8_t bit=(uint8_t)(1u<<s.kind);
+            if((known&bit) && last[s.kind]==s.value)continue;
+            known|=bit;last[s.kind]=s.value;
+        } else if(s.kind==SS_PLATFORM_YAW) {
+            uint8_t bit=(uint8_t)(1u<<SS_YAW);
+            if((known&bit) && last[SS_YAW]==s.value && slot_known && last_slot==s.platform_slot)continue;
+            known|=bit;last[SS_YAW]=s.value;slot_known=1;last_slot=s.platform_slot;
+        } else if(s.kind==SS_LOAD1) {
+            /* 宏动作内部改变姿态，不能沿用宏动作之前的目标。 */
+            known=slot_known=0;
+        }
+        program[write++]=s;
+    }
+    stn.count=write;
+    return (uint8_t)(before-write);
 }
 
 static uint8_t batch_of_job(uint8_t job)
@@ -340,6 +384,14 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
             }
         }
     }
+    if(job==2u || job==3u || job==5u || job==6u) {
+        unsigned removed=compact_station_program();
+        if(removed) {
+            char line[72];
+            snprintf(line,sizeof(line),"[station] omitted unchanged arm steps=%u\r\n",removed);
+            stn_text(line);
+        }
+    }
     stn.step_ms = now;
     stn_text("[station] program built; steps=");
     {
@@ -366,7 +418,7 @@ static int issue_step(uint32_t now)
             stn_fault("vision alignment requires high/retracted arm at station angle");return 0;
         }
         stn.align_ms=now;stn.align_travel=0;
-        stn.align_moving=0;stn.align_sample_ms=now;
+        stn.align_moving=0;stn.align_next_axis=0;
         vision_request_align(command,(uint8_t)s->value,now);
         {
             char message[112];
@@ -376,6 +428,14 @@ static int issue_step(uint32_t now)
         }
         return 1;
     }
+    case SS_STACK:
+        stn.stack_moving=stn.stack_axis=0;
+        stn.stack_offset_mm[0]=stn.stack_offset_mm[1]=0;
+        vision_request_stack((uint8_t)s->value,now);
+        return 1;
+    case SS_STACK_RETURN:
+        stn.stack_moving=stn.stack_axis=0;
+        return 1;
     case SS_VISION:
         vision_request_pick((uint8_t)s->value, now);
         return 1;
@@ -442,12 +502,13 @@ static void step_finished(void)
     stn.issued = 0;
 }
 
-/* D/E仅在进站对准时发送；MOVE持续纠偏，DISC结束任务后等待底盘停稳。 */
+/* D/E两轴独立缓存，顺序移车；最终DISC也等待已接收修正全部完成。 */
 static void station_align_update(uint8_t ring, uint32_t now)
 {
-    int state, error, distance;
-    int16_t offset;
-    uint32_t received_ms;
+    int state, distance;
+    uint8_t axis;
+    int16_t pixels;
+    int32_t move_mm;
     if ((uint32_t)(now-stn.align_ms) >= STN_ALIGN_TIMEOUT_MS) {
         stn_warning("alignment deadline exceeded; wait for actual DISC",now);stn.align_ms=now;
     }
@@ -458,34 +519,106 @@ static void station_align_update(uint8_t ring, uint32_t now)
     if (stn.align_moving) {
         if (station_chassis_failed()) {stn_fault("station alignment motion failed");return;}
         if (station_chassis_busy()) return;
-        stn.align_moving=0;stn.align_sample_ms=now+100u;
+        stn.align_moving=0;
     }
-    if (state==VISION_PICK_READY) {
-        char line[80];
-        /* 视觉自行结束后不再重发D；移动中收到的终包保留到停稳重取互锁后处理。 */
-        vision_cancel_pick();
-        snprintf(line,sizeof(line),"[station aligned] job=%u ring=%u DISC confirmed\r\n",(unsigned)stn.job,(unsigned)ring);
-        stn_text(line);step_finished();return;
+    axis=stn.align_next_axis;
+    if (!vision_align_peek_axis(axis,&pixels,0)) {
+        axis^=1u;
+        if (!vision_align_peek_axis(axis,&pixels,0)) {
+            if (state==VISION_PICK_READY) {
+                char line[80];
+                vision_cancel_pick();
+                snprintf(line,sizeof(line),"[station aligned] job=%u ring=%u DISC confirmed\r\n",(unsigned)stn.job,(unsigned)ring);
+                stn_text(line);step_finished();
+            }
+            return;
+        }
     }
-    if (!vision_align_take_move(&offset,&received_ms)) return;
-    /* 不执行移动中/停稳缓冲期间采到的偏差，等同一D任务的后续MOVE。 */
-    if ((int32_t)(received_ms-stn.align_sample_ms)<0) return;
-    error=offset;
-    distance=STN_ALIGN_STEP_MM;
+    move_mm=axis ? vision_pixel_mm(pixels)*STN_ALIGN_Y_MOVE_SIGN : vision_move_mm(pixels);
+    if (!move_mm) {
+        vision_align_take_axis(axis,0,0);stn.align_next_axis=(uint8_t)(axis^1u);return;
+    }
+    if (!(axis ? station_chassis_lateral_start(move_mm) : station_chassis_start(move_mm))) {
+        stn_warning("alignment motion awaiting required pose/feedback",now);return;
+    }
+    /* 成功交给底盘后才消费；不能因暂缺反馈丢掉本轴或配对的另一轴。 */
+    vision_align_take_axis(axis,0,0);stn.align_next_axis=(uint8_t)(axis^1u);
+    distance=(int)(move_mm<0 ? -move_mm : move_mm);
     if (stn.align_travel+distance > STN_ALIGN_TRAVEL_MM) {
         stn_warning("alignment travel exceeds nominal budget",now);
     }
     stn.align_travel+=(uint32_t)distance;
-    if (!station_chassis_start((int16_t)((error < 0 ? -distance : distance)*STN_ALIGN_MOVE_SIGN))) {
-        stn_warning("alignment motion awaiting required pose/feedback",now);return;
-    }
     {
-        char line[128];
-        snprintf(line,sizeof(line),"[station correction] job=%u ring=%u offset_px=%d move_mm=%d total_mm=%u\r\n",
-                 (unsigned)stn.job,(unsigned)ring,error,(error < 0 ? -distance : distance)*STN_ALIGN_MOVE_SIGN,(unsigned)stn.align_travel);
+        char line[152];
+        snprintf(line,sizeof(line),"[station correction] job=%u ring=%u offset_px=%d move_mm=%ld total_mm=%u axis=%s\r\n",
+                 (unsigned)stn.job,(unsigned)ring,(int)pixels,(long)move_mm,(unsigned)stn.align_travel,
+                 axis ? "lateral" : "forward");
         stn_text(line);
     }
     stn.align_moving=1;
+}
+
+/* 每块一次F，顺序完成前后和左右修正；两轴完成后才取放。 */
+static void station_stack_update(const StationStep *s,uint32_t now)
+{
+    int16_t x,y;
+    int32_t mm;
+    char line[176];
+    if(stn.stack_moving) {
+        if(station_chassis_failed()){stn_fault("stack alignment motion failed");return;}
+        if(station_chassis_busy())return;
+        stn.stack_moving=0;stn.stack_axis++;
+    }
+    if(stn.stack_axis==0) {
+        if(vision_stack_state()!=VISION_PICK_READY) {
+            if((uint32_t)(now-stn.step_ms)>STN_VISION_TIMEOUT_MS) {
+                stn_warning("stack target reply delayed; same F request retained",now);stn.step_ms=now;
+            }
+            return;
+        }
+        vision_stack_result(&x,&y);
+        stn.stack_offset_mm[0]=vision_move_mm((int16_t)(x-STN_STACK_CENTER_X_PX));
+        stn.stack_offset_mm[1]=vision_pixel_mm((int16_t)(y-STN_STACK_CENTER_Y_PX))*STN_STACK_Y_MOVE_SIGN;
+        snprintf(line,sizeof(line),"[station stack] job=%u ring=%u color=%u x=%d y=%d move_mm=%ld lateral_mm=%ld place_lift_mm=%d\r\n",
+                 (unsigned)stn.job,(unsigned)s->ring,(unsigned)s->value,(int)x,(int)y,
+                 (long)stn.stack_offset_mm[0],(long)stn.stack_offset_mm[1],STN_STORAGE_LIFT_MM+STN_STORAGE_LAYER_LIFT_MM);
+        stn_text(line);
+    }
+    if(stn.stack_axis<2) {
+        mm=stn.stack_offset_mm[stn.stack_axis];
+        if(mm) {
+            if(!(stn.stack_axis==0 ? station_chassis_start(mm) : station_chassis_lateral_start(mm))) {
+                stn_warning("stack correction awaiting required pose/feedback",now);return;
+            }
+            stn.stack_moving=1;return;
+        }
+        stn.stack_axis++;return;
+    }
+    vision_cancel_pick();step_finished();
+}
+
+/* 空爪高位撤销左右、前后修正，避免局部坐标修正累入150mm索引。 */
+static void station_stack_return_update(uint32_t now)
+{
+    unsigned axis;
+    int32_t mm;
+    char line[80];
+    if(stn.stack_moving) {
+        if(station_chassis_failed()){stn_fault("stack return motion failed");return;}
+        if(station_chassis_busy())return;
+        stn.stack_offset_mm[1u-stn.stack_axis]=0;
+        stn.stack_moving=0;stn.stack_axis++;
+    }
+    if(stn.stack_axis>=2){step_finished();return;}
+    axis=1u-stn.stack_axis;mm=-stn.stack_offset_mm[axis];
+    if(mm) {
+        if(!(axis==0 ? station_chassis_start(mm) : station_chassis_lateral_start(mm))) {
+            stn_warning("stack return awaiting required pose/feedback",now);return;
+        }
+        snprintf(line,sizeof(line),"[stack return] move_mm=%ld axis=%s\r\n",(long)mm,axis==0 ? "forward" : "lateral");
+        stn_text(line);stn.stack_moving=1;return;
+    }
+    stn.stack_axis++;
 }
 
 void station_update(uint32_t now)
@@ -519,6 +652,8 @@ void station_update(uint32_t now)
         return;
     }
     if (s->kind==SS_ALIGN) {station_align_update((uint8_t)s->value,now);return;}
+    if (s->kind==SS_STACK) {station_stack_update(s,now);return;}
+    if (s->kind==SS_STACK_RETURN) {station_stack_return_update(now);return;}
     if (s->kind == SS_VISION) {
         int state = vision_pick_state();
         if (state == VISION_PICK_READY) {
@@ -622,6 +757,8 @@ void station_task_words(int32_t *first,int32_t *second)
 void station_status(void)
 {
     char line[160];
+    snprintf(line,sizeof(line),"[station] vision_mm_per_px_x1000=%d; operator assumption, not measured\r\n",STN_VISION_MM_PER_PX_X1000);
+    stn_text(line);
     snprintf(line, sizeof(line), "[station] storage layer_mm=%d second_lift_mm=%d max_lift_mm=%d; second_batch=%s\r\n",
              STN_STORAGE_LAYER_LIFT_MM, STN_STORAGE_LIFT_MM + STN_STORAGE_LAYER_LIFT_MM, ARM_LIFT_MAX_MM,
              STN_STORAGE_LAYER_LIFT_MM <= 0 ? "needs_height" :

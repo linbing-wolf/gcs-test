@@ -7,8 +7,8 @@
  * 原料区：圆盘每把一块物料转到固定取料口，上位机识别到目标颜色后回 PICK，
  *         才执行一次已标定的单块装车动作（arm load1）。
  * 粗加工区：先视觉对准2号基准；前1中2后3，各目标位视觉微调后按任务抓放。
- *           平台取料高度100mm，落位/抓回70mm；作业内125/256度直转，离站回0。
- * 暂存区：先转125度视觉对准2号；第一批查G2，第二批反查G1/G2同色叠放。
+ *           平台取料高度100mm，落位/抓回70mm；作业内126.5/256度直转，离站回0。
+ * 暂存区：首次126.5度E对准2号后查G2；第二次跳过E，反查G1/G2，在目标环位F定位已有物块并同色叠放。
  *
  * 粗加工/暂存姿态未标定时拒绝自动执行（见 station_config.h）。
  */
@@ -27,8 +27,10 @@ void station_abort(void);
 void station_clear_task(void);
 void station_status(void);
 /* 粗加工/暂存使用：高位收回、云台0或粗加工作业角、四轮严格零速。
- * 每次只允许150mm索引或3mm视觉微调；完成后重新取得零速互锁。 */
-int station_chassis_start(int16_t delta_mm);
+ * 支持150mm索引及上位机指定毫米距离；完成后重新取得工位互锁。 */
+int station_chassis_start(int32_t delta_mm);
+/* 工位横移：正值向左、负值向右；沿用同一编码器/IMU子动作及互锁。 */
+int station_chassis_lateral_start(int32_t delta_mm);
 int station_chassis_busy(void);
 int station_chassis_failed(void);
 

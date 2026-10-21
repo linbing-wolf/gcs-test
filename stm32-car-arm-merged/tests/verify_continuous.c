@@ -41,7 +41,9 @@ static void continuous_pass_tests(void)
             if(strstr(output,"[route pass]")) {
                 CHECK(edge==3 || edge==9 || edge==13);
                 CHECK(run.edge==edge+1 && run.velocity_phase==VELOCITY_FORWARD);
-                CHECK(run.target_heading==heading && run.forward_mrpm>0 && run.forward_cmd_rpm>0);
+                CHECK(run.target_heading==heading);
+                if(run.travel_axis==BODY_FORWARD)CHECK(run.forward_mrpm>0 && run.forward_cmd_rpm>0);
+                else CHECK((-run.wheel_rpm[0]-run.wheel_rpm[1]+run.wheel_rpm[2]+run.wheel_rpm[3])>0);
                 CHECK(!memcmp(baseline,run.encoder_start,sizeof(baseline)));
                 CHECK(!memcmp(signs,run.encoder_sign,sizeof(signs)) && run.encoder_ready==15u);
                 CHECK(run.encoder_offset_mm>0 && run.road.from==NODE_E);

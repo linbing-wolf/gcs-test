@@ -177,8 +177,8 @@ static void plant_step(void)
         if(run.travel_axis==BODY_LEFT) {
             lateral_actions++;
             if(run.edge==FULL_ROUTE_NODES-2u && !run.translation_only && !run.obstacle_phase) {
-                CHECK(run.segment==1 && run.target_heading==run.initial_heading);
-                CHECK(run.travel_sign==(run.plan ? -1 : 1) && run.action_mm==60);
+                CHECK(run.segment==1 && run.target_heading==HEAD_Y_POS);
+                CHECK(run.travel_sign==1 && run.action_mm==60);
             }
         }
         if(run.travel_sign<0 && run.travel_axis==BODY_FORWARD)reverse_actions++;
@@ -188,6 +188,8 @@ static void plant_step(void)
     if(injected_heading && run.steps==disturbance_step && run.velocity_phase==VELOCITY_FORWARD
         && run.progress_mm>200 && abs(run.heading_control.error_cdeg)<100 && (fabs(forward)>1 || fabs(left)>1))
         corrected_during_drive=1;
+    if(run_active && run.job==7 && run.edge>=13 && !run.obstacle_phase
+        && !run.turn_only && !run.translation_only)CHECK(run.target_heading==HEAD_Y_POS);
     if(run_active && run.turning) {
         unsigned magnitude=(unsigned)abs(simulated_wheel_rpm[0]);
         if(magnitude>max_turn_rpm)max_turn_rpm=magnitude;
@@ -284,7 +286,8 @@ static void continuous_route_tests(void)
         CHECK(run.job==8 && run.edge==16 && run.distance_mm==EXPECTED_FULL_ROUTE_MM);
         CHECK(forward_actions==18 && injected_heading && corrected_during_drive);
         CHECK(checked_job==8 && station_alignment_entries==6);
-        CHECK(rotation_starts==18 && reverse_actions==1 && lateral_actions==2);
+        printf("RETURN_COUNTS plan=%u turns=%u reverse=%u lateral=%u reuses=%u baselines=%u\n",plan,rotation_starts,reverse_actions,lateral_actions,heading_reuses,baseline_transitions);
+        CHECK(rotation_starts==16 && reverse_actions==(plan ? 0u : 1u) && lateral_actions==4);
         CHECK(heading_reuses==3 && baseline_transitions==15 && baseline_delay_max<=5);
         CHECK(moving_transitions==15 && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
         {
@@ -294,7 +297,8 @@ static void continuous_route_tests(void)
                 expected_roads |= (uint16_t)(1u << road_index(full_route_nodes[plan][edge],full_route_nodes[plan][edge+1u]));
             CHECK(run.completed_roads==expected_roads);
         }
-        CHECK(abs(heading_wrap_cdeg(wrapped_yaw(physical_yaw)-17900))<=CAR_HEADING_TOLERANCE_CDEG+2);
+        CHECK(run.heading==HEAD_Y_POS && run.target_heading==HEAD_Y_POS);
+        CHECK(abs(heading_wrap_cdeg(wrapped_yaw(physical_yaw)-17900+(int32_t)initial_field_heading*9000))<=CAR_HEADING_TOLERANCE_CDEG+2);
         printf("PASS continuous route %c: %umm, 18 segments, %u reverse, %u turns; six right-side station orientations and B-F-D-H-F-D-H-start coordinates verified, physical-plant max checkpoint error %.1fmm (simulated)\n",plan?'C':'A',EXPECTED_FULL_ROUTE_MM,reverse_actions,rotation_starts,checkpoint_max_error_mm);
         printf("PASS transition timing %c: %u heading reuses, %u baselines avg %.1fms max %lums; first moving batch avg %.1fms max %lums (simulation only)\n",
             plan?'C':'A',heading_reuses,baseline_transitions,(double)baseline_delay_sum/baseline_transitions,(unsigned long)baseline_delay_max,
@@ -321,7 +325,7 @@ static void continuous_lateral_tests(void)
         sprintf(buffer,"rpm %u",speeds[speed]);send_line(buffer);
         send_line(direction ? "r" : "l");
         CHECK(run_active && run.translation_only && run.travel_axis==BODY_LEFT);
-        CHECK(run.lateral_rpm==(speeds[speed]>60 ? 60 : speeds[speed]));
+        CHECK(run.lateral_rpm==speeds[speed]);
         send_line("l");CHECK(strstr(output,"[rejected") && run_active);
         send_line("dist 100");CHECK(test_distance==distances[distance]);
         deadline=clock_ms+30000;
@@ -343,6 +347,24 @@ static void continuous_lateral_tests(void)
         }
         CHECK(strstr(output,"DONE_BY_IMU_ENCODER") && !pose_set && !nav.position_confirmed);
         if(inject_heading)CHECK(injected_heading && corrected_during_drive);
+    }
+    /* 自动横移采用与前后相同的3000RPM上限，实际长距离必须越过旧60RPM上限。 */
+    for(direction=0;direction<2;direction++) {
+        uint32_t deadline;
+        int peak=0;
+        reset_plant(0,1.15);inject_heading=1;
+        CHECK(start_heading_shift(direction ? -1670 : 1670,CAR_RUN_RPM));
+        CHECK(run.lateral_rpm==CAR_RUN_RPM && CAR_LATERAL_MAX_RPM==CAR_RUN_RPM);
+        deadline=clock_ms+30000;
+        while(run_active && clock_ms<deadline) {
+            int rpm;
+            plant_step();
+            rpm=abs((-run.wheel_rpm[0]-run.wheel_rpm[1]+run.wheel_rpm[2]+run.wheel_rpm[3])/4);
+            if(rpm>peak)peak=rpm;
+        }
+        CHECK(run.state==RUN_DONE && abs(run.progress_mm-1670)<=1 && peak>90 && peak<=CAR_RUN_RPM);
+        CHECK(injected_heading && corrected_during_drive);
+        printf("LATERAL_SPEED direction=%s limit_rpm=%u peak_command_rpm=%d; simulated\n",direction ? "RIGHT" : "LEFT",(unsigned)CAR_LATERAL_MAX_RPM,peak);
     }
     /* A small overshoot at stop must produce reverse correction and pass the final distance gate. */
     reset_plant(0,1.15);send_line("test");send_line("dist 60");send_line("l");
@@ -403,7 +425,7 @@ static void continuous_lateral_tests(void)
     stop_request();
     printf("Lateral plant observation (simulation only): max lateral coordinate error %.1fmm; unobserved forward/back displacement %.1fmm under persistent yaw disturbance and retained translation feedforward\n",max_lateral_error,max_unobserved_drift);
     printf("Start 60mm plant observation (simulation only): lateral error %.1fmm, forward/back displacement %.1fmm\n",start_lateral_error,start_forward_drift);
-    puts("PASS lateral closed loop: 30 left/right-distance-speed cases; live yaw disturbance recovery; 60RPM cap, encoder X scale, terminal overshoot correction, four-wheel stop, stale IMU/telemetry/ACK, frozen encoder, CAN/stop priority, timer wrap; physical accuracy unverified");
+    puts("PASS lateral closed loop: 30 left/right-distance-speed cases; live yaw disturbance recovery; configured RPM cap, encoder X scale, terminal overshoot correction, four-wheel stop, stale IMU/telemetry/ACK, frozen encoder, CAN/stop priority, timer wrap; physical accuracy unverified");
 }
 
 static void prepare_reverse_station_leg(void)
@@ -593,27 +615,31 @@ static void map_reverse_and_postcheck_tests(void)
 
 static void return_lateral_policy_tests(void)
 {
-    unsigned plan,history,heading,test;
+    unsigned plan,history,heading,test,edge,part;
+    /* 独立按场地X/Y向量核对全部回程，覆盖四种离站车头和无/有道路记录。 */
     for(plan=0;plan<2;plan++)for(history=0;history<3;history++)for(heading=0;heading<4;heading++) {
-        RoadHeading initial=plan ? HEAD_Y_NEG : HEAD_Y_POS;
-        uint16_t road_bit;
-        reset_heading_fixture();run.imu_mode=1;run.plan=(uint8_t)plan;run.edge=FULL_ROUTE_NODES-2u;
-        run.initial_heading=initial;run.heading=(RoadHeading)heading;
-        CHECK(road_plan(NODE_B,plan ? NODE_C : NODE_A,&run.road));
-        road_bit=(uint16_t)(1u<<run.road.road);
-        run.completed_roads=history==1 ? road_bit : history==2 ? (uint16_t)(1u<<11) : 0;
+        uint16_t original;
+        reset_heading_fixture();run.imu_mode=1;run.plan=(uint8_t)plan;run.job=7;
+        run.initial_heading=plan ? HEAD_Y_NEG : HEAD_Y_POS;run.heading=(RoadHeading)heading;
+        original=run.completed_roads=history==0 ? 0 : history==1 ? 0xffffu : 1u;
         sample_yaw(heading_wrap_cdeg(-(int32_t)heading*9000));
-        CHECK(run_segment() && run.travel_axis==BODY_FORWARD);
-        CHECK(run.travel_sign==(history==1 ? -1 : 1));
-        CHECK(run.target_heading==(history==1 ? initial : plan ? HEAD_Y_POS : HEAD_Y_NEG));
-        run.heading=run.target_heading;run.segment=1;
-        sample_yaw(heading_wrap_cdeg(-(int32_t)run.heading*9000));
-        CHECK(run_segment());
-        if(history==1) {
-            CHECK(run.travel_axis==BODY_LEFT && run.target_heading==initial);
-            CHECK(run.travel_sign==(plan ? -1 : 1));
-        } else CHECK(run.travel_axis==BODY_FORWARD && run.target_heading==HEAD_X_POS && run.travel_sign==1);
-        CHECK(run.completed_roads==(history==1 ? road_bit : history==2 ? (uint16_t)(1u<<11) : 0));
+        for(edge=13;edge<=15;edge++) {
+            CHECK(road_plan(full_route_nodes[plan][edge],full_route_nodes[plan][edge+1],&run.road));
+            run.edge=(uint8_t)edge;
+            for(part=0;part<run.road.count;part++) {
+                int dx=0,dy=0,forward,left;
+                MotionParameters p=run.road.segments[part];
+                if(p.axis==BODY_FORWARD)dy=p.mm;else dx=-p.mm;
+                forward=heading==0 ? dy : heading==1 ? -dx : heading==2 ? -dy : dx;
+                left=heading==0 ? dx : heading==1 ? dy : heading==2 ? -dx : -dy;
+                run.segment=(uint8_t)part;
+                CHECK(run_segment());
+                CHECK(run.target_heading==(RoadHeading)heading && !run.heading_control.target_cdeg);
+                CHECK(run.travel_axis==(forward ? BODY_FORWARD : BODY_LEFT));
+                CHECK(run.travel_sign==((forward ? forward : left)>0 ? 1 : -1));
+                CHECK(run.remaining_mm==(unsigned)abs(p.mm) && run.completed_roads==original);
+            }
+        }
     }
     /* Final return cannot report job 8 while the last lateral motion has not completed safely. */
     for(test=0;test<3;test++) {
@@ -624,7 +650,7 @@ static void return_lateral_policy_tests(void)
         send_line("runimu C");deadline=clock_ms+300000;
         while(run_active && !(run.edge==15 && run.segment==1 && run.velocity_phase==VELOCITY_FORWARD) && clock_ms<deadline)
             plant_step();
-        CHECK(run_active && run.job==7 && run.travel_axis==BODY_LEFT && run.heading==run.initial_heading);
+        CHECK(run_active && run.job==7 && run.travel_axis==BODY_LEFT && run.heading==HEAD_Y_POS);
         if(test==0)moving_at_stop_motor=4;
         if(test==1) {
             frozen_imu=1;heading_sensor_invalidate(&heading_sensor);
@@ -636,7 +662,7 @@ static void return_lateral_policy_tests(void)
         if(test<2)CHECK(run.state==RUN_DONE && run.job==8);
         else CHECK(!run_active && run.job==7 && run.state==RUN_STOPPED);
     }
-    puts("PASS return lateral: 24 start/history/heading cases; reverse requires this completed road; A left / C right 60mm at initial heading; final wheel-4/IMU/stop failures cannot finish job 8");
+    puts("PASS fixed-heading return: 24 A/C history/heading cases across H-E-B-home; all field vectors and distances preserved; no final restore; feedback recovery and emergency stop verified");
 }
 
 /* 构造经过真实角度模块稳定判据的上一段完成状态，供衔接边界验证。 */
@@ -706,8 +732,11 @@ static void transition_reuse_tests(void)
             for(i=0;i<4;i++)CHECK(run.encoder_start[i]==10000+(int)i);
         }
     }
-    prepare_stopped_transition();run.finishing=1;run_begin_alignment();
-    CHECK(run.state==RUN_DONE && !run_active && !run.transition_ready);
+    prepare_stopped_transition();run.plan=1;run.edge=16;run.job=7;
+    run.heading=run.target_heading=HEAD_X_POS;run.initial_heading=HEAD_Y_NEG;
+    run_finish_node();
+    CHECK(run.state==RUN_DONE && !run_active && run.job==8);
+    CHECK(run.heading==HEAD_X_POS && run.target_heading==HEAD_X_POS && !velocity_batches);
     /* 新旧采样跨毫秒计时回绕时，停稳窗口比较仍有效。 */
     prepare_stopped_transition();
     {

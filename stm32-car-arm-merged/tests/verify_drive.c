@@ -33,6 +33,10 @@ static void drive_core_tests(void)
     clock_ms+=1000;CHECK(run_forward_slew(0)==84); /* 延迟后最多吸收50ms，不追补成一次骤停。 */
     run.forward_mrpm=0;run.travel_sign=-1;clock_ms=run.forward_profile_ms=UINT32_MAX-10u;
     clock_ms+=25;CHECK(run_forward_slew(-90)==-3);
+    run.forward_mrpm=90000;run.profile_sign=1;
+    for(i=0;i<30;i++) {clock_ms+=25;CHECK(run_forward_slew(-90)>=0);}
+    CHECK(!run.forward_mrpm);
+    clock_ms+=25;CHECK(run_forward_slew(-90)==-3);
     CHECK(run_forward_target(0)==0 && run_forward_target(1)==0);
     for(i=10;i<=780;i+=10) {
         double rpm=abs(run_forward_target((int32_t)i));
@@ -40,6 +44,15 @@ static void drive_core_tests(void)
         double stop=rpm*factor*CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0
                     +rpm*rpm*factor/(2.0*CAR_DRIVE_DECEL_RPM_PER_S);
         CHECK(rpm<=CAR_RUN_RPM && stop<=i-CAR_DISTANCE_TOLERANCE_MM+0.01);
+    }
+    run.travel_axis=BODY_LEFT;run.encoder_ready=15;run.lateral_rpm=CAR_RUN_RPM;
+    for(i=10;i<=2000;i+=10) {
+        double rpm=abs(run_forward_target((int32_t)i));
+        double factor=CAR_POSITION_PULSES_PER_REV/(60.0*CALIBRATED_PPM_X);
+        double stop=rpm*factor*CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0
+                    +rpm*rpm*factor/(2.0*CAR_DRIVE_DECEL_RPM_PER_S);
+        CHECK(rpm<=CAR_RUN_RPM && stop<=i-CAR_DISTANCE_TOLERANCE_MM+0.01);
+        CHECK(run_forward_target(-(int32_t)i)==-run_forward_target((int32_t)i));
     }
     puts("PASS drive core: logged small-angle/rate cases, predictive damping sign, updated turn minimum with independent drive PD, bounded ramps, delayed tick, reverse, wrap and braking envelope");
 }

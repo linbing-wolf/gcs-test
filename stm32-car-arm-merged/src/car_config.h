@@ -13,8 +13,8 @@
 #define CAR_RUN_RPM                 3000      /* runimu 全程直行速度；覆盖道路表速度。 */
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */
-#define CAR_RUN_RETURN_LATERAL_ENABLED 1     /* 已走返回路：恢复发车朝向后后退，末段60mm横移归位。 */
-#define CAR_LATERAL_MAX_RPM          60      /* 横移速度上限；先沿用已标定的60RPM范围。 */
+#define CAR_RUN_RETURN_LATERAL_ENABLED 1     /* 最终H->E->B->A/C保持暂存离站航向，以前后/横移返回。 */
+#define CAR_LATERAL_MAX_RPM          CAR_RUN_RPM /* 横移与前后行驶共用速度上限，RPM。 */
 #define CAR_OBSTACLE_RETURN_RPM      60      /* obstacle触发后沿已走道路退回的速度上限，RPM。 */
 /* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y，暂存H向+X；A/C及B/E不移动。
  * 单位mm。修改后先运行tools/rebuild-route-table.ps1重生成并验证查表，再编译。 */
@@ -108,7 +108,7 @@
     (CAR_RUN_REVERSE_ENABLED != 0 && CAR_RUN_REVERSE_ENABLED != 1) || \
     (CAR_RUN_START_LATERAL_ENABLED != 0 && CAR_RUN_START_LATERAL_ENABLED != 1) || \
     (CAR_RUN_RETURN_LATERAL_ENABLED != 0 && CAR_RUN_RETURN_LATERAL_ENABLED != 1) || \
-    CAR_LATERAL_MAX_RPM < 20 || CAR_LATERAL_MAX_RPM > 300 || \
+    CAR_LATERAL_MAX_RPM < 20 || CAR_LATERAL_MAX_RPM > 3000 || \
     CAR_OBSTACLE_RETURN_RPM < 20 || CAR_OBSTACLE_RETURN_RPM > 300 || \
     CAR_HEADING_TOLERANCE_CDEG < 1 || CAR_HEADING_STABLE_SAMPLES < 2 || \
     CAR_HEADING_KP_X100 < 1 || CAR_VELOCITY_CONTROL_MS < 10 || \

@@ -65,6 +65,7 @@ static uint32_t arm_enables,arm_stops,arm_positions,arm_queries;
 static int64_t arm_encoder[2];
 static int16_t arm_speed_bias[2]; /* 只改变轴速回包，不改变独立编码器轨迹。 */
 static uint8_t arm_auto_reply=1,arm_ack=1,arm_freeze,arm_bad_direction,arm_flags=3;
+static int16_t arm_status_override[2]; /* -1沿用全局flags；测试可独立注入5/7状态。 */
 static uint8_t arm_missing_motor,arm_inject_stop,arm_inject_can_error;
 static uint8_t arm_trace_address[128],arm_trace_dir[128];
 static uint32_t arm_trace_pulses[128];
@@ -98,7 +99,7 @@ static void arm_fixture_query(uint8_t addr,SysParams_t parameter)
     uint8_t length=3;
     arm_queries++;
     if(!arm_auto_reply || addr==arm_missing_motor)return;
-    if(parameter==S_FLAG)reply[1]=arm_flags;
+    if(parameter==S_FLAG)reply[1]=(uint8_t)(arm_status_override[addr==5]<0 ? arm_flags : arm_status_override[addr==5]);
     else if(parameter==S_CPOS){
         reply[0]=0x36;reply[1]=value<0;reply[2]=(uint8_t)(magnitude>>24);reply[3]=(uint8_t)(magnitude>>16);
         reply[4]=(uint8_t)(magnitude>>8);reply[5]=(uint8_t)magnitude;length=7;
@@ -199,6 +200,7 @@ static void reset_fixture(void)
     arm_claw_us=arm_yaw_us=arm_platform_us=0;
     arm_enables=arm_stops=arm_positions=arm_queries=0;
     memset(arm_encoder,0,sizeof(arm_encoder));memset(arm_speed_bias,0,sizeof(arm_speed_bias));arm_auto_reply=arm_ack=1;arm_flags=3;
+    arm_status_override[0]=arm_status_override[1]=-1;
     arm_freeze=arm_bad_direction=arm_missing_motor=arm_inject_stop=arm_inject_can_error=0;
     clock_ms=0;rx_head=rx_tail=stop_pending=rx_overflow=0;
     simulated_start_button=0;start_button_init();
