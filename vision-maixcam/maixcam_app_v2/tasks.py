@@ -89,6 +89,22 @@ def _runaway_check(value, axis="x"):
     return False
 
 
+def _axis_step(err, gain, step_min, step_max, scale, invert):
+    """误差 → 单轴步长（增益、最小/最大限幅、方向反转、数值系数）。"""
+    s = int(round(err * gain))
+    if s == 0:
+        s = 1 if err > 0 else -1
+    if step_max > 0:
+        s = max(-step_max, min(step_max, s))
+    if abs(s) < step_min:
+        s = step_min if s > 0 else -step_min
+    if invert:
+        s = -s
+    if abs(scale - 1.0) > 1e-9:
+        s = int(round(s * scale))
+    return s
+
+
 def _confirm_road(ai, img, roi):
     """右侧道路二次确认：灰色占比过线后，再用分类模型确认是 other。
 
@@ -438,7 +454,15 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     step_max = int(getattr(config, "ALIGN_STEP_MAX", 0))
     if step_max > 0:
         step_max = max(step_min, step_max)
-    dx_offset = int(getattr(config, "ALIGN_DX_OFFSET", 0))
+    # D/E 可分别设置 dx 偏置；None 表示回退到全局 ALIGN_DX_OFFSET
+    dx_offset = None
+    if tag == "D":
+        dx_offset = getattr(config, "ALIGN_DX_OFFSET_D", None)
+    elif tag == "E":
+        dx_offset = getattr(config, "ALIGN_DX_OFFSET_E", None)
+    if dx_offset is None:
+        dx_offset = getattr(config, "ALIGN_DX_OFFSET", 0)
+    dx_offset = int(dx_offset)
     dy_offset = int(getattr(config, "ALIGN_DY_OFFSET", 0))
     settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 200)))
     max_iter = max(1, int(getattr(config, "ALIGN_MAX_ITER", 8)))
@@ -457,7 +481,7 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     if bool(getattr(config, "DISC_DEBUG_SAVE", False)):
         rec = disc_debug.DiscDebug(
             tag,
-            getattr(config, "DISC_DEBUG_DIR", "/maixapp/apps/yyb_mover/data/disc_debug"),
+            getattr(config, "DISC_DEBUG_DIR", "/root/yyb_mover_data/disc_debug"),
             max_frames=getattr(config, "DISC_DEBUG_MAX_FRAMES", 24),
             quality=getattr(config, "DISC_DEBUG_QUALITY", 85),
             keep_tasks=getattr(config, "DISC_DEBUG_KEEP_TASKS", 20),
@@ -487,19 +511,7 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
         return f
 
     def axis_step(err, scale, do_invert):
-        """误差 → 单轴步长（含增益、最小/最大限幅、方向反转、数值系数）"""
-        s = int(round(err * gain))
-        if s == 0:
-            s = 1 if err > 0 else -1
-        if step_max > 0:
-            s = max(-step_max, min(step_max, s))
-        if abs(s) < step_min:
-            s = step_min if s > 0 else -step_min
-        if do_invert:
-            s = -s
-        if abs(scale - 1.0) > 1e-9:
-            s = int(round(s * scale))
-        return s
+        return _axis_step(err, gain, step_min, step_max, scale, do_invert)
 
     log("[%s] 圆盘中心定位（对齐容差 dx±%dpx / dy%s，MOVE %s，超时 %dms）"
         % (tag, tol, ("±%dpx" % dy_tol) if dy_on else "关",
@@ -757,7 +769,7 @@ def task_snapshot(cam, disp, roi, tag, duration_ms=None, p=None):
     if bool(getattr(config, "DISC_DEBUG_SAVE", False)):
         rec = disc_debug.DiscDebug(
             tag,
-            getattr(config, "DISC_DEBUG_DIR", "/maixapp/apps/yyb_mover/data/disc_debug"),
+            getattr(config, "DISC_DEBUG_DIR", "/root/yyb_mover_data/disc_debug"),
             max_frames=getattr(config, "DISC_DEBUG_MAX_FRAMES", 24),
             quality=getattr(config, "DISC_DEBUG_QUALITY", 85),
             keep_tasks=getattr(config, "DISC_DEBUG_KEEP_TASKS", 20),
@@ -824,21 +836,65 @@ def task_snapshot(cam, disp, roi, tag, duration_ms=None, p=None):
 # ======================================================================
 def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
                ctl=None, color_code=None):
-    """任务 F：码垛
+    """任务 F：码垛（与 D/E 相同的 MOVE/MOVEY 双轴闭环）
 
     F,<颜色码>：找**同色**的底座；同色多个取离 ROI 中心最近的；
                 没有同色底座 → 回"空环中心"（连环都没有则退 ROI 中心）。
     F（不带参数）：兼容旧行为，取 ROI 内最靠上的色块。
 
-    回复：STACK,x,y（视觉不测高度，高度由下位机按物料/层数自行计算）
+    对齐：视觉端发 MOVE,<dx> / MOVEY,<dy> 闭环微调；
+          |dx| <= STACK_ALIGN_TOL 且 |dy| <= STACK_ALIGN_DY_TOL 连续 N 帧稳定
+          → 回 STACK,x,y,dx,1。
+          STACK_ALIGN_ON=False（或无串口链路）时只报告，不发指令。
+
+    回复：STACK,x,y,dx,1（高度由下位机按物料/层数自行计算）
+          STACK,x,y,dx,1（超次数/超时也带残差回复，与 D/E 的 ok 约定一致）
+          NONE,F（超时仍看不到底座/环）
     """
     P = _pipeline(p)
     roi = P.roi(config.ROI_STACK)
     ai = getattr(clf, "ai", None)
+    link = getattr(ctl, "link", None) if ctl is not None else None
+    align_on = bool(getattr(config, "STACK_ALIGN_ON", True)) and link is not None
+    gain = float(getattr(config, "ALIGN_GAIN", 0.8))
+    step_min = max(1, int(getattr(config, "ALIGN_STEP_MIN", 2)))
+    step_max = int(getattr(config, "ALIGN_STEP_MAX", 0))
+    if step_max > 0:
+        step_max = max(step_min, step_max)
+    tol = int(getattr(config, "STACK_ALIGN_TOL", 5))
+    dy_tol = int(getattr(config, "STACK_ALIGN_DY_TOL", 5))
+    dx_offset = int(getattr(config, "STACK_ALIGN_DX_OFFSET", 0))
+    dy_offset = int(getattr(config, "STACK_ALIGN_DY_OFFSET", 0))
+    invert_x = bool(getattr(config, "STACK_INVERT_X", False))
+    invert_y = bool(getattr(config, "STACK_INVERT_Y", False))
+    need_stable = max(1, int(getattr(config, "ALIGN_STABLE_FRAMES", 3)))
+    settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 800)))
+    max_iter = max(1, int(getattr(config, "ALIGN_MAX_ITER", 2)))
+    hold = int(getattr(config, "MOVE_ECHO_HOLD_MS", 100))
+    center_x = config.W // 2
+    center_y = config.H // 2
+    det_center_x = int(getattr(P, "det_w", config.W) // 2)
+    det_center_y = int(getattr(P, "det_h", config.H) // 2)
+
     log("[F] 码垛底座定位（颜色=%s）" % (color_code or "任意"))
+    log("[F] 对齐容差 dx±%dpx / dy±%dpx, MOVE/MOVEY %s, 最多 %d 轮"
+        % (tol, dy_tol, "开" if align_on else "关", max_iter))
+
+    start_delay = max(0, int(getattr(config, "STACK_START_DELAY_MS", 0)))
+    if start_delay > 0:
+        log("[F] 收到命令，等待 %dms 后再读第一帧" % start_delay)
+        t_delay = ticks_ms()
+        while ticks_ms() - t_delay < start_delay:
+            if ctl is not None and not ctl.tick():
+                return pack_ready()
+            sleep_ms(20)
+
+    P.reset("F")
     tracker = StabilityTracker(config.STABLE_FRAMES)
+    reset_guard()
     t0 = ticks_ms()
-    src = None
+    stable = 0
+    iters = 0
     while not app.need_exit():
         if ctl is not None and not ctl.tick():
             return pack_ready()
@@ -852,27 +908,131 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
             it = vision.find_stack_top(clf, img, roi, P.area(config.MIN_PIXELS))
             src = "base" if it else None
 
-        vote = bool(getattr(config, "STACK_COLOR_VOTE", False))
-        if it:
-            draw_item(img, it, "STACK:" + (src or "?"))
-            track_item = it if vote else {"cx": it["cx"], "cy": it["cy"]}
-        else:
-            track_item = None
-
-        ok, _, _ = tracker.update(track_item)
-        if ok:
-            it = it or track_item
-            cx, cy = P.smooth("F", *P.point(it["cx"], it["cy"]))
-            log("[F] 码垛 %s (%d,%d)" % (src or "?", cx, cy))
+        if it is None:
+            stable = 0
+            tracker.update(None)
+            img.draw_string(2, 2, "F: no stack", image.COLOR_RED, 2)
             if disp:
                 disp.show(img)
-            return pack_stack(cx, cy)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[F] 超时（看不到底座/环）")
+                return pack_none("F")
+            continue
 
+        vote = bool(getattr(config, "STACK_COLOR_VOTE", False))
+        draw_item(img, it, "STACK:" + (src or "?"))
+        cx, cy = P.point(it["cx"], it["cy"])
+        dx = cx - center_x + dx_offset
+        dy = cy - center_y + dy_offset
+
+        img.draw_line(det_center_x, 0, det_center_x, img.height() - 1,
+                      image.COLOR_YELLOW, 1)
+        img.draw_line(0, det_center_y, img.width() - 1, det_center_y,
+                      image.COLOR_YELLOW, 1)
+        ok_xy = abs(dx) <= tol and abs(dy) <= dy_tol
+        img.draw_string(2, 2, "F dx=%+d dy=%+d %s src=%s"
+                        % (dx, dy, "OK" if ok_xy else "MOVE", src or "?"),
+                        image.COLOR_GREEN if ok_xy else image.COLOR_YELLOW, 2)
+
+        # ---- 只报告模式：保留原来的中心稳定判定 ----
+        if not align_on:
+            track_item = it if vote else {"cx": it["cx"], "cy": it["cy"]}
+            ok, _, _ = tracker.update(track_item)
+            if ok:
+                sx_out, sy_out = P.smooth("F", cx, cy)
+                log("[F] 码垛 %s (%d,%d) dx=%+d dy=%+d（只报告）"
+                    % (src or "?", sx_out, sy_out, dx, dy))
+                if disp:
+                    disp.show(img)
+                return pack_stack(sx_out, sy_out, dx, 1)
+            if disp:
+                disp.show(img)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[F] 超时（等待稳定）")
+                return pack_stack(cx, cy, dx, 1)
+            continue
+
+        # ---- 双轴容差内：连续 N 帧稳定才算完成 ----
+        if ok_xy:
+            reset_guard()
+            stable += 1
+            if stable >= need_stable:
+                sx_out, sy_out = P.smooth("F", cx, cy)
+                log("[F] 码垛 %s (%d,%d) dx=%+d dy=%+d 已对齐（%d 轮）"
+                    % (src or "?", sx_out, sy_out, dx, dy, iters))
+                if disp:
+                    disp.show(img)
+                return pack_stack(sx_out, sy_out, dx, 1)
+            if disp:
+                disp.show(img)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[F] 超时（等待稳定）")
+                return pack_stack(cx, cy, dx, 1)
+            continue
+
+        # ---- 超差：发 MOVE/MOVEY ----
+        stable = 0
+        if iters < max_iter:
+            actions = []
+            guard_hit = None
+            if abs(dx) > tol:
+                if _runaway_check(dx, "x"):
+                    guard_hit = ("x", dx)
+                else:
+                    step = _axis_step(dx, gain, step_min, step_max,
+                                      float(getattr(config, "MOVE_SCALE", 1.0)),
+                                      invert_x)
+                    actions.append(("MOVE", step, pack_move(step)))
+            else:
+                _runaway_check(dx, "x")
+            if abs(dy) > dy_tol:
+                if _runaway_check(dy, "y"):
+                    guard_hit = guard_hit or ("y", dy)
+                else:
+                    step = _axis_step(dy, gain, step_min, step_max,
+                                      float(getattr(config, "MOVEY_SCALE", 1.0)),
+                                      invert_y)
+                    actions.append(("MOVEY", step, pack_movey(step)))
+            else:
+                _runaway_check(dy, "y")
+
+            if guard_hit:
+                axis, val = guard_hit
+                log("[F] [保护] %s 连续同方向且 |%s| 持续增大（%+d），"
+                    "停止发指令；发 R 可解除"
+                    % ("MOVE" if axis == "x" else "MOVEY",
+                       "dx" if axis == "x" else "dy", val))
+                if disp:
+                    disp.show(img)
+                return pack_stack(cx, cy, dx, 1)
+
+            parts = []
+            for name, step, payload in actions:
+                if name == "MOVE":
+                    log("[F] dx=%+d 超差(±%d) → MOVE,%d%s"
+                        % (dx, tol, step, "（已反转）" if invert_x else ""))
+                else:
+                    log("[F] dy=%+d 超差(±%d) → MOVEY,%d%s"
+                        % (dy, dy_tol, step, "（已反转）" if invert_y else ""))
+                link.send_payload(payload)
+                parts.append(payload)
+            iters += 1
+            screen_echo.set_tx(" ".join(parts))
+            if disp:
+                disp.show(img)
+            if hold > 0:
+                sleep_ms(hold)
+            if settle:
+                sleep_ms(settle)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[F] 超时（微调中）")
+                return pack_stack(cx, cy, dx, 1)
+            continue
+
+        log("[F] 微调 %d 轮仍未对齐（dx=%+d dy=%+d）" % (iters, dx, dy))
         if disp:
             disp.show(img)
-        if ticks_ms() - t0 > timeout_ms:
-            log("[F] 超时")
-            return pack_none("F")
+        return pack_stack(cx, cy, dx, 1)
     return pack_none("F")
 
 

@@ -62,7 +62,7 @@ class FakeImage:
     """
 
     def __init__(self, blob_code=1, road=False, circle_x=640, circle_y=480,
-                 blobs=None, circles=None, blob_x=600, no_circle=False):
+                 blobs=None, circles=None, blob_x=600, blob_y=400, no_circle=False):
         self.blob_code = blob_code
         self.road = road
         self.circle_x = circle_x
@@ -70,6 +70,7 @@ class FakeImage:
         self.blobs = blobs          # [(code,x,y,w,h), ...] 指定多目标
         self.circles = circles      # [(x,y,r), ...] 指定多个圆
         self.blob_x = blob_x        # 物料中心 x（转盘测试用）
+        self.blob_y = blob_y        # 物料中心 y（F 对齐测试用）
         self.no_circle = no_circle  # True = 模拟画面里没有圆
 
     def find_blobs(self, *a, **kw):
@@ -78,7 +79,7 @@ class FakeImage:
             return [FakeBlob(0, roi[0], roi[1], roi[2], roi[3])]
         if self.blobs:
             return [FakeBlob(*b) for b in self.blobs]
-        return [FakeBlob(self.blob_code, self.blob_x, 400, 100, 80)]
+        return [FakeBlob(self.blob_code, self.blob_x, self.blob_y, 100, 80)]
 
     def find_circles(self, *a, **kw):
         if self.no_circle:
@@ -101,7 +102,7 @@ class FakeImage:
 class FakeCam:
     def __init__(self, code=1, blob_code=None, road=False, circle_x=640,
                  circle_y=480, blobs=None, circles=None, blob_x=600,
-                 no_circle=False):
+                 blob_y=400, no_circle=False):
         self.code = blob_code or code
         self.road = road
         self.circle_x = circle_x
@@ -109,11 +110,12 @@ class FakeCam:
         self.blobs = blobs
         self.circles = circles
         self.blob_x = blob_x
+        self.blob_y = blob_y
         self.no_circle = no_circle
 
     def read(self):
         return FakeImage(self.code, self.road, self.circle_x, self.circle_y,
-                         self.blobs, self.circles, self.blob_x,
+                         self.blobs, self.circles, self.blob_x, self.blob_y,
                          no_circle=self.no_circle)
     def skip_frames(self, n): pass
 
@@ -250,12 +252,14 @@ class _AlignLink(_Link):
             except Exception:
                 return
             self.cam.circle_x = max(0, min(self.cam.circle_x - dx, 1280))
+            self.cam.blob_x = max(0, min(self.cam.blob_x - dx, 1280))
         elif p.startswith('MOVEY,'):
             try:
                 dy = int(p.split(',')[1])
             except Exception:
                 return
             self.cam.circle_y = max(0, min(self.cam.circle_y - dy, 960))
+            self.cam.blob_y = max(0, min(self.cam.blob_y - dy, 960))
 
 
 class _AI:
@@ -330,9 +334,9 @@ def main():
     print('\n== F 码垛：按颜色选底座 ==')
     clf0 = vision.ColorClassifier(ai=None)
     out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID, color_code='1'))
-    check('F,1 命中同色底座', out == 'STACK,650,440', out)
+    check('F,1 命中同色底座', out == 'STACK,650,440,330,1', out)
     out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID, color_code='2'))
-    check('F,2 无同色 → 回空环中心', out == 'STACK,640,480', out)
+    check('F,2 无同色 → 回空环中心', out == 'STACK,640,480,320,1', out)
     out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID))
     check('F 不带参数 → 兼容旧行为', out.startswith('STACK,'), out)
 
@@ -340,7 +344,46 @@ def main():
     cam_multi = FakeCam(1, blobs=[(1, 150, 180, 40, 40),   # 中心 (170,200) 距离 ~153
                                   (1, 460, 280, 40, 40)])  # 中心 (480,300) 距离 ~173
     out = frame_str(tasks.task_stack(cam_multi, clf0, None, p=P_ID, color_code='1'))
-    check('同色多个 → 取最近', out == 'STACK,170,200', out)
+    check('同色多个 → 取最近', out == 'STACK,170,200,-150,1', out)
+
+    print('\n== F 码垛：MOVE/MOVEY 双轴对齐 ==')
+    old_f = {
+        'settle': config.ALIGN_SETTLE_MS,
+        'hold': config.MOVE_ECHO_HOLD_MS,
+        'iter': config.ALIGN_MAX_ITER,
+        'gain': config.ALIGN_GAIN,
+        'step_max': config.ALIGN_STEP_MAX,
+        'dx_off': config.STACK_ALIGN_DX_OFFSET,
+        'dy_off': config.STACK_ALIGN_DY_OFFSET,
+        'delay': config.STACK_START_DELAY_MS,
+    }
+    try:
+        config.ALIGN_SETTLE_MS = 0
+        config.MOVE_ECHO_HOLD_MS = 0
+        config.ALIGN_MAX_ITER = 12
+        config.ALIGN_GAIN = 0.8
+        config.ALIGN_STEP_MAX = 0
+        config.STACK_ALIGN_DX_OFFSET = 0
+        config.STACK_ALIGN_DY_OFFSET = 0
+        config.STACK_START_DELAY_MS = 0
+        cam_f = FakeCam(1, blob_x=450, blob_y=300)
+        lk_f = _AlignLink(cam_f)
+        out_f = frame_str(tasks.task_stack(cam_f, clf0, None, p=P_ID,
+                                           ctl=tasks.TaskCtl(lk_f),
+                                           color_code='1'))
+        check('F 发过 MOVE', any(x.startswith('MOVE,') for x in lk_f.sent), lk_f.sent)
+        check('F 发过 MOVEY', any(x.startswith('MOVEY,') for x in lk_f.sent), lk_f.sent)
+        check('F 回复带 dx/ok', len(out_f.split(',')) == 5, out_f)
+    finally:
+        config.ALIGN_SETTLE_MS = old_f['settle']
+        config.MOVE_ECHO_HOLD_MS = old_f['hold']
+        config.ALIGN_MAX_ITER = old_f['iter']
+        config.ALIGN_GAIN = old_f['gain']
+        config.ALIGN_STEP_MAX = old_f['step_max']
+        config.STACK_ALIGN_DX_OFFSET = old_f['dx_off']
+        config.STACK_ALIGN_DY_OFFSET = old_f['dy_off']
+        config.STACK_START_DELAY_MS = old_f['delay']
+        tasks.reset_guard()
 
     print('\n== 原料区：停止才回复（转盘）==')
     # StopDetector 单元测试（可控时间）
@@ -368,25 +411,35 @@ def main():
 
     print('\n== 圆盘对齐（MOVE 闭环）==')
     old_settle = config.ALIGN_SETTLE_MS
+    old_gain = config.ALIGN_GAIN
     old_iter = config.ALIGN_MAX_ITER
     old_oneshot = config.ALIGN_ONE_SHOT
     old_oneshot_ok = config.ALIGN_ONE_SHOT_OK
     old_invert_d = config.ALIGN_INVERT_D
     old_echo_hold = config.MOVE_ECHO_HOLD_MS
     old_dx_offset = config.ALIGN_DX_OFFSET
+    old_dx_offset_d = config.ALIGN_DX_OFFSET_D
+    old_dx_offset_e = config.ALIGN_DX_OFFSET_E
     old_start_delay = config.DISC_START_DELAY_MS
     old_move_scale = config.MOVE_SCALE
+    old_step_max = config.ALIGN_STEP_MAX
     old_dy_on = config.ALIGN_DY_ON
     old_dy_tol = config.ALIGN_DY_TOL
+    old_dy_offset = config.ALIGN_DY_OFFSET
+    old_movey_scale = config.MOVEY_SCALE
     try:
         config.ALIGN_SETTLE_MS = 0
+        config.ALIGN_GAIN = 0.8          # 控制逻辑测试用固定增益
         config.ALIGN_ONE_SHOT = False    # 先验证旧的闭环路径
         config.ALIGN_INVERT_D = False    # 假机构按正向运动，测试闭环逻辑
         config.MOVE_ECHO_HOLD_MS = 0     # 测试不等屏幕回显
         config.ALIGN_DX_OFFSET = 0       # 控制逻辑测试不带偏置
+        config.ALIGN_DX_OFFSET_D = 0
+        config.ALIGN_DX_OFFSET_E = 0
         config.DISC_START_DELAY_MS = 0   # 测试不等启动延时
         config.ALIGN_MAX_ITER = 12       # 容差 5px 时从 320px 收敛需要更多次
         config.MOVE_SCALE = 1.0          # 控制逻辑测试先用 1x
+        config.ALIGN_STEP_MAX = 0        # 控制逻辑测试先不限幅
         tasks.reset_guard()
 
         cam = FakeCam(1, circle_x=640, circle_y=240)      # 目标偏右 320px
@@ -434,11 +487,23 @@ def main():
         check('MOVE 100x 仍回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
         config.MOVE_SCALE = 1.0
 
+        # 单轴限幅：ALIGN_STEP_MAX=20 → 320px 误差只发 20
+        config.ALIGN_STEP_MAX = 20
+        config.ALIGN_ONE_SHOT = True
+        cam8 = FakeCam(1, circle_x=640, circle_y=240)
+        lk8 = _Link([])
+        frame_str(tasks.task_disc(cam8, None, config.ROI_DISC_ROUGH, 'D',
+                                  p=P_ID, ctl=tasks.TaskCtl(lk8)))
+        check('MOVE 单轴限幅 20', 'MOVE,20' in lk8.sent, lk8.sent)
+
         # MOVEY 垂直闭环：dy=+60px → 发 MOVEY 并收敛
+        config.ALIGN_STEP_MAX = 0
         config.ALIGN_ONE_SHOT = False
         config.ALIGN_MAX_ITER = 12
         config.ALIGN_DY_ON = True
         config.ALIGN_DY_TOL = 5
+        config.ALIGN_DY_OFFSET = 0       # 控制逻辑测试不带走位偏置
+        config.MOVEY_SCALE = 1.0         # 控制逻辑测试先用 1x
         config.MOVE_SCALE = 1.0
         tasks.reset_guard()
         cam7 = FakeCam(1, circle_x=320, circle_y=300)   # x 居中，y 偏下 60px
@@ -462,16 +527,22 @@ def main():
         tasks.reset_guard()
     finally:
         config.ALIGN_SETTLE_MS = old_settle
+        config.ALIGN_GAIN = old_gain
         config.ALIGN_MAX_ITER = old_iter
         config.ALIGN_ONE_SHOT = old_oneshot
         config.ALIGN_ONE_SHOT_OK = old_oneshot_ok
         config.ALIGN_INVERT_D = old_invert_d
         config.MOVE_ECHO_HOLD_MS = old_echo_hold
         config.ALIGN_DX_OFFSET = old_dx_offset
+        config.ALIGN_DX_OFFSET_D = old_dx_offset_d
+        config.ALIGN_DX_OFFSET_E = old_dx_offset_e
         config.DISC_START_DELAY_MS = old_start_delay
         config.MOVE_SCALE = old_move_scale
+        config.ALIGN_STEP_MAX = old_step_max
         config.ALIGN_DY_ON = old_dy_on
         config.ALIGN_DY_TOL = old_dy_tol
+        config.ALIGN_DY_OFFSET = old_dy_offset
+        config.MOVEY_SCALE = old_movey_scale
         tasks.reset_guard()
 
     # 看不到圆 → 连续 DISC_LOST_FRAMES 帧立即回 NONE，不等 8s 超时

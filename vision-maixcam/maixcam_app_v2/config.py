@@ -73,6 +73,17 @@ STACK_RING_R_MIN   = 20     # 找空环时的半径范围（px，640x480 口径�
 STACK_RING_R_MAX   = 140
 STACK_RING_THRESHOLD = 1200 # 霍夫圆累加阈值（比圆盘低，因为环线很细）
 STACK_RING_FALLBACK = True  # 连环都没找到时，退回 ROI 中心（False=回 NONE,F）
+# ---- F 码垛双轴对齐：与 D/E 一样发 MOVE/MOVEY ----
+STACK_ALIGN_ON       = True    # False = 只报告，不发 MOVE/MOVEY
+STACK_ALIGN_TOL      = 5       # 水平容差(px)
+STACK_ALIGN_DY_TOL   = 5       # 垂直容差(px)
+STACK_ALIGN_DX_OFFSET = 0      # dx = cx - W/2 + 该值
+STACK_ALIGN_DY_OFFSET = 0      # dy = cy - H/2 + 该值
+STACK_INVERT_X       = False   # F 的 MOVE 方向反了置 True
+STACK_INVERT_Y       = False   # F 的 MOVEY 方向反了置 True
+STACK_START_DELAY_MS = 500     # 收到 F 后先等这么久再读第一帧
+STACK_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_stack_move"  # 调试：直接跑一次真实 F
+STACK_DEBUG_TRIGGER_COLOR = ""  # ""=F 不带颜色；"1"~"4"=按颜色找底座
 MIN_PIXELS_START = 5000     # 启停区是大面积蓝，用大阈值避免和蓝色物料混淆
 QR_REPEAT        = 3        # 二维码连续 N 次一致才确认
 QR_REGEX         = r"^\d{3}\+\d{3}\+\d{3}\+\d{3}$"   # 15 字符任务码
@@ -102,7 +113,7 @@ DISC_RING_R_MIN        = 20     # 圆环兜底半径范围（px）
 DISC_RING_R_MAX        = 140
 DISC_RING_THRESHOLD    = 1200   # 圆环霍夫累加阈值（环线细，比圆盘低）
 DISC_TIMEOUT_MS        = 8000   # D/E 专属兜底超时（比通用 TASK_TIMEOUT_MS 短）
-DISC_START_DELAY_MS    = 800    # 收到 D/E 后先等这么久再读第一次相机（让车/机构停稳）
+DISC_START_DELAY_MS    = 500    # 收到 D/E 后先等这么久再读第一次相机（已从 800 降到 500）
 DISC_LOST_FRAMES       = 2      # 连续 N 帧看不到圆 → 立即回 NONE（1=第一帧就回）
 DISC_TRACK_MAX_JUMP    = 50     # 优先选离上一次圆心 ≤N px 的候选（0=不启用）
 
@@ -141,7 +152,7 @@ DISC_TEMPLATE_ROI_DY    = 0
 
 # ---- D/E 调试抓图（现场分析用；正式比赛可关）----
 DISC_DEBUG_SAVE          = True   # True=每次 D/E 保存关键帧 + 逐帧检测数据
-DISC_DEBUG_DIR           = "/maixapp/apps/yyb_mover/data/disc_debug"
+DISC_DEBUG_DIR           = "/root/yyb_mover_data/disc_debug"  # 放在 APP 目录外，升级不丢
 DISC_DEBUG_MAX_FRAMES    = 24     # 单次任务最多存多少张图（数据行不受限）
 DISC_DEBUG_QUALITY       = 85     # JPEG 质量 1~100
 DISC_DEBUG_KEEP_TASKS    = 20     # 只保留最近 N 次任务目录，自动删旧
@@ -159,22 +170,24 @@ ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（中心稳�
 ALIGN_ONE_SHOT    = False   # False = 闭环调整（最多 ALIGN_MAX_ITER 轮 MOVE/MOVEY）
 ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定为 1
 ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 5px
-ALIGN_GAIN        = 0.8     # 比例系数：MOVE 步长 = dx * GAIN（1.0=一步到位，易过冲）
+ALIGN_GAIN        = 0.65    # 比例系数：按实测 k≈1.48 取 1/k；先走大部分，第二轮只补残差
 ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 0
-ALIGN_STEP_MAX    = 0       # 单次 MOVE 最大步长（px）；0 = 不限制（已删除上限）
+ALIGN_STEP_MAX    = 0       # 单次 MOVE/MOVEY 最大步长（px）；0 = 不限制
 MOVE_SCALE        = 1.0     # MOVE 数值系数：最终 MOVE = step × MOVE_SCALE（先改回 1x）
 ALIGN_DX_OFFSET   = 5       # dx 修正值(px)：dx = cx - W/2 + ALIGN_DX_OFFSET；物料偏左就加大
+ALIGN_DX_OFFSET_D = -10     # D 专用：+5 基础上再右移 15px（实测 D 最终 dx≈+12~+15）
+ALIGN_DX_OFFSET_E = None    # E 专用；None = 用 ALIGN_DX_OFFSET
 # ---- 垂直方向（MOVEY）：与水平轴独立配置 ----
 ALIGN_DY_ON       = True    # False = 不校正垂直偏差，只发 MOVE
 ALIGN_DY_TOL      = 5       # 垂直对齐容差(px)
-ALIGN_DY_OFFSET   = 0       # dy 修正值(px)：dy = cy - H/2 + ALIGN_DY_OFFSET
-MOVEY_SCALE       = 1.0     # MOVEY 数值系数：最终 MOVEY = step × MOVEY_SCALE
+ALIGN_DY_OFFSET   = 60      # dy 修正值(px)：目标 y=240-60=180
+MOVEY_SCALE       = 1.0     # MOVEY 数值系数：1:1，不做额外缩放
 ALIGN_INVERT_DY_D = False   # D：MOVEY 方向（反了就置 True）
 ALIGN_INVERT_DY_E = False   # E：MOVEY 方向（反了就置 True）
-MOVE_ECHO_HOLD_MS = 300     # 发完 MOVE 后屏幕回显停留时间(ms)
+MOVE_ECHO_HOLD_MS = 100     # 发完 MOVE 后屏幕回显停留时间(ms)（已从 300 降到 100）
 ALIGN_STABLE_FRAMES = 3     # 进入容差后还要连续 N 帧稳定才回 ok=1
-ALIGN_SETTLE_MS   = 1200    # 发完 MOVE 等多久再重新测量（已加大到 1.2s）
-ALIGN_MAX_ITER    = 3       # 最多调整 3 次，超过就回 DISC,...,1（不再死等）
+ALIGN_SETTLE_MS   = 800     # 一次到位需要等机构停稳；600→800
+ALIGN_MAX_ITER    = 2       # 一次主修正 + 一次小补刀；超过就回 DISC,...,1
 ALIGN_INVERT_D    = False   # D：按要求先保持不反
 ALIGN_INVERT_E    = False   # E：MOVE 方向保持（当前 E 是正确的）
 

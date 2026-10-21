@@ -1,7 +1,7 @@
 # AI 交接文档 · 视觉端 ↔ STM32 串口协议（给负责 STM32 侧固件的 AI）
 
 > 目标读者：实现/修改 STM32 侧 UART 驱动与流程状态机的 AI。
-> 视觉端版本：**3.8.1**（MaixCAM2，2026-10-20）｜ 本文所有行为都来自实际代码，可直接照此实现。
+> 视觉端版本：**3.9.1**（MaixCAM2，2026-10-21）｜ 本文所有行为都来自实际代码，可直接照此实现。
 > 对应源码：`maixcam_app_v2/protocol.py`、`tasks.py`、`main.py`、`config.py`
 
 ---
@@ -12,7 +12,7 @@
 2. **任务执行中再发命令** → 视觉端回 `BUSY`（不是失败，表示"还在算"）。
 3. **`R` 可以打断任何任务**，立即回 `READY`。
 4. **超时必须 > 20000ms**（`TASK_TIMEOUT_MS`）；`G` 的视觉超时是 3000ms。
-5. **`STACK` 只回中心 `x,y`**，**不含高度** —— 高度由 STM32 自己按物料/层数算。
+5. **`STACK` 回 `x,y,dx,ok`**，**不含高度** —— 高度由 STM32 自己按物料/层数算。
 6. 所有 `x,y,w,h` 都是 **640×480 口径、已去畸变**。
 7. **D/E 现在同时校水平和垂直**：视觉端会发 `MOVE,<dx>` 和 `MOVEY,<dy>`；
    STM32 必须两条都解析，否则对应轴永远对不中。
@@ -95,8 +95,8 @@
 | 启停区 | `START,<区号>,x,y,w,h` | 区号 1=右侧有灰色道路，2=没有；`x,y,w,h` 是蓝色启停区，**看不到时全 0，区号仍有效** |
 | 任务码 | `TASK,<G1>,<G3>` | 只回颜色组（偶数位是放置位置，不回显） |
 | 原料区 | `PICK,<颜色码>,x,y` | 命中物料的中心 |
-| 圆盘 | `DISC,x,y,dx,ok` | `dx = x - 320 + ALIGN_DX_OFFSET`；当前 `ok` 固定为 1；`dy` 不在回复里，视觉端通过 `MOVEY` 自行闭环 |
-| 码垛 | `STACK,x,y` | 只给中心；**视觉不测高度**。视觉按颜色选底座，找不到同色就回空环中心 |
+| 圆盘 | `DISC,x,y,dx,ok` | D 用 `ALIGN_DX_OFFSET_D=-10`，E 用全局 `ALIGN_DX_OFFSET=+5`；`ok` 固定为 1；`dy` 不在回复里，视觉端通过 `MOVEY` 自行闭环 |
+| 码垛 | `STACK,x,y,dx,ok` | `dx=x-320+STACK_ALIGN_DX_OFFSET`；视觉不测高度；`ok` 与 D/E 一样当前固定为 1 |
 | 障碍物 | `OBST,x,y,w,h,mm` | `mm` 是估算距离（0=无法估算）|
 | 无障碍 | `CLEAR` | |
 | 握手 | `READY` | |
@@ -112,14 +112,14 @@
 | `MOVE,<dx>` | 水平微调：`dx` = 目标在画面上的水平偏差像素。**执行后不要回帧**；具体映射成左右平移/前后移动由你决定 |
 | `MOVEY,<dy>` | 垂直微调：`dy` = 目标在画面上的垂直偏差像素。**执行后不要回帧**；映射到你们的垂直/前后机构 |
 
-- 仅在 `D/E` 对齐阶段发送；视觉端每轮重新测量，等待 `ALIGN_SETTLE_MS(1200ms)`。
+- 仅在 `D/E`/`F` 对齐阶段发送；视觉端每轮重新测量，等待 `ALIGN_SETTLE_MS(800ms)`。
 - 两轴都超差时，视觉端会**先发 `MOVE`，紧接着发 `MOVEY`**（两帧连续）。
 - 方向反了（越调越远）→ 不要改 STM32 符号，改视觉端配置：
   - 水平：`ALIGN_INVERT_D/E`
   - 垂直：`ALIGN_INVERT_DY_D/E`
-- 视觉端最多发 `ALIGN_MAX_ITER(3)` **轮**；每轮每轴最多一条指令。
+- 视觉端最多发 `ALIGN_MAX_ITER(2)` **轮**；每轮每轴最多一条指令。
 - 当前数值系数：`MOVE_SCALE=1.0`、`MOVEY_SCALE=1.0`；
-  `ALIGN_STEP_MAX=0`（不限幅），`ALIGN_GAIN=0.8`。
+  `ALIGN_STEP_MAX=0`（不限幅），`ALIGN_GAIN=0.65`。
 - **忽略 `MOVEY` 的后果**：`dy` 不会收敛，视觉端会把 3 轮用完并回 `DISC,...,1`
   （`ok` 仍为 1），但垂直方向实际没对准。
 
@@ -189,19 +189,20 @@ RUNNING（视觉端执行任务，A/C/D/E/F 最长 20s，G 最长 3s）
   4. 最后用同心圆环兜底。
 - **内容校验**：候选圆心附近必须匹配 `assets/target2.png` 数字“2”模板，
   否则丢弃并回 `NONE`（不会画绿圆）。当前阈值 `0.55`，尺度 `[0.9, 1.0]`。
-- 收到 `D/E` 后先等 `DISC_START_DELAY_MS=800ms`，让车/机构停稳，再读第一帧。
+- 收到 `D/E` 后先等 `DISC_START_DELAY_MS=500ms`，让车/机构停稳，再读第一帧。
 - 偏差计算：
   ```text
-  dx = x - W/2 + ALIGN_DX_OFFSET   （默认 +5px）
-  dy = y - H/2 + ALIGN_DY_OFFSET   （默认 0）
+  D: dx = x - W/2 + ALIGN_DX_OFFSET_D  （当前 -10px）
+  E: dx = x - W/2 + ALIGN_DX_OFFSET_E  （None → 全局 +5px）
+  dy = y - H/2 + ALIGN_DY_OFFSET   （当前 +60px，目标 y=180）
   ```
 - 闭环：
   1. 两轴都在容差内且连续 `ALIGN_STABLE_FRAMES=3` 帧稳定 → 回 `DISC,x,y,dx,1`；
   2. 否则每轮对超差轴发指令：
-     - 水平：`MOVE,<step>`，`step = dx × 0.8 × MOVE_SCALE`；
-     - 垂直：`MOVEY,<step>`，`step = dy × 0.8 × MOVEY_SCALE`；
-  3. 等 `ALIGN_SETTLE_MS=1200ms` 后重新测量；
-  4. 最多 `ALIGN_MAX_ITER=3` 轮，仍未对齐 → 回 `DISC,...,1`（带最后一次偏差）。
+     - 水平：`MOVE,<step>`，`step = dx × ALIGN_GAIN(0.65) × MOVE_SCALE`；
+     - 垂直：`MOVEY,<step>`，`step = dy × ALIGN_GAIN(0.65) × MOVEY_SCALE`；
+  3. 等 `ALIGN_SETTLE_MS=800ms` 后重新测量；
+  4. 最多 `ALIGN_MAX_ITER=2` 轮，仍未对齐 → 回 `DISC,...,1`（带最后一次偏差）。
 - 完全看不到圆 → 连续 `DISC_LOST_FRAMES=2` 帧立即回 `NONE,D|E`。
 - 收到 `MOVE/MOVEY` 后**不要再发新的 D/E**，视觉端会自己继续；等最终的 `DISC`。
 - 当前实车实测（2026-10-20）：
@@ -212,17 +213,25 @@ RUNNING（视觉端执行任务，A/C/D/E/F 最长 20s，G 最长 3s）
   ```
   STM32 尚未执行 `MOVEY` 时，`dy` 完全不收敛，可作为联调判据。
 
-### 6.5 `F` 码垛
+### 6.5 `F` 码垛（双轴对齐）
 
 - 暂存区 ROI `[160,120,320,240]`。
-- `F,<颜色码>`：只找**同色**物料作为底座；同色多个取**离 ROI 中心最近**的一个
-  （前提：云台已对准目标工位/环，否则“最近”可能是错的环）。
-- 找不到同色底座 → 用霍夫圆找**空环中心**并回该坐标；
-  连环都找不到 → 退回 ROI 中心（`STACK_RING_FALLBACK=False` 时回 `NONE,F`）。
+- `F,<颜色码>`：只找**同色**物料作为底座；同色多个取**离 ROI 中心最近**的一个。
+- 找不到同色底座 → 用霍夫圆找**空环中心**；连环都找不到 → 退回 ROI 中心
+  （`STACK_RING_FALLBACK=False` 时回 `NONE,F`）。
 - `F` 不带参数：退回旧行为，取 ROI 内最靠上的色块。
-- **不做颜色投票**（只判中心稳定，连续 15 帧）。
-- 回复 `STACK,x,y`（**不带高度**）；超时 20s → `NONE,F`。
-- 颜色码非法（不是 1~4）→ 立即 `NONE,F`。
+- **对齐**（`STACK_ALIGN_ON=True`）与 D/E 相同：
+  ```text
+  dx = x - W/2 + STACK_ALIGN_DX_OFFSET
+  dy = y - H/2 + STACK_ALIGN_DY_OFFSET
+  超差 → MOVE,<dx> / MOVEY,<dy>
+  两轴都进容差并连续 N 帧稳定 → STACK,x,y,dx,1
+  ```
+- 方向反了改 `STACK_INVERT_X` / `STACK_INVERT_Y`，不要改 STM32 符号。
+- 复用 `ALIGN_GAIN`、`MOVE_SCALE`、`MOVEY_SCALE`、`ALIGN_STEP_MAX`、
+  `ALIGN_SETTLE_MS`、`ALIGN_MAX_ITER`。
+- 回复 `STACK,x,y,dx,1`（**不带高度**；`ok` 与 D/E 一样固定为 1）。
+- 超时仍看不到底座/环 → `NONE,F`。
 
 ### 6.6 `G` 障碍物
 
@@ -251,7 +260,7 @@ STM32 → D                          CAM → MOVE,+11
                                    CAM → MOVEY,-87
                                    CAM → DISC,345,115,+30,1
 STM32 → E                          CAM → DISC,320,240,0,1
-STM32 → F,2                        CAM → STACK,340,180
+STM32 → F,2                        CAM → STACK,340,180,-20,1
 STM32 → G                          CAM → OBST,300,200,60,120,850
                                    CAM → CLEAR
 STM32 → Z                          CAM → OK
@@ -276,7 +285,7 @@ STM32 → Z                          CAM → OK
 | CRC 把 `0xAA 0x55` 或 `0x0D` 也算进去 | 全部帧被丢弃 |
 | `LEN` 算成"整帧长度" | 拆帧错位 |
 | 把 `BUSY` 当失败直接重发 | 多个任务排队，拿到过期坐标 |
-| 把 `STACK` 当成带高度 | 现在只有 `x,y`，多解析一个字段会错位 |
+| 把 `STACK` 当成带高度 | 现在只有 `x,y,dx,ok`，多解析一个高度字段会错位 |
 | `F` 不带颜色码 | 视觉会取最靠上的物料，可能选错底座（颜色不一致）|
 | 忽略 `MOVE` | 圆盘水平方向永远对不中 |
 | 忽略 `MOVEY` | 圆盘垂直方向永远对不中，`dy` 不收敛 |
@@ -292,7 +301,8 @@ STM32 → Z                          CAM → OK
 - 颜色码：**红1 黄2 蓝3 绿4**
 - 任务码 G1/G3 颜色位：**必须是 1~4**
 - 圆盘对齐容差：**水平 ±5px，垂直 ±5px**（`ALIGN_TOL` / `ALIGN_DY_TOL`）
-- 圆盘对齐轮数：**3 轮**（`ALIGN_MAX_ITER`），每次等待 **1200ms**（`ALIGN_SETTLE_MS`）
-- D/E 启动延时：**800ms**（`DISC_START_DELAY_MS`）
+- 圆盘对齐轮数：**2 轮**（`ALIGN_MAX_ITER`），每次等待 **800ms**（`ALIGN_SETTLE_MS`）
+- D/E 启动延时：**500ms**（`DISC_START_DELAY_MS`）
+- D 水平偏置：**-10px**（`ALIGN_DX_OFFSET_D`）；E 用全局 **+5px**
 - 主动指令：`MOVE,<dx>`（水平）/ `MOVEY,<dy>`（垂直），执行后都不回帧
 - 帧头/帧尾/CRC 参数：见 §2

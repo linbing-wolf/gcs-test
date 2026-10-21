@@ -4,7 +4,7 @@ disc_debug.py —— D/E 圆盘对齐调试记录器
 
 每次 D/E 任务在 DISC_DEBUG_DIR 下建一个目录，例如：
 
-    /maixapp/apps/yyb_mover/data/disc_debug/20261019-153012-D/
+    /root/yyb_mover_data/disc_debug/20261019-153012-D/
         000_start.jpg
         001_iter0_before.jpg
         002_final_ok.jpg

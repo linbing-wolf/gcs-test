@@ -1,6 +1,6 @@
 # YYB Mover —— MaixCAM2 智能搬运视觉端（标准 MaixCAM APP）
 
-> id: `yyb_mover` · version: `3.8.1` · 入口：`main.py`
+> id: `yyb_mover` · version: `3.9.1` · 入口：`main.py`
 > 配套：STM32 智能搬运车（UART5 / 115200），协议见 `protocol.py`
 
 ## 这是什么
@@ -14,7 +14,7 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 | `T,<任务码>` | 下发任务码，确定颜色 | `TASK,<G1>,<G3>` |
 | `C,<颜色码>` | 原料区三选一 | `PICK,color,x,y` |
 | `D` / `E` | 粗加工区 / 暂存区 圆盘中心 + 双轴对齐 | `DISC,x,y,dx,ok` |
-| `F` | 码垛中心 | `STACK,x,y` |
+| `F` | 码垛中心 + 双轴对齐 | `STACK,x,y,dx,ok` |
 | `G` | 前进状态：检测前方黑色障碍物 | 有：`OBST,x,y,w,h,dist`／无：`CLEAR` |
 | `R` / `Z` | 复位 / 结束 | `READY` / `OK` |
 
@@ -34,19 +34,52 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 - **完成**：`|dx| <= ALIGN_TOL` 且 `|dy| <= ALIGN_DY_TOL` 连续
   `ALIGN_STABLE_FRAMES` 帧 → 回 `DISC,x,y,dx,1`。
 - **未完成**：微调超过 `ALIGN_MAX_ITER` 轮 / 超时 → `DISC,x,y,dx,1`。
+- **D/E 独立偏置**：`ALIGN_DX_OFFSET_D=-10`（D 实测稳定左偏修正），
+  `ALIGN_DX_OFFSET_E=None`（回退到全局 `ALIGN_DX_OFFSET=+5`）。
 - **看不到圆**：连续 `DISC_LOST_FRAMES` 帧 → 立即回 `NONE,D` / `NONE,E`。
 - **内容校验**：候选圆周围必须在 `assets/target2.png` 模板中匹配到数字“2”，
   否则不画绿圆、直接回 `NONE`（解决“没圆也产生绿圆”）。
   当前 `DISC_TEMPLATE_THRESHOLD=0.55`，尺度 `[0.9, 1.0]`；实测物料挡住数字下半部时
   2 号环约 0.59，1/3 号环 <0.30。
-- **启动延时**：收到 D/E 后先等 `DISC_START_DELAY_MS=800ms` 再读第一帧。
+- **启动延时**：收到 D/E 后先等 `DISC_START_DELAY_MS=500ms` 再读第一帧。
 - **超时**：`DISC_TIMEOUT_MS = 8000`（D/E 专用，比通用 `TASK_TIMEOUT_MS` 短）。
 - 例：`DISC,321,238,2,1` 表示圆心 (321,238)，水平偏差 +2px，已对齐。
+
+### F 码垛双轴对齐
+
+`STACK_ALIGN_ON=True` 时，F 与 D/E 一样发 `MOVE,<dx>` / `MOVEY,<dy>` 闭环：
+
+- 目标：底座/空环中心到画面中心，容差 `STACK_ALIGN_TOL` / `STACK_ALIGN_DY_TOL`
+- 偏移：`STACK_ALIGN_DX_OFFSET` / `STACK_ALIGN_DY_OFFSET`
+- 方向：`STACK_INVERT_X` / `STACK_INVERT_Y`
+- 复用 `ALIGN_GAIN`、`MOVE_SCALE`、`MOVEY_SCALE`、`ALIGN_STEP_MAX`、`ALIGN_SETTLE_MS`、`ALIGN_MAX_ITER`
+- 回复：`STACK,x,y,dx,1`（高度仍由 STM32 自己算；`ok` 与 D/E 一样固定为 1）
+
+调试触发：
+
+```bash
+touch /tmp/run_stack_move
+```
+
+### 串口日志与运行信息
+
+每次 APP 启动都会在 `/root/yyb_mover_serial/` 新建：
+
+```text
+serial_YYYYmmdd-HHMMSS.log
+sessions.jsonl
+```
+
+- 每行格式：`时间 [+运行秒数] [RX/TX/EVENT] 内容 | 原始帧 hex`
+- 启动行包含版本号：`APP START version=3.9.1 pid=...`
+- 退出行包含总运行时长：`APP EXIT uptime=... version=...`
+- `sessions.jsonl` 每次启动/退出追加一行，记录版本、PID、启动时间、运行时长
+- 日志目录在 `/root` 下，不随 APP 安装/升级被覆盖
 
 ### D/E 调试抓图（3.6.0）
 
 `config.DISC_DEBUG_SAVE = True` 时，每次 D/E 会在
-`/maixapp/apps/yyb_mover/data/disc_debug/<时间戳>-<D|E>/` 下保存：
+`/root/yyb_mover_data/disc_debug/<时间戳>-<D|E>/` 下保存（APP 目录外，升级不丢）：
 
 - `000_start.jpg`、`001_iter0_before.jpg`、`final_ok.jpg` … 关键帧
 - `meta.jsonl`：每帧的 `dx/cx/cy/r/src/circles/refined/refine_reason/...`
@@ -58,7 +91,7 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 拉回电脑分析：
 
 ```bash
-scp -r root@<板子IP>:/maixapp/apps/yyb_mover/data/disc_debug ./disc_debug
+scp -r root@<板子IP>:/root/yyb_mover_data/disc_debug ./disc_debug
 python3 maix_toolkit/pc/analyze_disc_debug.py ./disc_debug
 ```
 

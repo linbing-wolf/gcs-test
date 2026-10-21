@@ -9,7 +9,8 @@
 maix_toolkit/
 ├── pc/                       # 在电脑上跑
 │   ├── calib_distort.py      # 镜头畸变标定 → cam_K_dist.py
-│   └── calib_homography.py   # 手眼标定(像素→mm) → homography.py
+│   ├── calib_homography.py   # 手眼标定(像素→mm) → homography.py
+│   └── analyze_disc_debug.py # 分析 D/E 对齐抓图（meta.jsonl + JPEG）
 ├── board/                    # 在 MaixCAM2 上跑
 │   └── capture_dataset.py    # 采集 AI 训练数据集
 └── README.md
@@ -57,6 +58,19 @@ python3 board/capture_dataset.py --out /root/dataset
 ```
 
 产出 `<out>/<类别>/*.jpg`，用于 MaixHub / 本地训练。
+
+### 4. 分析 D/E 圆盘对齐抓图
+
+应用里 `DISC_DEBUG_SAVE=True` 时，每次 D/E 会把关键帧和 `meta.jsonl` 存到
+`/root/yyb_mover_data/disc_debug/`。拉回电脑后：
+
+```bash
+scp -r root@<板子IP>:/root/yyb_mover_data/disc_debug ./disc_debug
+python3 pc/analyze_disc_debug.py ./disc_debug
+```
+
+会输出每次任务的 `dx` 统计、检测来源（refine/circle/ring）、候选圆数量、
+拟合失败原因和逐帧时间线，配合 JPEG 可直接看出是否选错圆。
 
 ## 在比赛应用里怎么生效
 

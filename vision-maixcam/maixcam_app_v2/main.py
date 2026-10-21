@@ -20,6 +20,7 @@ from timing import ticks_ms, sleep_ms
 
 import sys
 import os
+import time
 # launcher 把 stdout 重定向到 /maixapp/tmp/last_run.log，默认是块缓冲；
 # 改成行缓冲后现场日志/调试信息能实时看到（Python 3.7+）。
 try:
@@ -35,6 +36,7 @@ import precision
 import protocol
 import tasks
 import screen_echo
+import serial_log
 from protocol import (VisionLink, preflight, parse_command, pack_ready, pack_ok,
                       pack_error, pack_none, pack_busy)
 
@@ -256,6 +258,7 @@ def main():
     preflight()
     log("=" * 56)
     log("MaixCAM 视觉端（新流程·上位机服务）")
+    log("版本: %s | 启动时间: %s" % (serial_log.app_version(), time.strftime("%Y-%m-%d %H:%M:%S")))
     log("串口: %s @ %d | 分辨率: %dx%d @%dfps"
         % (config.UART_DEV, config.UART_BAUDRATE, config.DET_W, config.DET_H, config.FPS))
     log("精度: %s" % pline.describe())
@@ -279,6 +282,21 @@ def main():
         while not app.need_exit():
             raw = link.poll_command()
             if raw is None:
+                # 调试触发：SSH 上 touch /tmp/run_stack_move → 直接跑一次真实 F
+                # （会发 MOVE/MOVEY + STACK，车会动，确保周围留空间）
+                stack_trig = getattr(config, "STACK_DEBUG_TRIGGER_REAL_FILE", "")
+                if stack_trig and os.path.exists(stack_trig):
+                    try:
+                        os.remove(stack_trig)
+                    except Exception:
+                        pass
+                    log("[调试] 直接触发一次 F（真实 MOVE/MOVEY + STACK）")
+                    tasks.reset_guard()
+                    color = getattr(config, "STACK_DEBUG_TRIGGER_COLOR", "") or None
+                    reply(tasks.task_stack(cam, clf, disp, p=pline, ctl=ctl,
+                                           color_code=color))
+                    screen_echo.set_state("IDLE")
+                    continue
                 # 调试触发：SSH 上 touch /tmp/run_disc_move → 直接跑一次真实 D
                 # （会发 MOVE + DISC，车会动，确保周围留空间）
                 real_trig = getattr(config, "DISC_DEBUG_TRIGGER_REAL_FILE", "")

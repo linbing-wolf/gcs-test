@@ -24,7 +24,7 @@ payload 文本约定：
   C,<颜色码>    原料区三选一：找该色物料 → PICK,color,x,y
   D            粗加工区圆盘中心/对齐     → DISC,x,y,dx,ok
   E            暂存区圆盘中心/对齐       → DISC,x,y,dx,ok
-  F            码垛中心               → STACK,x,y     (高度由下位机自己算)
+  F            码垛中心/双轴对齐       → STACK,x,y,dx,ok (高度由下位机自己算)
   G            前方障碍物              → OBST,x,y,w,h,dist / CLEAR
   R            复位/重新握手            → READY
   Z            结束                    → OK
@@ -372,9 +372,9 @@ def pack_movey(dy):
     return "MOVEY,%d" % int(dy)
 
 
-def pack_stack(x, y):
-    """码垛：只给中心。高度由 STM32 自己按物料/层数算，视觉不测高度"""
-    return "STACK,%d,%d" % (int(x), int(y))
+def pack_stack(x, y, dx=0, ok=1):
+    """码垛：中心 + 水平偏差(dx) + ok；高度由 STM32 自己按物料/层数算"""
+    return "STACK,%d,%d,%d,%d" % (int(x), int(y), int(dx), int(ok))
 
 
 def pack_obstacle(x, y, w, h, dist=0):
