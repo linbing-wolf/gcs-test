@@ -39,8 +39,8 @@ static uint8_t simulated_start_button;
 uint8_t entry_host_start_button_pressed(void) {return simulated_start_button;}
 static uint8_t scanner_sent[256], scanner_can_tx;
 static unsigned scanner_sent_count;
-static uint32_t scanner_initialized_baud;
-void entry_host_scanner_init(uint32_t baud) {scanner_initialized_baud=baud;}
+static uint32_t scanner_initialized_baud,scanner_init_calls;
+void entry_host_scanner_init(uint32_t baud) {scanner_initialized_baud=baud;scanner_init_calls++;}
 int entry_host_scanner_tx_ready(void) {return scanner_can_tx;}
 void entry_host_scanner_send_byte(uint8_t value)
 {CHECK(scanner_sent_count<sizeof(scanner_sent));scanner_sent[scanner_sent_count++]=value;}
@@ -220,7 +220,7 @@ static void reset_fixture(void)
     clock_ms=0;rx_head=rx_tail=stop_pending=rx_overflow=0;
     simulated_start_button=0;start_button_init();
     memset(&scanner,0,sizeof(scanner));scanner_head=scanner_tail=scanner_rx_error=scanner_rx_overflow=0;
-    scanner_sent_count=0;scanner_can_tx=1;scanner_initialized_baud=0;
+    scanner_sent_count=0;scanner_can_tx=1;scanner_initialized_baud=scanner_init_calls=0;
     line_length=pose_set=test_mode=0;speed_rpm=0;test_distance=1000;test_rpm=60;
     turn_rpm=CAR_TURN_RPM;
     reported_nav=NAV_FAULT;reported_motion=MOTION_FAULT;
@@ -444,7 +444,7 @@ static void start_button_tests(void)
 {
     unsigned i;
     uint32_t stops,velocities;
-    reset_fixture();firmware_step();output_size=0;output[0]=0;
+    reset_fixture();heading_sensor_reset(&heading_sensor);firmware_step();output_size=0;output[0]=0;
     button_tick(1,0);button_tick(1,CAR_START_BUTTON_DEBOUNCE_MS-1u);
     CHECK(button_messages()==0);
     button_tick(0,0);button_tick(1,1);
@@ -481,7 +481,7 @@ static void start_button_tests(void)
     queue_byte('!');button_tick(1,CAR_START_BUTTON_DEBOUNCE_MS);
     CHECK(button_messages()==1 && stop_count>stops && !run_active);
     CHECK(strstr(output,"[stopped]") && strstr(output,"[stopped]")<strstr(output,"[button]"));
-    puts("PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, test mode and stop priority; no motion triggered");
+    puts("PASS start button: press/release debounce, one event per hold, re-press, timestamp wrap, boot-held suppression, stop priority; runimu request with unavailable IMU retains state");
 }
 static void scanner_receive(const uint8_t *bytes,unsigned count)
 {

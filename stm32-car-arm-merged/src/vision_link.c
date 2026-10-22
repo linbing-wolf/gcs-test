@@ -1,4 +1,4 @@
-﻿#include "vision_link.h"
+#include "vision_link.h"
 #include "arm_control.h"
 #ifdef ARM_HOST_TEST
 #include "../tests/vision_host_io.h"
@@ -15,11 +15,11 @@
 #define VISION_HALF_FRAME_MS    200u
 #define VISION_PICK_TIMEOUT_MS 20000u
 #define VISION_ALIGN_TIMEOUT_MS 25000u
-#define VISION_MOTION_QUEUE      32u /* 上位机当前每次任务最多两轮、每轮两轴；逐条保存离散位移。 */
+#define VISION_MOTION_QUEUE      32u /* 有界离散指令队列；MOVEXY两轴整体占1条，终包不清空。 */
 
 typedef struct {
     uint32_t received_ms;
-    int16_t pixels;
+    int16_t pixels[2];
     uint8_t axis;
 } VisionMotion;
 
@@ -114,22 +114,27 @@ static void vision_transmit(void)
 #endif
 }
 
-static int vision_number(const char **cursor, int *value)
+static int vision_number_separator(const char **cursor, int *value, char separator)
 {
     const char *s = *cursor;
     int sign = 1, found = 0;
     long result = 0;
-    if (*s != ',') return 0;
+    if (*s != separator && !(separator==' ' && *s=='\t')) return 0;
     s++;
-    while (*s == ' ') s++;
+    while (*s == ' ' || *s == '\t') s++;
     if (*s == '-' || *s == '+') {if (*s == '-') sign = -1;s++;}
     while (*s >= '0' && *s <= '9') {
         if (result > 3276 || (result == 3276 && *s - '0' > (sign < 0 ? 8 : 7))) return 0;
         result = result * 10 + (*s++ - '0');found = 1;
     }
-    if (!found || (*s && *s != ',')) return 0;
+    if (!found || (*s && *s != separator && !(separator==' ' && *s=='\t'))) return 0;
     *value = (int)(sign * result);*cursor = s;
     return 1;
+}
+
+static int vision_number(const char **cursor, int *value)
+{
+    return vision_number_separator(cursor,value,',');
 }
 
 static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
@@ -144,25 +149,35 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
     vision.frames++;
     if ((vision.align_state==VISION_PICK_WAITING || vision.stack_state==VISION_PICK_WAITING)
         && tx_offset>=tx_length
-        && (!strncmp(message,"MOVE,",5) || !strncmp(message,"MOVEY,",6))) {
-        int offset;
-        uint8_t axis=(uint8_t)(message[4]=='Y');
+        && (!strncmp(message,"MOVE,",5) || !strncmp(message,"MOVEY,",6)
+            || !strncmp(message,"MOVEXY,",7) || !strncmp(message,"MOVEXY ",7)
+            || !strncmp(message,"MOVEXY\t",7) || !strncmp(message,"movexy,",7)
+            || !strncmp(message,"movexy ",7) || !strncmp(message,"movexy\t",7))) {
+        int offsets[2]={0,0};
+        uint8_t axis=(uint8_t)(message[4]=='Y' ? 1 : (message[4]=='X' || message[4]=='x') ? 2 : 0);
         VisionMotion *motion;
-        cursor=message+(axis ? 5 : 4);
-        if (!vision_number(&cursor,&offset) || *cursor) {
-            vision.bad_frames++;arm_output("[vision warning] invalid MOVE/MOVEY; request retained\r\n");return;
-        }
+        cursor=message+(axis==2 ? 6 : axis ? 5 : 4);
+        if (axis==2) {
+            char separator=*cursor==',' ? ',' : ' ';
+            if (!vision_number_separator(&cursor,&offsets[0],separator)
+                || !vision_number_separator(&cursor,&offsets[1],separator)) goto invalid_motion;
+        } else if (!vision_number(&cursor,&offsets[axis])) goto invalid_motion;
+        if (*cursor) goto invalid_motion;
         if (vision.motion_count>=VISION_MOTION_QUEUE) {
             vision.overflows++;
-            arm_output("[vision warning] motion queue full; incoming MOVE/MOVEY not queued\r\n");return;
+            arm_output("[vision warning] motion queue full; incoming MOVE/MOVEY/MOVEXY not queued\r\n");return;
         }
+        /* 两轴同帧作为一个队列元素；不能拆成两个独立动作或覆盖正在执行的指令。 */
         motion=&vision.motion[vision.motion_count++];
-        motion->axis=axis;motion->pixels=(int16_t)offset;motion->received_ms=now;
-        vision.align_offset[axis]=(int16_t)offset;
-        if (!axis) vision.align_error=(int16_t)offset;
+        motion->axis=axis;motion->pixels[0]=(int16_t)offsets[0];motion->pixels[1]=(int16_t)offsets[1];
+        motion->received_ms=now;
+        if (axis!=1) vision.align_offset[0]=vision.align_error=(int16_t)offsets[0];
+        if (axis!=0) vision.align_offset[1]=(int16_t)offsets[1];
         vision_observed(vision.stack_state==VISION_PICK_WAITING ? vision.stack_color : 0,
                         vision.align_offset[0],vision.align_offset[1],now);
         return;
+invalid_motion:
+        vision.bad_frames++;arm_output("[vision warning] invalid MOVE/MOVEY/MOVEXY; request retained\r\n");return;
     }
     if (!strncmp(message,"STACK,",6)) {
         int dx,ok=1;
@@ -416,7 +431,7 @@ void vision_request_stack(uint8_t color,uint32_t now)
     vision.stack_state=VISION_PICK_WAITING;vision.stack_color=color;vision.stack_warning_ms=now;
     snprintf(payload,sizeof(payload),"F,%u",(unsigned)color);
     if(!vision_send(payload)){vision.stack_state=VISION_PICK_FAULT;return;}
-    snprintf(vision.line,sizeof(vision.line),"[vision] queued request %s; wait for MOVE/MOVEY and STACK,x,y,dx,ok\r\n",payload);
+    snprintf(vision.line,sizeof(vision.line),"[vision] queued request %s; wait for MOVE/MOVEY/MOVEXY and STACK,x,y,dx,ok\r\n",payload);
     arm_output(vision.line);
 }
 int vision_stack_state(void){return vision.stack_state;}
@@ -444,7 +459,16 @@ int vision_motion_peek(uint8_t *axis,int16_t *offset,uint32_t *received_ms)
 {
     if (!vision.motion_count) return 0;
     if (axis) *axis=vision.motion[0].axis;
-    if (offset) *offset=vision.motion[0].pixels;
+    if (offset) *offset=vision.motion[0].pixels[vision.motion[0].axis==1 ? 1 : 0];
+    if (received_ms) *received_ms=vision.motion[0].received_ms;
+    return 1;
+}
+/* 单轴和双轴统一以完整队首读取，配对命令只能整体消费。 */
+int vision_motion_peek_xy(int16_t *dx,int16_t *dy,uint32_t *received_ms)
+{
+    if (!vision.motion_count) return 0;
+    if (dx) *dx=vision.motion[0].pixels[0];
+    if (dy) *dy=vision.motion[0].pixels[1];
     if (received_ms) *received_ms=vision.motion[0].received_ms;
     return 1;
 }
@@ -462,8 +486,9 @@ void vision_motion_take(void)
 int vision_align_peek_axis(uint8_t axis,int16_t *offset,uint32_t *received_ms)
 {
     unsigned i;
+    if(axis>1)return 0;
     for (i=0;i<vision.motion_count;i++) if (vision.motion[i].axis==axis) {
-        if (offset) *offset=vision.motion[i].pixels;
+        if (offset) *offset=vision.motion[i].pixels[axis];
         if (received_ms) *received_ms=vision.motion[i].received_ms;
         return 1;
     }
@@ -512,7 +537,7 @@ int vision_command(const char *s, uint32_t now)
     }
     if (!strcmp(s, "vision ping")) {
         if (!vision_send("D")) {arm_output("[vision rejected: transmit busy]\r\n");return 1;}
-        arm_output("[vision] queued D; expect MOVE/MOVEY/DISC frame\r\n");
+        arm_output("[vision] queued D; expect MOVE/MOVEY/MOVEXY/DISC frame\r\n");
         return 1;
     }
     if (!strcmp(s, "vision range")) {

@@ -21,7 +21,7 @@ typedef struct {
 /* 两区D/MOVE/DISC对准：MOVE是像素偏差，按完整幅值换算毫米。
  * 粗加工及首次暂存进站对准2号一次（D/E），连续MOVE纠偏；第二次暂存直接F定位已有物块。 */
 #define STN_ALIGN_MOVE_SIGN -1 /* 正像素偏差后退、负偏差前进；实车待核验。 */
-/* 操作者假定1px=1mm，非实测；修改此处统一影响D/E/F的MOVE/MOVEY位移。 */
+/* 操作者假定1px=1mm，非实测；修改此处统一影响D/E/F的MOVE/MOVEY/MOVEXY位移。 */
 #ifndef STN_VISION_MM_PER_PX_X1000
 #define STN_VISION_MM_PER_PX_X1000 1000 /* 像素到毫米比例×1000；1000=假定1px/1mm，D/E/F两轴统一换算。 */
 #endif

@@ -1,13 +1,14 @@
-﻿#include "station_job.h"
+#include "station_job.h"
 #include "station_config.h"
 #include "arm_control.h"
 #include "arm_config.h"
+#include "car_config.h"
 #include "vision_link.h"
 #include "road_map.h"
 #include <stdio.h>
 #include <string.h>
 
-enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM_YAW, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN, SS_STACK, SS_APPROACH, SS_RETRACT };
+enum { SS_SLIDE, SS_LIFT, SS_YAW, SS_CLAW, SS_PLATFORM_YAW, SS_VISION, SS_LOAD1, SS_CHASSIS, SS_ALIGN, SS_STACK, SS_APPROACH, SS_RETRACT, SS_TRANSFER };
 typedef struct {
     uint8_t kind;
     int16_t value;
@@ -115,12 +116,22 @@ static void push_retract_work(float yaw,uint8_t slot)
     if(slot)push_platform_yaw(slot,yaw);else push(SS_YAW,(int)(yaw*10.0f));
 #endif
 }
+#if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
+static void push_transfer(int slide,int lift,float yaw,uint8_t slot)
+{
+    uint8_t before=stn.count;
+    push_approach(slide,lift,yaw,slot,0);
+    if(stn.count>before)program[before].kind=SS_TRANSFER;
+}
+#endif
+#if !(ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED)
 /* 车右侧下降直接到取放高度，与平推/云台并行，不插入净空高度中间点。 */
 static void push_move_to(int slide, int lift, float yaw_tenths)
 {
     push_approach(slide,lift,yaw_tenths/10.0f,0,0);
     push(SS_LIFT,lift);
 }
+#endif
 /* 把“十分之一度”的整数格式化成可再被串口解析的角度。
  * 不能直接用 value/10：负数会被截断成 0 并丢掉符号。 */
 static void format_tenths(char *line, size_t size, int value)
@@ -142,27 +153,45 @@ static void push_take_from_platform(uint8_t slot,int lift_mm,uint8_t next_slot)
     push_approach(ARM_PLACE_SLIDE_MM,ARM_CLEARANCE_MM,ARM_PLACE_YAW_DEG,slot,1);
     push(SS_LIFT, lift_mm);
     push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+#if !(ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED)
     push_retract_work(station_align_yaw(),next_slot);
+#endif
+    /* 直接搬运由后续SS_TRANSFER一次抬至最高，实际110mm放行云台；不在105mm中途停车。 */
+    (void)next_slot;
 }
 /* 粗加工放回原盘，只抬高收回，不回车头或自动换盘。 */
 static void push_place_on_platform(uint8_t slot)
 {
+#if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
+    push_transfer(ARM_PLACE_SLIDE_MM,ARM_PLACE_LIFT_MM,ARM_PLACE_YAW_DEG,slot);
+#else
     push_approach(ARM_PLACE_SLIDE_MM,ARM_CLEARANCE_MM,ARM_PLACE_YAW_DEG,slot,0);
+#endif
     push(SS_LIFT, ARM_PLACE_LIFT_MM);
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
     push_retract_work(station_align_yaw(),0);
 }
 static void push_release_at(const StationPose *pose,uint8_t next_slot)
 {
+#if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
+    push_transfer(pose->slide_mm,pose->lift_mm,pose->yaw_deg,ARM_STATION_PRESELECT_ENABLED ? next_slot : 0u);
+#else
     push_move_to(pose->slide_mm, pose->lift_mm, (int)(pose->yaw_deg * 10.0f));
+#endif
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
     push_retract_work(station_align_yaw(),next_slot);
 }
 static void push_grip_at(const StationPose *pose,uint8_t slot)
 {
-    push_move_to(pose->slide_mm, pose->lift_mm, (int)(pose->yaw_deg * 10.0f));
+    /* 车右侧伸出/下降取料时并行预选目标杯；共同完成后才夹紧，带物转回时载物台保持。 */
+    push_approach(pose->slide_mm,pose->lift_mm,pose->yaw_deg,slot,0);
+    push(SS_LIFT,pose->lift_mm);
     push(SS_CLAW, (int)(ARM_CLAW_CLOSE_DEG * 10.0f));
+#if !(ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED)
     push_retract_work(ARM_PLACE_YAW_DEG,slot);
+#endif
+    /* 下一步带物转移统一连续升顶，实际110 mm放行旋转，不在通用净空处停顿。 */
+    (void)slot;
 }
 
 static int build_raw(void)
@@ -234,10 +263,7 @@ static int build_rough(void)
         target = task_rings[stn.batch][i];
         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
         push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM,(uint8_t)((i+1u)%3u+1u));
-        push_move_to(stn_rough_place.slide_mm, stn_rough_place.lift_mm,
-                     (int)(stn_rough_place.yaw_deg * 10.0f));
-        push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
-        push_retract_work(station_align_yaw(),(uint8_t)((i+1u)%3u+1u));
+        push_release_at(&stn_rough_place,(uint8_t)((i+1u)%3u+1u));
     }
     /* 按原装车颜色顺序抓回，即G2/G4靶位顺序，恢复原杯位。 */
     for (i = 0; i < 3u; i++) {
@@ -329,7 +355,7 @@ static uint8_t compact_station_program(void)
             known|=(1u<<SS_LIFT)|(1u<<SS_SLIDE)|(1u<<SS_YAW);
             last[SS_LIFT]=ARM_LIFT_HOME_MM;last[SS_SLIDE]=ARM_SLIDE_HOME_MM;last[SS_YAW]=s.value;
             if(s.platform_slot) {slot_known=1;last_slot=s.platform_slot;}
-        } else if(s.kind==SS_APPROACH) {
+        } else if(s.kind==SS_APPROACH || s.kind==SS_TRANSFER) {
             /* 复合动作也更新各目标缓存，禁止后续去重沿用旧的平推/云台/夹爪。 */
             known|=(1u<<SS_SLIDE)|(1u<<SS_YAW);
             last[SS_SLIDE]=s.slide_mm;last[SS_YAW]=s.value;
@@ -408,11 +434,12 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
             if ((program[i].kind==SS_SLIDE && (value<ARM_SLIDE_MIN_MM || value>ARM_SLIDE_MAX_MM))
                 || (program[i].kind==SS_LIFT
                     && (value<ARM_LIFT_MIN_MM || value>ARM_LIFT_MAX_MM))
-                || ((program[i].kind==SS_YAW || program[i].kind==SS_PLATFORM_YAW || program[i].kind==SS_APPROACH || program[i].kind==SS_RETRACT)
+                || ((program[i].kind==SS_YAW || program[i].kind==SS_PLATFORM_YAW || program[i].kind==SS_APPROACH || program[i].kind==SS_RETRACT || program[i].kind==SS_TRANSFER)
                     && (value<ARM_YAW_MIN_DEG*10 || value>ARM_YAW_MAX_DEG*10))
                 || (program[i].kind==SS_PLATFORM_YAW && (program[i].platform_slot<1u || program[i].platform_slot>3u))
                 || (program[i].kind==SS_RETRACT && program[i].platform_slot>3u)
-                || (program[i].kind==SS_APPROACH && (program[i].slide_mm<ARM_SLIDE_MIN_MM
+                || (program[i].kind==SS_TRANSFER && program[i].lift_mm>ARM_LIFT_MAX_MM)
+                || ((program[i].kind==SS_APPROACH || program[i].kind==SS_TRANSFER) && (program[i].slide_mm<ARM_SLIDE_MIN_MM
                     || program[i].slide_mm>ARM_SLIDE_MAX_MM || program[i].platform_slot>3u))
                 || (program[i].kind==SS_CLAW && (value<ARM_CLAW_MIN_DEG*10 || value>ARM_CLAW_MAX_DEG*10))) {
                 stn_fault("station pose outside configured travel");return -1;
@@ -520,6 +547,9 @@ static int issue_step(uint32_t now)
     case SS_APPROACH:
         ok=arm_high_approach(s->slide_mm,s->lift_mm,s->value/10.0f,s->platform_slot,s->open_claw,now);
         break;
+    case SS_TRANSFER:
+        ok=arm_transfer_to(s->slide_mm,s->lift_mm,s->value/10.0f,s->platform_slot,now);
+        break;
     case SS_RETRACT:
         ok=arm_retract_with_yaw(s->value/10.0f,s->platform_slot,now);
         break;
@@ -560,9 +590,8 @@ static void step_finished(void)
 static void station_align_update(uint8_t ring, uint32_t now)
 {
     int state, distance;
-    uint8_t axis;
-    int16_t pixels;
-    int32_t move_mm;
+    int16_t px,py;
+    int32_t forward_mm,left_mm;
     if ((uint32_t)(now-stn.align_ms) >= STN_ALIGN_TIMEOUT_MS) {
         stn_warning("alignment deadline exceeded; wait for actual DISC",now);stn.align_ms=now;
     }
@@ -575,7 +604,7 @@ static void station_align_update(uint8_t ring, uint32_t now)
         if (station_chassis_busy()) return;
         stn.align_moving=0;
     }
-    if (!vision_motion_peek(&axis,&pixels,0)) {
+    if (!vision_motion_peek_xy(&px,&py,0)) {
         if (state==VISION_PICK_READY) {
             char line[80];
             vision_cancel_pick();
@@ -584,48 +613,50 @@ static void station_align_update(uint8_t ring, uint32_t now)
         }
         return;
     }
-    move_mm=axis ? vision_pixel_mm(pixels)*STN_ALIGN_Y_MOVE_SIGN : vision_move_mm(pixels);
-    if (!move_mm) {
+    forward_mm=vision_move_mm(px);left_mm=vision_pixel_mm(py)*STN_ALIGN_Y_MOVE_SIGN;
+    if (!forward_mm && !left_mm) {
         vision_motion_take();return;
     }
-    if (!(axis ? station_chassis_lateral_start(move_mm) : station_chassis_start(move_mm))) {
+    if (!station_chassis_xy_start(forward_mm,left_mm)) {
         stn_warning("alignment motion awaiting required pose/feedback",now);return;
     }
-    /* 成功交给底盘后才消费；不能因暂缺反馈丢掉本轴或配对的另一轴。 */
+    /* 交给同一个底盘子动作后才消费，两轴共用一次停车/互锁交接。 */
     vision_motion_take();
-    distance=(int)(move_mm<0 ? -move_mm : move_mm);
+    distance=(int)(forward_mm<0 ? -forward_mm : forward_mm);
+    distance+=(int)(left_mm<0 ? -left_mm : left_mm);
     stn.align_travel+=(uint32_t)distance;
     {
         char line[152];
-        snprintf(line,sizeof(line),"[station correction] job=%u ring=%u offset_px=%d move_mm=%ld total_mm=%u axis=%s\r\n",
-                 (unsigned)stn.job,(unsigned)ring,(int)pixels,(long)move_mm,(unsigned)stn.align_travel,
-                 axis ? "lateral" : "forward");
+        if(px && py)snprintf(line,sizeof(line),"[station correction] job=%u ring=%u dx_px=%d dy_px=%d forward_mm=%ld left_mm=%ld total_mm=%u\r\n",
+                 (unsigned)stn.job,(unsigned)ring,(int)px,(int)py,(long)forward_mm,(long)left_mm,(unsigned)stn.align_travel);
+        else snprintf(line,sizeof(line),"[station correction] job=%u ring=%u offset_px=%d move_mm=%ld total_mm=%u axis=%s\r\n",
+                 (unsigned)stn.job,(unsigned)ring,(int)(px ? px : py),(long)(px ? forward_mm : left_mm),
+                 (unsigned)stn.align_travel,px ? "forward" : "lateral");
         stn_text(line);
     }
     stn.align_moving=1;
 }
 
-/* F与D/E使用相同MOVE/MOVEY语义；STACK仅表示上位机结束，不据坐标再移车。 */
+/* F与D/E使用相同MOVE/MOVEY/MOVEXY语义；STACK仅表示上位机结束，不据坐标再移车。 */
 static void station_stack_update(const StationStep *s,uint32_t now)
 {
-    uint8_t axis;
-    int16_t pixels;
-    int32_t mm;
+    int16_t px,py;
+    int32_t forward_mm,left_mm;
     char line[176];
     if(stn.stack_moving) {
         if(station_chassis_failed()){stn_fault("stack alignment motion failed");return;}
         if(station_chassis_busy())return;
         stn.stack_moving=0;
     }
-    if(vision_motion_peek(&axis,&pixels,0)) {
-        mm=axis ? vision_pixel_mm(pixels)*STN_ALIGN_Y_MOVE_SIGN : vision_move_mm(pixels);
-        if(!mm){vision_motion_take();return;}
-        if(!(axis ? station_chassis_lateral_start(mm) : station_chassis_start(mm))) {
+    if(vision_motion_peek_xy(&px,&py,0)) {
+        forward_mm=vision_move_mm(px);left_mm=vision_pixel_mm(py)*STN_ALIGN_Y_MOVE_SIGN;
+        if(!forward_mm && !left_mm){vision_motion_take();return;}
+        if(!station_chassis_xy_start(forward_mm,left_mm)) {
             stn_warning("stack commanded motion awaiting required pose/feedback",now);return;
         }
         vision_motion_take();
-        snprintf(line,sizeof(line),"[station stack correction] color=%u offset_px=%d move_mm=%ld axis=%s\r\n",
-                 (unsigned)s->value,(int)pixels,(long)mm,axis ? "lateral" : "forward");
+        snprintf(line,sizeof(line),"[station stack correction] color=%u dx_px=%d dy_px=%d forward_mm=%ld left_mm=%ld\r\n",
+                 (unsigned)s->value,(int)px,(int)py,(long)forward_mm,(long)left_mm);
         stn_text(line);stn.stack_moving=1;return;
     }
     if(vision_stack_state()!=VISION_PICK_READY) {
@@ -670,6 +701,13 @@ void station_update(uint32_t now)
         }
         return;
     }
+#if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
+    if(s->kind==SS_RETRACT && stn.cursor+1u<stn.count
+        && program[stn.cursor+1u].kind==SS_CHASSIS && arm_translation_overlap_ready()) {
+        stn_text("[station overlap] axes retracted; next index overlaps remaining rotation\r\n");
+        step_finished();return;
+    }
+#endif
     if (s->kind==SS_ALIGN) {station_align_update((uint8_t)s->value,now);return;}
     if (s->kind==SS_STACK) {station_stack_update(s,now);return;}
     if (s->kind == SS_VISION) {
@@ -690,7 +728,7 @@ void station_update(uint32_t now)
     }
     if (s->kind == SS_CHASSIS) {
         if (station_chassis_failed()) stn_fault("station chassis index failed; vehicle held");
-        else if (!station_chassis_busy()) step_finished();
+        else if (!station_chassis_busy() && !arm_busy()) step_finished();
         else if ((uint32_t)(now - stn.step_ms) > STN_STEP_TIMEOUT_MS)
             {stn_warning("index duration exceeds estimate",now);stn.step_ms=now;}
         return;

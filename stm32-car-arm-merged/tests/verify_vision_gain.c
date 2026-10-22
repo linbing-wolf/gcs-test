@@ -54,6 +54,23 @@ int main(void)
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==8);stop_request();
     }
+    for(area=0;area<3;area++) {
+        double x,y;uint32_t deadline;unsigned concurrent=0;
+        prepare_vision_debug();send_line(area==2 ? "vision debug F 2" : area==1 ? "vision debug E" : "vision debug D");
+        wait_debug_request(area==2);x=field_x;y=field_y;
+        peer_reply("MOVEXY,+40,-30",0);peer_reply(area==2 ? "STACK,700,-50,620,1" : "DISC,700,-50,620,1",0);
+        deadline=clock_ms+30000;
+        while(run.vision_debug && run.state!=RUN_FAULT && clock_ms<deadline) {
+            plant_step();
+            if(run.vector_move) {
+                CHECK(run.vector_target_mm[0]== -20 && run.vector_target_mm[1]== -15);
+                if(abs(run.forward_cmd_rpm)>1 && abs(run.wheel_rpm[0]-run.wheel_rpm[1])>2)concurrent++;
+            }
+        }
+        CHECK(clock_ms<deadline && run.state==RUN_IDLE && concurrent);
+        CHECK(fabs(field_x-x+15)<3.0 && fabs(field_y-y+20)<3.0);
+    }
+    puts("PASS MOVEXY half gain: signed40/-30 pixels converted once to20/-15mm for D/E/F simultaneous endpoints");
     printf("PASS configurable pixel gain: %u assertions; test-only0.5mm/px maps signed40px to20mm for D/E MOVE/MOVEY and F MOVE/MOVEY (STACK report alone never moves), not production calibration\n",assertions);
     return 0;
 }

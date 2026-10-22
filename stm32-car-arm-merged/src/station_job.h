@@ -35,6 +35,8 @@ void station_status(void);
 int station_chassis_start(int32_t delta_mm);
 /* 工位横移：正值向左、负值向右；沿用同一编码器/IMU子动作及互锁。 */
 int station_chassis_lateral_start(int32_t delta_mm);
+/* 两轴同时纠偏：正forward向前、正left向左；任一轴0时沿用单轴执行器。 */
+int station_chassis_xy_start(int32_t forward_mm,int32_t left_mm);
 int station_chassis_busy(void);
 int station_chassis_failed(void);
 

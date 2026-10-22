@@ -11,13 +11,25 @@
 #define ARM_LIFT_MAX_MM              135 /* 升降允许最高绝对坐标，mm；必须对应实际行程。 */
 #define ARM_LIFT_HOME_MM             135 /* 行驶/收拢目标高度，mm；135最高、0最低，上电须声明真实位置。 */
 #ifndef ARM_CLEARANCE_MM
-#define ARM_CLEARANCE_MM             110 /* 净空高度，mm；操作者确认110，实测达到后收回/转向，不在此停升降。 */
+#define ARM_CLEARANCE_MM             125 /* 通用离杯净空高度，mm；保留操作者当前125；车载出杯起转另用ARM_PLATFORM_TURN_START_LIFT_MM。 */
 #endif
 #ifndef ARM_LIFT_PARALLEL_ENABLED
-#define ARM_LIFT_PARALLEL_ENABLED      1 /* 1=连续升至135，实测到净空后联动；右侧下降直接到取放高度，车载杯仍先净空；0=原顺序。 */
+#define ARM_LIFT_PARALLEL_ENABLED      1 /* 1=升降与平推/旋转联动；直接搬运由ARM_DIRECT_TRANSFER_ENABLED选择；0=原顺序。 */
 #endif
 #ifndef ARM_STATION_PRESELECT_ENABLED
 #define ARM_STATION_PRESELECT_ENABLED  1 /* 1=粗加工/暂存离杯到净空后提前选下一杯；0=下一次取放时选杯。 */
+#endif
+#ifndef ARM_DIRECT_TRANSFER_ENABLED
+#define ARM_DIRECT_TRANSFER_ENABLED   1 /* 1=抓稳离杯后直转下一姿态，升降/平推同时到最终值；需升降联动=1；0=原收回路径。 */
+#endif
+#ifndef ARM_PLATFORM_TURN_START_LIFT_MM
+#define ARM_PLATFORM_TURN_START_LIFT_MM 110 /* 原料/粗加工抓回/车载杯夹紧后实际升到此高度才开始云台/平推，mm；继续升至135。 */
+#endif
+#ifndef ARM_CUP_EXIT_DESCENT_DELAY_MS
+#define ARM_CUP_EXIT_DESCENT_DELAY_MS 300u /* 各区夹紧后实际升到最高位再延迟下降/换杯，ms；当前300，0=到顶即下降，不等转向结束。 */
+#endif
+#if ARM_PLATFORM_TURN_START_LIFT_MM < ARM_LIFT_MIN_MM || ARM_PLATFORM_TURN_START_LIFT_MM > ARM_LIFT_HOME_MM
+#error Invalid_platform_turn_start_height
 #endif
 #if ARM_CLEARANCE_MM < ARM_LIFT_MIN_MM || ARM_CLEARANCE_MM > ARM_LIFT_HOME_MM
 #error Invalid_arm_clearance_height
@@ -29,7 +41,7 @@
 #define ARM_SLIDE_DIR_INVERT           1 /* 平推方向位反转开关，0/1；只随电机安装方向标定修改。 */
 #define ARM_LIFT_RPM                 4000u /* 升降位置模式目标转速，RPM；增大更快，实际速度受负载/驱动限制。 */
 #define ARM_SLIDE_RPM                4000u /* 平推位置模式目标转速，RPM；增大更快，实际到位仍看反馈。 */
-#define ARM_AXIS_ACCEL               220u /* 升降/平推驱动器加速度档位，0~255；非RPM/s，不改底盘档位200。 */
+#define ARM_AXIS_ACCEL               230u /* 升降/平推驱动器加速度档位，0~255；非RPM/s，不改底盘档位200。 */
 #define ARM_ENCODER_COUNTS_PER_REV 65536u /* 编码器计数/圈；须匹配驱动器CPOS协议，不能用来调速度。 */
 #define ARM_PULSES_PER_REV          3200u /* 位置指令脉冲/圈；对应16细分，须与驱动器设置一致。 */
 #define ARM_POSITION_TOLERANCE_MM      0.5f /* 到位误差窗口，不能把1mm指令的零位移算完成。 */
@@ -57,8 +69,8 @@
 #define ARM_PLATFORM_THIRD_DEG       256.0f /* 载物台3号杯对准夹爪的目标角，度；不是环位3。 */
 #define ARM_CHASSIS_STOP_HOLD_MS     200u /* 机构会话获取底盘状态的保持时间，ms；非每个抓放步骤的延时。 */
 #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u /* 底盘互锁等待诊断时限，ms；具体等待/日志行为见主控。 */
-#define ARM_SERVO_TIME_MS           400u /* 载物台插值时长，ms；减小会更快发完目标，舵机无到位反馈。 */
-#define ARM_YAW_TIME_MS             180u /* 云台插值时长，ms；减小加快指令变化，与末端保持40ms独立。 */
+#define ARM_SERVO_TIME_MS           300u /* 载物台插值时长，ms；减小会更快发完目标，舵机无到位反馈。 */
+#define ARM_YAW_TIME_MS             150u /* 云台插值时长，ms；减小加快指令变化，与末端保持40ms独立。 */
 #define ARM_YAW_SETTLE_MS            40u /* 最终云台PWM写入后的保持时间，ms；减小更快衔接，稳定性须实测。 */
 #define ARM_CLAW_TIME_MS             50u /* 夹爪开合插值时长，ms；与合爪后的抓稳保持120ms独立。 */
 #define ARM_CLAW_CLOSE_HOLD_MS      120u /* 最终合爪PWM写入后抓稳保持，ms；减小可能未抓稳就上升，张爪不加此等待。 */

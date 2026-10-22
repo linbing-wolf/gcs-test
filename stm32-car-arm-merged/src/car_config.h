@@ -11,6 +11,9 @@
 /* 1. 常用速度与加速度，RPM 为电机转速，驱动器加速度档位为200（与下面RPM/s速度斜坡不同）。 */
 #define CAR_TEST_RPM                60       /* test 模式上电默认速度；可用 rpm 命令改。 */
 #define CAR_RUN_RPM                 3000 /* runimu行驶速度请求上限，RPM；混控单轮另限300，改此值不等于实速3000。 */
+#ifndef CAR_ARM_TRANSLATION_OVERLAP_ENABLED
+#define CAR_ARM_TRANSLATION_OVERLAP_ENABLED 1 /* 1=实际高位收回后，云台/载物台旋转可与下一段前后/横移并行；0=平移等旋转完成。 */
+#endif
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
 #define CAR_RUN_REVISIT_LATERAL_ENABLED 1    /* 本轮完整走过的道路保持当前车头，以左右横移代替90度转向。 */
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */
@@ -133,11 +136,11 @@
 
 /* 4. 通信与等待参数。通常先看故障回传，不靠加大超时掩盖通信问题。 */
 #define CAR_DEBUG_UART_BAUD              115200
-/* 开始按钮：PC9，按下高电平；仅发送串口提示，不触发运动。 */
+/* 开始按钮：PC9，按下高电平；消抖后请求runimu C，长按不重复，上电按住不启动。 */
 #define CAR_START_BUTTON_GPIO                GPIOC
 #define CAR_START_BUTTON_GPIO_CLOCK          RCC_AHB1Periph_GPIOC
 #define CAR_START_BUTTON_PIN                 GPIO_Pin_9
-#define CAR_START_BUTTON_DEBOUNCE_MS          30u
+#define CAR_START_BUTTON_DEBOUNCE_MS          30u /* 按下/松开消抖时长，ms；与串口runimu C共用启动条件。 */
 /* XM1601：USART1 PB6 TX/PB7 RX，PC0低电平触发脚保持释放。
  * 9600是待现场确认的初值；qr baud命令只改STM32串口，不写模块波特率。 */
 #define CAR_SCANNER_UART_BAUD              9600u

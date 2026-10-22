@@ -65,6 +65,14 @@ int main(void)
     stn.count=0;
     push_move_to(55,65,1265);push(SS_CLAW,450);
     CHECK(compact_station_program()==1 && stn.count==2 && program[0].lift_mm==65);
+#if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
+    stn.count=0;
+    push(SS_LIFT,ARM_CLEARANCE_MM);push_transfer(55,5,126.5f,2);
+    push(SS_SLIDE,55);push(SS_LIFT,5);push(SS_YAW,1265);push_platform_yaw(2,126.5f);push(SS_CLAW,450);
+    CHECK(compact_station_program()==4 && stn.count==3);
+    CHECK(program[1].kind==SS_TRANSFER && program[1].slide_mm==55 && program[1].lift_mm==5 && program[2].kind==SS_CLAW);
+    CHECK(compact_station_program()==0);
+#endif
     stn.count=0;
     for(i=0;i<224u;i++)push(SS_YAW,(i&1u) ? 2560 : 1265);
     CHECK(compact_station_program()==0 && stn.count==224u);
