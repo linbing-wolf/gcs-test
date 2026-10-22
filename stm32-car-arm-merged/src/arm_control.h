@@ -6,6 +6,8 @@
 void arm_init(void);
 int arm_enabled(void);
 int arm_parked(void);
+/* 高位收回后，仅末尾云台/载物台回正尚在插值，可与离站预检和转弯重叠。 */
+int arm_departure_rotation_active(void);
 int arm_pose_known(void);
 int arm_command(const char *command, uint32_t now);
 void arm_update(uint32_t now);
@@ -21,6 +23,12 @@ int arm_platform_slot(void);
 int arm_platform_at_yaw(uint8_t slot, float work_yaw, uint32_t now);
 /* 工位高位收回时，载物台选杯与云台转向共用一次插值；完成后才可伸出/下降。 */
 int arm_platform_with_yaw(uint8_t slot, float target_yaw, uint32_t now);
+/* 高位收回起步：平推、云台、换杯、空爪与下降到lift目标并行。
+ * 车右侧直接传最终抓放高度，车载杯传净空高度后再下降；slot=0保持载物台。 */
+int arm_high_approach(int slide, int lift, float yaw, uint8_t slot, uint8_t open_claw, uint32_t now);
+/* 连续抬升至最高处，实际位置达到净空高度后启动收回/转向/可选选杯。
+ * 不在净空高度另停一次，保持夹爪；调用方先完成合爪保持或松爪。 */
+int arm_retract_with_yaw(float yaw, uint8_t slot, uint32_t now);
 /* 显示指令目标；不把舵机插值估计当作实测到位。 */
 void arm_target_now(int *slide,int *lift,float *yaw,float *claw);
 void arm_pose_now(int *slide, int *lift, float *yaw, float *claw);

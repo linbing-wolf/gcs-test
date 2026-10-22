@@ -169,7 +169,7 @@ static unsigned serve_peer(unsigned *offset)
             divisor=peer_stack_count==0 ? 100u : peer_stack_count==1 ? 10u : 1u;
             CHECK(vision_tx_bytes[*offset+4u]==',' && vision_tx_bytes[*offset+5u]=='0'+colors/divisor%10u);
             peer_stack_count++;
-            if(!peer_stack_hold)peer_reply("STACK,320,240",0);
+            if(!peer_stack_hold)peer_reply("STACK,320,240,0,1",0);
         } else if(n==1 && (vision_tx_bytes[*offset+3u]=='D' || vision_tx_bytes[*offset+3u]=='E')) {
             CHECK(run.state==RUN_STATION && (run.job==2 || run.job==3 || run.job==5) && !run_active);
             CHECK(station_chassis_pose_safe() && arm_lock.state==2);
@@ -312,18 +312,18 @@ static void raw_preparation_timing_tests(void)
             }
         }
         CHECK(!station_failed() && clock_ms<deadline && vision_tx_count==8 && first_yaw);
-        CHECK(clock_ms-start>=ARM_SERVO_TIME_MS);
+        CHECK(clock_ms-start>=ARM_YAW_TIME_MS);
         arm_pose_now(&slide,&lift,&yaw,&claw);
         CHECK(!arm_busy() && yaw==ARM_PICK_YAW_DEG && claw==ARM_CLAW_OPEN_DEG);
         if(!changed) {
-            CHECK(first_yaw-start<500 && clock_ms-start<ARM_SERVO_TIME_MS+500 && !arm_positions);
+            CHECK(first_yaw-start<500 && clock_ms-start<ARM_YAW_TIME_MS+500 && !arm_positions);
             printf("RAW_READY_TIMING yaw_start_ms=%lu vision_request_ms=%lu; simulation only\n",
                 (unsigned long)(first_yaw-start),(unsigned long)(clock_ms-start));
         } else {
             CHECK(arm_positions==2 && arm_trace_address[0]==5 && arm_trace_address[1]==7);
             CHECK(arm_trace_yaw_us[0]==home_pwm && arm_trace_yaw_us[1]==home_pwm);
-            CHECK(clock_ms-start>=ARM_SERVO_TIME_MS+ARM_CLAW_TIME_MS);
-            CHECK(clock_ms-start<ARM_SERVO_TIME_MS+ARM_CLAW_TIME_MS+1000u);
+            CHECK(clock_ms-start>=ARM_YAW_TIME_MS+ARM_CLAW_TIME_MS);
+            CHECK(clock_ms-start<ARM_YAW_TIME_MS+ARM_CLAW_TIME_MS+1000u);
         }
         stop_request();
     }
@@ -370,7 +370,7 @@ static void automatic_route_tests(void)
 {
     unsigned plan;
     for(plan=0;plan<2;plan++) {
-        unsigned offset=0,replies=0,waiting=0,last_job=0,raw_job=0;
+        unsigned offset=0,replies=0,waiting=0,last_job=0,raw_job=0,overlap_mask=0;
         uint32_t deadline,raw_start=0;int sent=0;
         prepare_arm_auto(plan);arm_speed_bias[0]=plan ? -15 : 1;arm_speed_bias[1]=plan ? 15 : -1;
         send_line(plan?"runimu C":"runimu A");CHECK(run_active && run.station_enabled);
@@ -400,20 +400,27 @@ static void automatic_route_tests(void)
                 unsigned served=serve_peer(&offset);
                 if(served) {
                     static const uint8_t colors[2][3]={{1,3,4},{3,1,4}};
-                    CHECK(raw_start && clock_ms-raw_start>=ARM_SERVO_TIME_MS);
+                    CHECK(raw_start && clock_ms-raw_start>=ARM_YAW_TIME_MS);
                     CHECK(served==1 && arm_platform_slot()==(int)(replies%3u+1u));
                     CHECK(vision_tx_bytes[offset-3u]==(uint8_t)('0'+colors[run.job==4][replies%3u]));
                 }
                 replies+=served;
             }
             plant_step();
+            if(run.departure_overlap) {
+                int slide,lift;unsigned wheel;
+                CHECK(run.job>=2 && run.job<=7 && arm_departure_rotation_active());
+                overlap_mask|=1u<<(run.job-1u);arm_pose_now(&slide,&lift,NULL,NULL);
+                CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
+                for(wheel=1;wheel<4;wheel++)CHECK(run.wheel_rpm[wheel]==run.wheel_rpm[0]);
+            }
             if(run.job!=last_job) {last_job=run.job;arm_positions=0;} /* 单工位保留完整轴轨迹，避免跨工位填满测试记录。 */
         }
 #if STN_ROUGH_PLACE_READY && STN_ROUGH_PLATFORM_TAKE_READY && (STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_PLACE_LIFT_MM) && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY && STN_STORAGE_LAYER_LIFT_MM > 0 && STN_STORAGE_LAYER_LIFT_MM <= ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM
         if(run.state!=RUN_DONE)fprintf(stderr,"FLOW job=%u state=%u: %s\n",run.job,run.state,output);
-        CHECK(sent && waiting>=1000 && replies==6 && clock_ms<deadline);
+        CHECK(sent && waiting>=1000 && replies==6 && clock_ms<deadline && overlap_mask==0x7eu);
         CHECK(run.state==RUN_DONE && !run_active && run.job==8 && run.edge==16);
-        CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && heading_reuses==3 && arm_ready() && arm_parked());
+        CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && heading_reuses==5 && arm_ready() && arm_parked());
         CHECK(peer_area_count[3]==1 && peer_area_count[6]==0 && peer_stack_count==3);
         /* 同一上电会话再跑一轮：不得继承上一轮码；首个B必须等新码。 */
         send_line("station");CHECK(strstr(output,"task_ready=0") && strstr(output,"colors=000 rings=000"));
@@ -445,7 +452,7 @@ static void automatic_route_tests(void)
         send_line("station");CHECK(strstr(output,"task_ready=0") && strstr(output,"colors=000 rings=000"));
     }
 #if STN_ROUGH_PLACE_READY && STN_ROUGH_PLATFORM_TAKE_READY && (STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_PLACE_LIFT_MM) && STN_STORAGE_PLACE_READY && STN_PLATFORM_TAKE_READY && STN_STORAGE_LAYER_LIFT_MM > 0 && STN_STORAGE_LAYER_LIFT_MM <= ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM
-    puts("PASS automatic A/C full configured flow: both batches and storage stacking, 8 jobs, 13960mm and three uninterrupted E passes; persistent nonzero5/7RPM, simulation only, NOT hardware acceptance");
+    puts("PASS automatic A/C full configured flow: both batches and storage stacking, 8 jobs, 13960mm and two uninterrupted E passes; persistent nonzero5/7RPM, simulation only, NOT hardware acceptance");
 #else
     puts("PASS automatic A/C: configured stages finish; missing/out-of-travel storage height or disabled calibration refuses before job advance");
 #endif
@@ -562,6 +569,53 @@ static void prepare_rough(unsigned batch, const char *task)
     peer_geometry=peer_disc_count=peer_move_count=0;
 }
 
+static void departure_overlap_tests(void)
+{
+    unsigned variant;
+    if(!STN_ROUGH_PLACE_READY || !STN_ROUGH_PLATFORM_TAKE_READY
+        || !(STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_YAW_DEG))return;
+    for(variant=0;variant<4;variant++) {
+        uint32_t deadline;unsigned offset=0,turn_seen=0;
+        uint16_t held_yaw,held_platform;
+        prepare_rough(0,"task 134+123+314+231");
+        run.completed_roads=0; /* 测试夹具：下段按首次道路转90度，验证实际转动与舵机插值重叠。 */
+        deadline=clock_ms+250000;
+        while(!run.departure_overlap && run.state!=RUN_FAULT && clock_ms<deadline) {
+            serve_peer(&offset);plant_step();
+        }
+        CHECK(run.departure_overlap && run_active && arm_busy() && arm_departure_rotation_active());
+        CHECK(run.job==3 && station_active());
+        deadline=clock_ms+2000;
+        while(run.departure_overlap && run.state!=RUN_FAULT && clock_ms<deadline) {
+            int slide,lift;unsigned i;
+            arm_pose_now(&slide,&lift,NULL,NULL);
+            CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
+            CHECK(run.velocity_phase!=VELOCITY_FORWARD && run.velocity_phase!=VELOCITY_STOP_FORWARD);
+            for(i=1;i<4;i++)CHECK(run.wheel_rpm[i]==run.wheel_rpm[0]); /* 只能原地转，不能前后/左右移动。 */
+            if(run.wheel_rpm[0]) {
+                CHECK(arm_busy() && arm_departure_rotation_active());turn_seen=1;
+                if(variant) {
+                    if(variant==1)stop_request();
+                    if(variant==2){bus_off=1;plant_step();}
+                    if(variant==3)send_line("obstacle");
+                    CHECK(!run_active && !run.departure_overlap && arm_failed() && !station_active());
+                    CHECK(run.state==(variant==1 ? RUN_STOPPED : RUN_FAULT));
+                    for(i=0;i<4;i++)CHECK(!simulated_wheel_rpm[i]);
+                    held_yaw=arm_yaw_us;held_platform=arm_platform_us;
+                    tick(600);CHECK(arm_yaw_us==held_yaw && arm_platform_us==held_platform);
+                    break;
+                }
+            }
+            plant_step();
+        }
+        CHECK(turn_seen && clock_ms<deadline);
+        if(!variant) {
+            CHECK(!run.departure_overlap && !station_active() && arm_parked() && arm_platform_slot()==1);
+            stop_request();
+        }
+    }
+    puts("PASS departure overlap: final high/retracted rotation overlaps real90-degree turn; wheel queue owned by chassis, no translation before parking; emergency/bus-off/obstacle stop both and hold PWM");
+}
 static void rough_index_tests(void)
 {
     static const uint8_t permutations[6][3]={{1,2,3},{1,3,2},{2,1,3},{2,3,1},{3,1,2},{3,2,1}};
@@ -589,7 +643,7 @@ static void rough_index_tests(void)
             if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN;ring=target;}
         }
         deadline=clock_ms+400000;
-        while(run.state!=RUN_FAULT && run.job==(batch ? 5 : 2) && clock_ms<deadline) {
+        while(run.state!=RUN_FAULT && (run.job==(batch ? 5 : 2) || run.departure_overlap) && clock_ms<deadline) {
             int slide,lift;float yaw,claw;
             serve_peer(&offset);plant_step();
             if(strstr(output,"[station aligned]")) {
@@ -625,7 +679,15 @@ static void rough_index_tests(void)
                 else if(yaw==ARM_YAW_HOME_DEG)CHECK(loaded==3 && placed==3 && taken==3 && returned==3 && events==expected_count);
                 else CHECK((prior_yaw==STN_ROUGH_YAW_DEG && yaw==ARM_PLACE_YAW_DEG)
                     || (prior_yaw==ARM_PLACE_YAW_DEG && yaw==STN_ROUGH_YAW_DEG));
-                CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
+                if(ARM_LIFT_PARALLEL_ENABLED && yaw==ARM_PLACE_YAW_DEG && !taken)
+                    CHECK(slide==ARM_PLACE_SLIDE_MM && lift==ARM_CLEARANCE_MM);
+                else if(ARM_LIFT_PARALLEL_ENABLED)
+                    CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
+                else {
+                    CHECK(lift==ARM_LIFT_HOME_MM);
+                    if(yaw==ARM_PLACE_YAW_DEG && !taken)CHECK(slide==ARM_PLACE_SLIDE_MM);
+                    else CHECK(slide==ARM_SLIDE_HOME_MM);
+                }
                 yaw_changes++;
             }
             prior_yaw=yaw;
@@ -644,7 +706,7 @@ static void rough_index_tests(void)
                 if(claw==ARM_CLAW_OPEN_DEG) {
                     CHECK(lift==STN_ROUGH_PLACE_LIFT_MM);
                     CHECK(placed<3 && taken==0 && fabs(physical_ring-order[placed])<0.15);
-                    CHECK(arm_platform_slot()==(int)placed+1);placed++;
+                    CHECK(arm_platform_slot()==(ARM_STATION_PRESELECT_ENABLED ? (int)((placed+1u)%3u+1u) : (int)placed+1));placed++;
                 } else if(claw==ARM_CLAW_CLOSE_DEG) {
                     CHECK(lift==STN_ROUGH_LIFT_MM);
                     CHECK(placed==3 && taken<3 && aligned==1 && fabs(physical_ring-order[taken])<0.15);taken++;
@@ -661,7 +723,7 @@ static void rough_index_tests(void)
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==(batch ? 6 : 3));
         CHECK(aligned==1 && peer_disc_count==1 && !peer_move_count && loaded==3 && placed==3 && taken==3 && returned==3 && yaw_changes==14
             && events==expected_count && arm_parked() && arm_platform_slot()==1);
-        CHECK(run.distance_mm==4567 && run.completed_roads==0x123);
+        CHECK(run.distance_mm==4567+(run.velocity_phase==VELOCITY_FORWARD ? run.action_mm : 0) && run.completed_roads==0x123);
         {RoadPoint point;CHECK(road_point(NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
         send_line("station");CHECK(strstr(output,"task_ready=1"));
         stop_request();
@@ -744,6 +806,7 @@ static void align_transport_tests(void)
             CHECK(vision_align_state()==VISION_PICK_WAITING && vision_tx_count==6);
             CHECK(vision_align_take_move(&offset,&received) && offset== -30);
             peer_reply("MOVE,20",0);peer_reply("MOVE,10",0);tick(1);
+            CHECK(vision_align_take_move(&offset,&received) && offset==20);
             CHECK(vision_align_take_move(&offset,&received) && offset==10);
             CHECK(!vision_align_take_move(&offset,&received));
             peer_reply("MOVE,-20",0);peer_reply("DISC,320,240,0,1",0);tick(8);
@@ -812,6 +875,7 @@ static void align_transport_tests(void)
                 CHECK(!vision_align_take_move(&move,NULL) && vision_tx_count==6);
             }
             peer_reply("MOVE,+300",0);peer_reply("MOVE,0",0);tick(1);
+            CHECK(vision_align_take_move(&move,NULL) && move==300);
             CHECK(vision_align_take_move(&move,NULL) && move==0);
             for(i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++) {
                 peer_reply(invalid[i],0);tick(1);CHECK(!vision_align_take_move(&move,NULL));
@@ -819,13 +883,13 @@ static void align_transport_tests(void)
             vision_cancel_pick();peer_reply("MOVE,+300",0);tick(1);
             CHECK(!vision_align_take_move(&move,NULL) && !run_active);
         }
-        puts("PASS signed MOVE parsing: optional plus, full signed16 values, zero supersedes pending command, invalid numbers rejected, idle ignored");
+        puts("PASS signed MOVE parsing: optional plus, full signed16 values, zero is an ordered no-motion command, invalid numbers rejected, idle ignored");
     }
     reset_plant(0,1.0);clock_ms=UINT32_MAX-100u;vision_request_align('D',2,clock_ms);tick(8);
     clock_ms+=24900u;peer_reply("MOVE,20",0);vision_update(clock_ms);
     CHECK(vision_align_state()==VISION_PICK_WAITING);
     clock_ms+=100u;vision_update(clock_ms);CHECK(vision_align_state()==VISION_PICK_WAITING);
-    puts("PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; latest sample consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered");
+    puts("PASS single D session: large-offset DISC ok=1 accepted, ok=0/malformed rejected; multiple MOVE keep waiting; each discrete command consumed once, final DISC ends task, next explicit visit may start a new D/E; no automatic R/READY or resend, terminal duplicates ignored; CRC/bounds/UART/deadline/wrap covered");
 }
 
 static void prepare_storage(unsigned batch, const char *task)
@@ -870,7 +934,7 @@ static void storage_index_tests(void)
             if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN;ring=target;}
         }
         deadline=clock_ms+250000;
-        while(run.state!=RUN_FAULT && run.job==(batch ? 6 : 3) && clock_ms<deadline) {
+        while(run.state!=RUN_FAULT && (run.job==(batch ? 6 : 3) || run.departure_overlap) && clock_ms<deadline) {
             int slide,lift;float yaw,claw;
             serve_peer(&offset);plant_step();
             if(strstr(output,"[station aligned]")) {
@@ -909,7 +973,7 @@ static void storage_index_tests(void)
                 CHECK(road_point(NODE_H,&point));
                 actual=2+(field_y-point.y)/(STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN);
                 CHECK(claw==ARM_CLAW_OPEN_DEG && taken==placed+1 && placed<3);
-                CHECK(fabs(actual-target)<0.15 && arm_platform_slot()==(int)placed+1);placed++;
+                CHECK(fabs(actual-target)<0.15 && arm_platform_slot()==(ARM_STATION_PRESELECT_ENABLED && placed<2 ? (int)placed+2 : (int)placed+1));placed++;
             }
             previous=claw;
         }
@@ -917,7 +981,7 @@ static void storage_index_tests(void)
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==(batch ? 7 : 4));
         CHECK(aligned==(batch ? 0u : 1u) && peer_disc_count==(batch ? 0u : 1u) && peer_stack_count==(batch ? 3u : 0u) && !peer_move_count && placed==3 && taken==3
             && events==expected_count && arm_parked() && arm_platform_slot()==1);
-        CHECK(run.distance_mm==4567 && run.completed_roads==0x123);
+        CHECK(run.distance_mm==4567+(run.velocity_phase==VELOCITY_FORWARD ? run.action_mm : 0) && run.completed_roads==0x123);
         {RoadPoint point;CHECK(road_point(NODE_H,&point) && hypot(field_x-point.x,field_y-point.y)<25);}
         stop_request();
     }
@@ -1012,8 +1076,8 @@ static void station_move_distance_tests(void)
 
 static void stack_transport_tests(void)
 {
-    static const char *const invalid[]={"STACK,320","STACK,320,240,60","STACK,-1,240","STACK,640,240","STACK,320,480"};
-    unsigned i;int16_t x,y;int32_t color,dx,dy,age;
+    static const char *const invalid[]={"STACK,320","STACK,320,240,60","STACK,320,240,0,0","STACK,320,240,0,1,7","STACK,320,240,x,1"};
+    unsigned i;int16_t x,y,px;int32_t color,dx,dy,age;
     reset_plant(0,1.0);vision_tx_ready=0;vision_request_stack(3,clock_ms);tick(10);
     peer_reply("STACK,321,239",0);tick(1);CHECK(vision_stack_state()==VISION_PICK_WAITING);
     vision_tx_ready=1;tick(10);
@@ -1021,15 +1085,16 @@ static void stack_transport_tests(void)
     CHECK(vision_tx_bytes[6]==peer_crc(vision_tx_bytes+2,4));
     peer_reply("MOVE,+40",0);peer_reply("DISC,320,240,0,1",0);peer_reply("PICK,3,320,240",0);tick(1);
     CHECK(vision_stack_state()==VISION_PICK_WAITING && vision_align_state()==VISION_PICK_IDLE);
+    CHECK(vision_align_take_move(&px,NULL) && px==40);
     for(i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++) {
         peer_reply(invalid[i],0);tick(1);CHECK(vision_stack_state()==VISION_PICK_WAITING);
     }
     peer_reply("STACK,320,240",1);tick(1);CHECK(vision_stack_state()==VISION_PICK_WAITING);
     peer_reply("NONE,F",0);peer_reply("BUSY",0);peer_reply("ERR,camera",0);tick(26000);
     CHECK(vision_stack_state()==VISION_PICK_WAITING && vision_tx_count==8);
-    peer_reply("STACK,350,180",0);tick(1);
+    peer_reply("STACK,350,180,71,1",0);tick(1);
     CHECK(vision_stack_state()==VISION_PICK_READY);vision_stack_result(&x,&y);CHECK(x==350 && y==180);
-    vision_display(clock_ms,&color,&dx,&dy,&age);CHECK(color==3 && dx==30 && dy== -60 && age==0);
+    vision_display(clock_ms,&color,&dx,&dy,&age);CHECK(color==3 && dx==71 && dy== -60 && age==0);
     peer_reply("STACK,100,100",0);tick(1);vision_stack_result(&x,&y);CHECK(x==350 && y==180);
     stop_request();CHECK(vision_stack_state()==VISION_PICK_IDLE && !run_active);
     peer_reply("STACK,320,240",0);tick(1);CHECK(vision_stack_state()==VISION_PICK_IDLE);
@@ -1050,7 +1115,7 @@ static void stack_correction_tests(void)
     if(!STN_STORAGE_PLACE_READY || !STN_PLATFORM_TAKE_READY || STN_STORAGE_LAYER_LIFT_MM<=0
        || STN_STORAGE_LAYER_LIFT_MM>ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM)return;
     for(variant=0;variant<3;variant++) {
-        unsigned offset=0,positions,returns=0;uint32_t deadline;int pixels=variant==0 ? 40 : variant==1 ? -40 : 0;
+        unsigned offset=0,positions;uint32_t deadline;int pixels=variant==0 ? 40 : variant==1 ? -40 : 0;
         char payload[40];RoadPoint point;
         prepare_storage(1,"task 134+231+314+123");field_y+=pixels;
         peer_stack_hold=1;deadline=clock_ms+30000;
@@ -1059,7 +1124,8 @@ static void stack_correction_tests(void)
         CHECK(peer_disc_count==0 && vision_tx_count==8 && !memcmp(vision_tx_bytes+3,"F,3",3));positions=arm_positions;
         peer_reply("PICK,3,320,240",0);peer_reply("DISC,320,240,0,1",0);peer_reply("NONE,F",0);tick(26000);
         CHECK(run.state==RUN_STATION && !run_active && arm_positions==positions && vision_tx_count==8);
-        snprintf(payload,sizeof(payload),"STACK,%d,240",320+pixels);peer_reply(payload,0);tick(1);
+        snprintf(payload,sizeof(payload),"MOVE,%d",pixels);peer_reply(payload,0);
+        peer_reply("STACK,600,450,620,1",0);tick(1); /* 终包坐标不再推导额外位移。 */
         deadline=clock_ms+60000;
         if(pixels) {
             while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
@@ -1072,18 +1138,12 @@ static void stack_correction_tests(void)
         }
         CHECK(road_point(NODE_H,&point) && fabs(field_y-point.y+150.0)<5.0); /* G3首块颜色3对应G2的3号位。 */
         peer_stack_hold=0;deadline=clock_ms+250000;
-        while(run.job==6 && run.state!=RUN_FAULT && clock_ms<deadline) {
+        while((run.job==6 || run.departure_overlap) && run.state!=RUN_FAULT && clock_ms<deadline) {
             serve_peer(&offset);plant_step();
-            if(strstr(output,"[stack return]")) {
-                int mm,slide,lift;float yaw,claw;
-                CHECK(sscanf(strstr(output,"[stack return]"),"[stack return] move_mm=%d",&mm)==1 && mm==pixels);
-                arm_pose_now(&slide,&lift,&yaw,&claw);
-                CHECK(slide==0 && lift==135 && yaw==126.5f && claw==ARM_CLAW_OPEN_DEG);returns++;
-            }
+            CHECK(!strstr(output,"[stack return]"));
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==7 && peer_stack_count==3 && peer_disc_count==0);
-        CHECK(returns==(pixels ? 1u : 0u));
-        CHECK(arm_parked() && fabs(field_y-point.y-pixels)<5.0);stop_request();
+        CHECK(arm_parked() && fabs(field_y-point.y)<5.0);stop_request();
     }
     prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;
     {unsigned offset=0;uint32_t deadline=clock_ms+30000;
@@ -1093,20 +1153,22 @@ static void stack_correction_tests(void)
     puts("PASS second-storage F: no E, F per material/color before pickup, 40/-40/0 pixel correction, no grip while waiting/moving, duplicate ignored, late reply resumes, 100 pickup/65 place retained, emergency cancels");
 }
 
-/* 独立车体位置模型核验双轴纠正与逆序恢复，包含每轴正/负/零。 */
+/* 独立车体位置模型核验双轴纠正保留，包含每轴正/负/零，无放料后反向回程。 */
 static void stack_xy_tests(void)
 {
     int xp,yp;
     if(!STN_STORAGE_PLACE_READY || !STN_PLATFORM_TAKE_READY || STN_STORAGE_LAYER_LIFT_MM<=0
        || STN_STORAGE_LAYER_LIFT_MM>ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM)return;
     for(xp=-40;xp<=40;xp+=40)for(yp=-40;yp<=40;yp+=40) {
-        uint32_t deadline;unsigned offset=0,positions,saw_x=0,saw_y=0,return_x=0,return_y=0;
+        uint32_t deadline;unsigned offset=0,positions,saw_x=0,saw_y=0;
         int picked=0,placed=0;double anchor_x,anchor_y;char payload[40];RoadPoint point;
         prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;deadline=clock_ms+30000;
         while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
         CHECK(clock_ms<deadline && peer_stack_count==1 && peer_disc_count==0);
         positions=arm_positions;anchor_x=field_x;anchor_y=field_y;
-        snprintf(payload,sizeof(payload),"STACK,%d,%d",320+xp,240+yp);peer_reply(payload,0);
+        snprintf(payload,sizeof(payload),"MOVE,%d",xp);peer_reply(payload,0);
+        snprintf(payload,sizeof(payload),"MOVEY,%d",yp);peer_reply(payload,0);
+        peer_reply("STACK,700,-50,620,1",0); /* 超画面/残差仅是报告，不可否决上位机结束。 */
         deadline=clock_ms+60000;
         while(!picked && run.state!=RUN_FAULT && clock_ms<deadline) {
             int slide,lift;float yaw,claw;
@@ -1117,7 +1179,7 @@ static void stack_xy_tests(void)
                     CHECK(xp && !saw_y && run.remaining_mm==40 && run.travel_sign==(xp>0 ? -1 : 1));saw_x=1;
                 }
                 if(run.station_shift && run.travel_axis==BODY_LEFT && !saw_y) {
-                    CHECK(yp && (!xp || saw_x) && run.remaining_mm==40 && run.travel_sign==(yp>0 ? -1 : 1));saw_y=1;
+                    CHECK(yp && (!xp || saw_x) && run.remaining_mm==40 && run.travel_sign==(yp>0 ? 1 : -1));saw_y=1;
                     peer_reply("STACK,0,0",0); /* 旧终包不能启动额外修正。 */
                 }
             }
@@ -1125,39 +1187,78 @@ static void stack_xy_tests(void)
             if(slide==35 && lift==100 && yaw==256 && claw==ARM_CLAW_CLOSE_DEG)picked=1;
         }
         CHECK(clock_ms<deadline && picked && saw_x==(xp!=0) && saw_y==(yp!=0));
-        CHECK(fabs(field_x-anchor_x+yp)<5.0 && fabs(field_y-anchor_y+xp)<5.0);
+        CHECK(fabs(field_x-anchor_x-yp)<5.0 && fabs(field_y-anchor_y+xp)<5.0);
         peer_stack_hold=0;deadline=clock_ms+250000;
-        while(run.job==6 && run.state!=RUN_FAULT && clock_ms<deadline) {
+        while((run.job==6 || run.departure_overlap) && run.state!=RUN_FAULT && clock_ms<deadline) {
             int slide,lift;float yaw,claw;
             serve_peer(&offset);plant_step();arm_pose_now(&slide,&lift,&yaw,&claw);
             if(!placed && slide==55 && lift==STN_STORAGE_LIFT_MM+STN_STORAGE_LAYER_LIFT_MM && yaw==126.5f && claw==ARM_CLAW_OPEN_DEG) {
-                CHECK(fabs(field_x-anchor_x+yp)<5.0 && fabs(field_y-anchor_y+xp)<5.0);placed=1;
+                CHECK(fabs(field_x-anchor_x-yp)<5.0 && fabs(field_y-anchor_y+xp)<5.0);placed=1;
             }
-            if(strstr(output,"[stack return]")) {
-                int mm;char axis[16];
-                CHECK(placed && sscanf(strstr(output,"[stack return]"),"[stack return] move_mm=%d axis=%15s",&mm,axis)==2);
-                CHECK(slide==0 && lift==135 && yaw==126.5f && claw==ARM_CLAW_OPEN_DEG);
-                if(!strcmp(axis,"lateral")) {CHECK(yp && mm==yp && !return_x);return_y++;}
-                else {CHECK(!strcmp(axis,"forward") && xp && mm==xp && (!yp || return_y));return_x++;}
-            }
+            CHECK(!strstr(output,"[stack return]"));
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==7 && placed);
-        CHECK(return_x==(xp!=0) && return_y==(yp!=0) && peer_stack_count==3 && peer_disc_count==0);
-        CHECK(road_point(NODE_H,&point) && fabs(field_x-point.x)<5.0 && fabs(field_y-point.y)<5.0);
+        CHECK(peer_stack_count==3 && peer_disc_count==0);
+        CHECK(road_point(NODE_H,&point) && fabs(field_x-point.x-yp)<5.0 && fabs(field_y-point.y+xp)<5.0);
         CHECK(arm_parked());stop_request();
     }
     /* 横移执行中急停，不能在迟到终包后继续另一轴或夹取。 */
     prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;
     {unsigned offset=0,positions;uint32_t deadline=clock_ms+30000;
      while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
-     CHECK(peer_stack_count==1);positions=arm_positions;peer_reply("STACK,320,280",0);
+     CHECK(peer_stack_count==1);positions=arm_positions;peer_reply("MOVEY,40",0);peer_reply("STACK,320,280,40,1",0);
      while(!run.station_shift && clock_ms<deadline)plant_step();
      CHECK(run.station_shift && run.travel_axis==BODY_LEFT);stop_request();peer_reply("STACK,320,240",0);tick(500);
      CHECK(!run_active && !station_active() && vision_stack_state()==VISION_PICK_IDLE && arm_positions==positions);}
-    puts("PASS STACK x/y: nine signed/zero pairs, y>240 RIGHT/y<240 LEFT, x then y before grip,100/65 poses, inverse y/x empty126.5 return, E/F counts preserved, late duplicate and lateral emergency");
+    puts("PASS F commanded x/y: nine signed/zero pairs, MOVEY positive LEFT/negative RIGHT, no motion from STACK coordinates, x then y before grip,100/65 poses, corrected position retained after placement; no inverse y/x return, E/F counts preserved, late duplicate and lateral emergency");
 }
 
-/* 两轴真实帧：最新值独立缓存，终包不能吞掉同轮MOVEY。 */
+/* 三块均收到非零纠偏，逐条核对全部移车：只有原索引和上位机命令，无隐藏反向回程。 */
+static void stack_retained_position_tests(void)
+{
+    static const int xp[3]={20,-15,5},yp[3]={-10,25,-5},rings[3]={3,2,1};
+    static const int expected_mm[10]={-150,-20,-10,150,15,25,150,-5,-5,-150};
+    static const BodyAxis expected_axis[10]={BODY_FORWARD,BODY_FORWARD,BODY_LEFT,BODY_FORWARD,BODY_FORWARD,BODY_LEFT,BODY_FORWARD,BODY_FORWARD,BODY_LEFT,BODY_FORWARD};
+    unsigned offset=0,sent=0,placed=0,started=0,was_shift=0;
+    uint32_t deadline;RoadPoint point;
+    if(!STN_STORAGE_PLACE_READY || !STN_PLATFORM_TAKE_READY || STN_STORAGE_LAYER_LIFT_MM<=0
+       || STN_STORAGE_LAYER_LIFT_MM>ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM)return;
+    prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;
+    CHECK(road_point(NODE_H,&point));deadline=clock_ms+250000;
+    while((run.job==6 || run.departure_overlap) && run.state!=RUN_FAULT && clock_ms<deadline) {
+        int slide,lift;float yaw,claw;
+        serve_peer(&offset);
+        if(peer_stack_count>sent) {
+            char payload[40];
+            CHECK(peer_stack_count==sent+1u && sent<3);
+            snprintf(payload,sizeof(payload),"MOVE,%d",xp[sent]);peer_reply(payload,0);
+            snprintf(payload,sizeof(payload),"MOVEY,%d",yp[sent]);peer_reply(payload,0);
+            peer_reply("STACK,700,-50,620,1",0);sent++;
+        }
+        plant_step();
+        CHECK(!strstr(output,"[stack return]"));
+        if(run.station_shift && !was_shift) {
+            CHECK(started<10 && run.travel_axis==expected_axis[started]);
+            CHECK(run.remaining_mm==abs(expected_mm[started]) && run.travel_sign==(expected_mm[started]>0 ? 1 : -1));started++;
+        }
+        was_shift=run.station_shift;
+        arm_pose_now(&slide,&lift,&yaw,&claw);
+        if(placed<sent && slide==55 && lift==STN_STORAGE_LIFT_MM+STN_STORAGE_LAYER_LIFT_MM
+           && yaw==126.5f && claw==ARM_CLAW_OPEN_DEG) {
+            unsigned i;int sum_x=0,sum_y=0;
+            for(i=0;i<=placed;i++){sum_x+=yp[i];sum_y-=xp[i];}
+            CHECK(fabs(field_x-point.x-sum_x)<8.0);
+            CHECK(fabs(field_y-point.y-(rings[placed]-2)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN-sum_y)<8.0);placed++;
+        }
+    }
+    CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==7 && sent==3 && placed==3 && started==10);
+    CHECK(peer_stack_count==3 && !peer_disc_count && arm_parked() && arm_platform_slot()==1);
+    CHECK(fabs(field_x-point.x-10)<8.0 && fabs(field_y-point.y+10)<8.0);
+    stop_request();
+    puts("PASS storage retained position: three nonzero F MOVE/MOVEY pairs, exact10 segments include only original ring indexing and six upper commands, no inverse/compensating motion; each placement and final cumulative offset retained; no extra E/F/R");
+}
+
+/* 两轴真实帧：每条离散位移入队，终包不能吞掉同轮MOVEY。 */
 static void movey_transport_tests(void)
 {
     unsigned area,i;
@@ -1182,14 +1283,16 @@ static void movey_transport_tests(void)
         peer_reply("MOVE,11",0);peer_reply("MOVEY,20",0);peer_reply("MOVEY,-87",0);tick(1);
         vision_display(clock_ms,&color,&dx,&dy,&age);CHECK(dx==11 && dy== -87);
         CHECK(vision_align_peek_axis(0,&px,NULL) && px==11);
-        CHECK(vision_align_peek_axis(1,&px,NULL) && px== -87);
+        CHECK(vision_align_peek_axis(1,&px,NULL) && px==20);
         peer_reply("DISC,345,115,30,1",0);peer_reply("MOVEY,99",0);tick(1);
         CHECK(vision_align_state()==VISION_PICK_READY);
+        CHECK(vision_align_take_axis(1,&px,NULL) && px==20);
         CHECK(vision_align_take_axis(1,&px,NULL) && px== -87);
         CHECK(vision_align_take_move(&px,NULL) && px==11);
         CHECK(!vision_align_take_axis(1,&px,NULL) && !vision_align_take_axis(2,&px,NULL));
         vision_request_align(area ? 'E' : 'D',2,clock_ms);tick(8);
         peer_reply("MOVEY,-87",0);peer_reply("MOVEY,0",0);tick(1);
+        CHECK(vision_align_take_axis(1,&px,NULL) && px== -87);
         CHECK(vision_align_take_axis(1,&px,NULL) && px==0);
         peer_reply("MOVEY,40",0);tick(1);vision_receive_byte(0,1);tick(1);
         CHECK(vision_align_state()==VISION_PICK_WAITING && vision_align_take_axis(1,&px,NULL) && px==40);
@@ -1197,34 +1300,28 @@ static void movey_transport_tests(void)
         peer_reply("MOVEY,-40",0);tick(1);vision_cancel_pick();peer_reply("MOVEY,30",0);tick(1);
         CHECK(!vision_align_take_axis(1,&px,NULL));
         vision_request_stack(1,clock_ms);tick(10);peer_reply("MOVEY,30",0);tick(1);
-        CHECK(vision_stack_state()==VISION_PICK_WAITING && !vision_align_take_axis(1,&px,NULL));
+        CHECK(vision_stack_state()==VISION_PICK_WAITING && vision_align_take_axis(1,&px,NULL) && px==30);
         vision_cancel_pick();CHECK(vision_tx_count==20);
     }
     reset_plant(0,1.0);clock_ms=UINT32_MAX-100u;vision_request_align('D',2,clock_ms);tick(8);
     clock_ms+=200u;peer_reply("MOVEY,-40",0);vision_update(clock_ms);
     {int16_t px;uint32_t ms;CHECK(vision_align_take_axis(1,&px,&ms) && px== -40 && ms==clock_ms);}
-    puts("PASS MOVEY transport: signed16/full magnitude/zero, per-axis latest slots, paired frames, early DISC retains both, terminal/idle/F fencing, CRC/UART/deadline, cancellation; no R/resend");
+    puts("PASS MOVEY transport: signed16/full magnitude/zero, ordered per-command queue, paired frames, early DISC retains both, terminal/idle fencing and F commands, CRC/UART/deadline, cancellation; no R/resend");
 }
 static void station_movey_tests(void)
 {
     unsigned area,variant;
-    for(area=0;area<2;area++)for(variant=0;variant<6;variant++) {
+    for(area=0;area<2;area++)for(variant=0;variant<4;variant++) {
         uint32_t deadline;unsigned positions,shifts=0,was_shift=0,aligned=0;
-        int xp=variant==0 || variant>=4 ? 11 : 0;
-        int yp=variant==0 ? -87 : variant==1 ? 40 : variant==2 ? -40 : variant>=4 ? -23 : 0;
+        int xp=variant==0 ? 11 : 0;
+        int yp=variant==0 ? -87 : variant==1 ? 40 : variant==2 ? -40 : 0;
         double anchor_x,anchor_y;uint16_t yaw_pwm;
         if(!alignment_station_enabled(area))continue;
         if(area)prepare_storage(0,"task 134+231+314+123");else prepare_rough(0,"task 134+231+314+123");
         deadline=clock_ms+60000;
         while((vision_align_state()!=VISION_PICK_WAITING || vision_tx_count<6) && clock_ms<deadline)plant_step();
         CHECK(clock_ms<deadline);positions=arm_positions;yaw_pwm=arm_yaw_us;anchor_x=field_x;anchor_y=field_y;
-        if(variant>=4) {
-            peer_reply("MOVE,11",0);tick(1);
-            while(!run.station_shift && clock_ms<deadline)plant_step();
-            CHECK(run.station_shift && run.travel_axis==BODY_FORWARD && run.remaining_mm==11 && run.travel_sign== -1);
-            shifts=was_shift=1;
-            peer_reply("MOVEY,13",0);peer_reply("MOVEY,-23",0);peer_reply("MOVE,40",0);peer_reply("MOVE,0",0);
-        } else {
+        {
             char payload[32];snprintf(payload,sizeof(payload),"MOVE,%+d",xp);peer_reply(payload,0);
             snprintf(payload,sizeof(payload),"MOVEY,%+d",yp);peer_reply(payload,0);
         }
@@ -1236,17 +1333,11 @@ static void station_movey_tests(void)
                 CHECK(run.travel_axis==(xp && shifts==1 ? BODY_FORWARD : BODY_LEFT));
                 CHECK(run.remaining_mm==abs(xp && shifts==1 ? xp : yp));
                 CHECK(run.travel_sign==(xp && shifts==1 ? (xp>0 ? -1 : 1) : (yp>0 ? 1 : -1)));
-                if(variant==5 && run.travel_axis==BODY_LEFT) {
-                    stop_request();peer_reply("MOVEY,40",0);tick(500);
-                    CHECK(!run_active && !station_active() && vision_align_state()==VISION_PICK_IDLE && arm_positions==positions);
-                    break;
-                }
             }
             CHECK(arm_positions==positions && arm_yaw_us==yaw_pwm);
             was_shift=run.station_shift;
             if(strstr(output,"[station aligned]"))aligned=1;
         }
-        if(variant==5) {CHECK(!aligned && shifts==2);continue;}
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && aligned && shifts==(unsigned)((xp!=0)+(yp!=0)));
         CHECK(vision_tx_count==6 && vision_tx_bytes[3]==(area ? 'E' : 'D'));
         /* 独立场地坐标：H朝+y，左横移向+x；D朝+x，左横移向-y。 */
@@ -1271,7 +1362,79 @@ static void station_movey_tests(void)
         while(!strstr(output,"[station aligned]") && clock_ms<deadline) {CHECK(arm_positions==positions);plant_step();}
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==6);stop_request();
     }
-    puts("PASS D/E MOVEY integration: positive LEFT/negative RIGHT, zero skips, paired11/-87 and early DISC, latest in-motion y/zero x, full encoder targets and independent displacement, no grip/yaw change before both axes complete, lateral emergency");
+    puts("PASS D/E MOVEY integration: positive LEFT/negative RIGHT, zero skips, paired11/-87 and early DISC, ordered in-motion commands, full encoder targets and independent displacement, no grip/yaw change before both axes complete, lateral emergency");
+}
+
+/* 一个上位机任务内的多轮配对指令不被覆盖；结束报告绝不能额外生成位移。 */
+static void upper_motion_fifo_tests(void)
+{
+    unsigned area,cancel;
+    static const int expected_mm[]={-11,13,-23,-40,7};
+    static const unsigned expected_axis[]={BODY_FORWARD,BODY_LEFT,BODY_LEFT,BODY_FORWARD,BODY_FORWARD};
+    for(area=0;area<3;area++)for(cancel=0;cancel<2;cancel++) {
+        unsigned offset=0,positions,started=0,was_shift=0,finished=0;
+        uint32_t deadline;double anchor_x,anchor_y;
+        if(!alignment_station_enabled(area!=0))continue;
+        if(area==2 && (STN_STORAGE_LAYER_LIFT_MM<=0 || STN_STORAGE_LAYER_LIFT_MM>ARM_LIFT_MAX_MM-STN_STORAGE_LIFT_MM))continue;
+        if(area)prepare_storage(area==2,"task 134+231+314+123");
+        else prepare_rough(0,"task 134+231+314+123");
+        deadline=clock_ms+60000;peer_stack_hold=1;
+        while(clock_ms<deadline) {
+            if(area==2){serve_peer(&offset);if(peer_stack_count)break;}
+            else if(vision_align_state()==VISION_PICK_WAITING && vision_tx_count>=6)break;
+            plant_step();
+        }
+        CHECK(clock_ms<deadline);positions=arm_positions;anchor_x=field_x;anchor_y=field_y;
+        peer_reply("MOVE,+11",0);tick(1);
+        /* 首条已启动/正在预检时，连续收到另一轮；0不撤销已入队的40。 */
+        peer_reply("MOVEY,+13",0);peer_reply("MOVEY,-23",0);peer_reply("MOVE,+40",0);
+        peer_reply("MOVE,0",0);peer_reply("MOVE,-7",0);peer_reply("MOVEY,0",0);
+        peer_reply(area==2 ? "STACK,700,-50,620,1" : "DISC,700,-50,620,1",0);
+        peer_reply("MOVE,999",0); /* 结束通知之后不属于本任务。 */
+        while(clock_ms<deadline && !finished && run.state!=RUN_FAULT) {
+            plant_step();
+            if(run.station_shift && !was_shift) {
+                int mm;
+                CHECK(started<5);mm=expected_mm[started];
+                CHECK(run.travel_axis==expected_axis[started] && run.remaining_mm==abs(mm));
+                CHECK(run.travel_sign==(mm>0 ? 1 : -1));started++;
+                if(cancel && started==2) {
+                    stop_request();peer_reply("MOVEY,88",0);tick(500);
+                    CHECK(!run_active && !station_active() && arm_positions==positions);
+                    CHECK(!vision_motion_peek(NULL,NULL,NULL));break;
+                }
+            }
+            CHECK(arm_positions==positions);was_shift=run.station_shift;
+            finished=strstr(output,area==2 ? "[station stack]" : "[station aligned]")!=NULL;
+        }
+        if(cancel){CHECK(started==2 && !finished);continue;}
+        CHECK(clock_ms<deadline && run.state!=RUN_FAULT && finished && started==5);
+        CHECK(fabs(field_x-anchor_x-(area ? -10 : -44))<8.0);
+        CHECK(fabs(field_y-anchor_y-(area ? -44 : 10))<8.0);
+        CHECK(vision_tx_count==(area==2 ? 8u : 6u));
+        if(area==2) {
+            RoadPoint point;
+            peer_stack_hold=0;deadline=clock_ms+250000;
+            while(peer_stack_count<2 && run.state!=RUN_FAULT && clock_ms<deadline) {
+                serve_peer(&offset);plant_step();
+                CHECK(!strstr(output,"[stack return]"));
+            }
+            CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==6);
+            CHECK(peer_stack_count==2 && !peer_disc_count && station_chassis_pose_safe());
+            CHECK(road_point(NODE_H,&point) && fabs(field_x-point.x+10)<8.0 && fabs(field_y-point.y+44)<8.0);
+        }
+        stop_request();
+    }
+    /* 完整32项边界和第33项明确溢出日志，不能静默覆盖队首。 */
+    {
+        unsigned i;uint8_t axis;int16_t pixels;
+        reset_plant(0,1.0);vision_request_stack(1,clock_ms);tick(10);
+        for(i=0;i<33;i++){peer_reply("MOVE,7",0);tick(1);}
+        CHECK(strstr(output,"motion queue full"));
+        for(i=0;i<32;i++){CHECK(vision_motion_peek(&axis,&pixels,NULL) && !axis && pixels==7);vision_motion_take();}
+        CHECK(!vision_motion_peek(NULL,NULL,NULL));vision_cancel_pick();
+    }
+    puts("PASS upper MOVE FIFO: D/E/F signed pixel commands execute11x/13y/-23y/40x/0x/-7x/0y exactly in wire order, no overwrite or gain duplication; terminal coordinate/residual reports generate no motion; no grip before drain; cancellation clears queue;32-entry boundary logs overflow without replacing old commands");
 }
 
 /* 自动工位逐轴注入异常标志；同一作业继续到离站，不伪造位置完成。 */
@@ -1286,7 +1449,7 @@ static void station_axis_status_log_only_tests(void)
         if(area)prepare_storage(0,"task 134+231+314+123");else prepare_rough(0,"task 134+231+314+123");
         arm_status_override[axis]=flags[i];deadline=clock_ms+500000;
         snprintf(expected,sizeof(expected),"[arm axis warning] addr=%u flags_dec=%u",axis ? 5u : 7u,(unsigned)flags[i]);
-        while(run.job==job && run.state!=RUN_FAULT && clock_ms<deadline) {
+        while((run.job==job || run.departure_overlap) && run.state!=RUN_FAULT && clock_ms<deadline) {
             int slide,lift;float yaw,claw;
             serve_peer(&offset);plant_step();CHECK(!strstr(output,"[arm fault]"));
             if(strstr(output,expected))warning++;
@@ -1319,7 +1482,7 @@ static void station_alignment_tests(void)
             if(storage)field_y+=9.0;else field_x+=9.0;
         }
         peer_geometry=variant==2 ? 3u : 1u;deadline=clock_ms+500000;
-        while(run.state!=RUN_FAULT && run.job==job && clock_ms<deadline) {
+        while(run.state!=RUN_FAULT && (run.job==job || run.departure_overlap) && clock_ms<deadline) {
             serve_peer(&offset);plant_step();
             if(strstr(output,"[station correction]")) {
                 unsigned logged_job,logged_ring,total;int pixels,mm;
@@ -1341,7 +1504,7 @@ static void station_alignment_tests(void)
         }
         if(run.state==RUN_FAULT)fprintf(stderr,"ALIGN storage=%u direction=%u: %s\n",storage,variant,output);
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==job+1u && (variant==2 ? !micro && !peer_move_count : micro>=1 && peer_move_count>=micro) && peer_disc_count==1);
-        CHECK(arm_parked() && arm_platform_slot()==1 && run.distance_mm==4567 && run.completed_roads==0x123);
+        CHECK(arm_parked() && arm_platform_slot()==1 && run.distance_mm==4567+(run.velocity_phase==VELOCITY_FORWARD ? run.action_mm : 0) && run.completed_roads==0x123);
         CHECK(road_point(storage ? NODE_H : NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);
         if(variant>=3) {
             CHECK(clock_ms<deadline && run.station_departing && arm_lock.state==2);
@@ -1417,7 +1580,103 @@ static void station_alignment_tests(void)
         CHECK(run.state!=RUN_FAULT && clock_ms>=deadline && station_active() && !arm_positions && peer_disc_count==1 && peer_move_count>0);
         CHECK(vision_tx_count==6);stop_request();
     }
-    puts("PASS station vision: rough D once / first storage E once at entry ring2 yaw126.5; second storage direct F without E; no target/return D/E, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in commanded millimeters, latest per-axis commands retained during motion and terminal DISC waits for both axes; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel");
+    puts("PASS station vision: rough D once / first storage E once at entry ring2 yaw126.5; second storage direct F without E; no target/return D/E, continuous MOVE/DISC, no R; one D per target drives independent +/-9mm geometry in commanded millimeters, all discrete commands retained in FIFO during motion and terminal DISC waits for both axes; persistent +/-5 and +/-40RPM feedback crosses initial acquisition, PREFLIGHT, micro/index, reacquisition, all grips and departure; missing camera/deadlines retain task, valid late DISC resumes; explicit stop and actual driver faults cancel");
+}
+
+static void prepare_vision_debug(void)
+{
+    reset_plant(0,1.15);send_line("arm on");tick(500);
+    CHECK(arm_ready()==0 && arm_lock.state==2);
+    send_line("arm pose 0 135 0 45");send_line("arm platform pose 20");
+    CHECK(arm_ready() && arm_platform_known() && !station_task_ready());
+    send_line("station auto on");
+}
+static void wait_debug_request(int stack)
+{
+    uint32_t deadline=clock_ms+10000;
+    while(clock_ms<deadline && ((stack ? vision_stack_state() : vision_align_state())!=VISION_PICK_WAITING
+           || vision_tx_count<(stack ? 8u : 6u)))plant_step();
+    CHECK(clock_ms<deadline && run.vision_debug && run.state==RUN_STATION && !run_active);
+}
+static void vision_debug_tests(void)
+{
+    unsigned area,i,variant;
+    static const char *const starts[]={"vision debug","vision debug E","vision debug F 1","vision debug F 2","vision debug F 3","vision debug F 4"};
+    static const int distances[]={-11,13,3,-20};
+    for(area=0;area<6;area++) {
+        uint32_t deadline;unsigned started=0,was_shift=0;
+        uint16_t claw,platform;int32_t first,second,after_first,after_second;
+        double x,y;int slide,lift;float yaw;
+        prepare_vision_debug();claw=arm_claw_us;platform=arm_platform_us;
+        if(area&1u){send_line("station auto off");send_line("task 134+231+314+123");}
+        station_task_words(&first,&second);x=field_x;y=field_y;
+        send_line(starts[area]);CHECK(run.vision_debug);wait_debug_request(area>=2);
+        CHECK(arm_positions==0 && arm_claw_us==claw && arm_platform_us==platform);
+        CHECK(vision_tx_bytes[3]==(area>=2 ? 'F' : area==1 ? 'E' : 'D'));
+        if(area>=2)CHECK(vision_tx_bytes[4]==',' && vision_tx_bytes[5]=='0'+area-1 && vision_tx_bytes[6]==peer_crc(vision_tx_bytes+2,4));
+        send_line("vision debug status");CHECK(strstr(output,"[vision debug] active=1"));
+        send_line("vision debug D");CHECK(strstr(output,"vision debug rejected") && run.vision_debug);
+        send_line("vision pick 1");CHECK(strstr(output,"vision rejected"));
+        send_line("arm load1");CHECK(!arm_positions && !arm_busy());
+        peer_reply("MOVE,+11",0);peer_reply("MOVEY,+13",0);peer_reply("MOVE,-3",0);peer_reply("MOVEY,-20",0);
+        peer_reply(area>=2 ? "STACK,700,-50,620,1" : "DISC,700,-50,620,1",0);
+        deadline=clock_ms+60000;
+        while(run.vision_debug && run.state!=RUN_FAULT && clock_ms<deadline) {
+            plant_step();
+            if(run.station_shift && !was_shift) {
+                int mm;CHECK(started<4);mm=distances[started];
+                CHECK(run.travel_axis==((started&1u) ? BODY_LEFT : BODY_FORWARD));
+                CHECK(run.remaining_mm==abs(mm) && run.travel_sign==(mm>0 ? 1 : -1));started++;
+            }
+            was_shift=run.station_shift;
+            CHECK(!arm_positions && arm_claw_us==claw && arm_platform_us==platform);
+        }
+        CHECK(clock_ms<deadline && started==4 && !run.vision_debug && !run_active && run.state==RUN_IDLE && !station_active());
+        CHECK(strstr(output,"[vision debug done]") && vision_tx_count==(area>=2 ? 8u : 6u));
+        CHECK(fabs(field_x-x+7)<6 && fabs(field_y-y+8)<6);
+        arm_pose_now(&slide,&lift,&yaw,NULL);
+        CHECK(slide==0 && lift==135 && yaw==(area ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG));
+        station_task_words(&after_first,&after_second);CHECK(first==after_first && second==after_second);
+        CHECK(station_auto_enabled()==!(area&1u));
+        x=field_x;y=field_y;tick(2000);
+        CHECK(run.state==RUN_IDLE && !run_active && !arm_positions && fabs(field_x-x)<0.01 && fabs(field_y-y)<0.01);
+        CHECK(arm_claw_us==claw && arm_platform_us==platform && vision_tx_count==(area>=2 ? 8u : 6u));
+        send_line("vision debug off");CHECK(strstr(output,"inactive") && arm_pose_known() && !arm_failed());
+    }
+    /* 不替代正在运行的路线或工位，不用任务码/抓放标定表绕过其他作业。 */
+    for(variant=0;variant<5;variant++) {
+        prepare_vision_debug();
+        if(variant==0){send_line("arm stop");}
+        if(variant==1)send_line("arm pose 1 135 0 45");
+        if(variant==2)send_line("arm pose 0 100 0 45");
+        if(variant==3){frozen_imu=1;tick(CAR_IMU_MAX_AGE_MS+10);}
+        if(variant==4){run_active=1;run.state=RUN_PREFLIGHT;}
+        send_line("vision debug D");CHECK(!run.vision_debug && !vision_tx_count && !arm_positions && strstr(output,"vision debug rejected"));
+        if(variant==4){CHECK(run_active && run.state==RUN_PREFLIGHT);run_active=0;}
+    }
+    {static const char *const bad[]={"vision debug F","vision debug F 0","vision debug F 5","vision debug F 2x","vision debug D x","vision debug X"};
+     prepare_vision_debug();
+     for(i=0;i<sizeof(bad)/sizeof(bad[0]);i++){send_line(bad[i]);CHECK(!run.vision_debug && !vision_tx_count && strstr(output,"vision debug usage"));}}
+    /* 等回包、移车、云台准备期间退出/急停均取消，迟到指令不能重新启动。 */
+    for(variant=0;variant<4;variant++) {
+        uint16_t held;uint32_t deadline;
+        prepare_vision_debug();send_line("vision debug D");
+        if(variant!=2)wait_debug_request(0);
+        if(variant==1 || variant==3) {
+            peer_reply("MOVE,30",0);peer_reply("MOVEY,20",0);deadline=clock_ms+10000;
+            while(!run.station_shift && clock_ms<deadline)plant_step();
+            CHECK(run.station_shift && run.vision_debug);
+        }
+        if(variant==3)stop_request();else {send_line("vision debug off");tick(2);}
+        held=arm_yaw_us;
+        CHECK(!run.vision_debug && !run_active && !station_active() && arm_failed() && arm_lock.state==3);
+        CHECK(!vision_motion_peek(NULL,NULL,NULL));
+        peer_reply("MOVE,99",0);peer_reply("MOVEY,99",0);peer_reply("DISC,320,240,0,1",0);tick(1000);
+        CHECK(!run_active && !station_active() && arm_yaw_us==held && !arm_positions);
+    }
+    prepare_vision_debug();send_line("vision debug E");wait_debug_request(0);bus_off=1;tick(20);
+    CHECK(!run.vision_debug && run.state==RUN_FAULT && !run_active && arm_failed());
+    puts("PASS standalone vision debug: default/D rough,E storage,F1-4 no task required; existing pose/platform declarations retained; prepare only observation yaw,4 ordered MOVE/MOVEY then terminal, no grip/axis/platform/index/inverse return/route for2s after completion; task and auto flag preserved; exact once requests/no R; ownership, parse/pose/IMU rejection; off/! during wait, yaw and motion cancels; bus-off clears debug");
 }
 
 #ifndef STATION_TEST_MAIN
@@ -1428,7 +1687,7 @@ int STATION_TEST_MAIN(void)
     CHECK(STN_STORAGE_YAW_DEG==126.5f && STN_STORAGE_ALIGN_YAW_DEG==126.5f);
     CHECK(STN_ROUGH_YAW_DEG==0.0f || STN_ROUGH_YAW_DEG==126.5f); /* 0仅用于未标定测试变体。 */
     CHECK(ARM_PICK_YAW_DEG==131.0f && ARM_PLACE_YAW_DEG==256.0f && ARM_YAW_HOME_DEG==0.0f);
-    task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();scan_during_turn_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_move_distance_tests();stack_transport_tests();stack_correction_tests();stack_xy_tests();movey_transport_tests();station_movey_tests();station_axis_status_log_only_tests();station_alignment_tests();
+    vision_debug_tests();task_and_stop_tests();vision_tests();align_transport_tests();task_round_lifetime_tests();loading_tests();scan_handoff_tests();scan_during_turn_tests();raw_preparation_timing_tests();raw_last_return_tests();automatic_route_tests();raw_wheel_log_only_tests();automatic_fault_tests();raw_preparation_fault_tests();automatic_obstacle_return_test();departure_overlap_tests();rough_index_tests();storage_index_tests();station_launch_tolerance_tests();station_move_distance_tests();stack_transport_tests();stack_correction_tests();stack_xy_tests();stack_retained_position_tests();movey_transport_tests();station_movey_tests();upper_motion_fifo_tests();station_axis_status_log_only_tests();station_alignment_tests();
     printf("PASS station/vision integration: %u assertions; ready_flags=%d/%d/%d; simulation only\n",assertions,STN_ROUGH_PLACE_READY,STN_STORAGE_PLACE_READY,STN_PLATFORM_TAKE_READY);
     return 0;
 }

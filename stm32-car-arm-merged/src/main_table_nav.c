@@ -22,6 +22,7 @@
 #include "station_config.h"
 #include "vision_link.h"
 #include "hmi_status.h"
+#include "can_tx.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -138,8 +139,9 @@ typedef struct
     uint16_t completed_roads; /* 本轮已按反馈完整走完的无向道路；部分路段不计入。 */
     uint8_t imu_mode;         /* 已建立闭环会话，供诊断和中断采样故障检查。 */
     uint8_t turn_only, translation_only;
-    uint8_t station_enabled, station_phase, scan_turn_stage;
+    uint8_t station_enabled, station_phase, scan_turn_stage, vision_debug;
     uint8_t station_departing, station_speed_logged; /* 工位离站预检范围及每轮日志去重。 */
+    uint8_t departure_overlap; /* 末尾云台/载物台回正与离站预检/转弯重叠；未完成前不平移。 */
     uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
     uint8_t transition_ready; /* 仅本段通过距离/航向/四轮停稳后，可向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
@@ -720,6 +722,7 @@ static int motor_sync(void *user)
 static void motor_stop(void *user, uint8_t addr)
 {
     (void) user;
+    can_tx_cancel(addr);
     Emm_V5_Stop_Now(addr, false);
     delay_ms(1);
     Emm_V5_Vel_Control(addr, 0, 0, CAR_STOP_ACCELERATION, false);
@@ -830,12 +833,41 @@ static void run_status(void)
     text("\r\n");
 }
 
+/* 仅记录邮箱背压；ESR/TSR记录遇到积压时的硬件状态。 */
+static void can_tx_status(void)
+{
+    CanTxSnapshot s;can_tx_snapshot(&s);
+    text("[can tx] queued=");number(s.queued);text(" high_water=");number(s.high_water);
+    text(" mailbox_waits=");number(s.mailbox_waits);text(" queue_overflows=");number(s.queue_overflows);
+    text(" cancelled=");number(s.cancelled);text(" blocked=");number(s.blocked);
+    text(" addr=");number(s.head_id>>8);text(" packet=");number(s.head_id&255u);
+    text(" command_dec=");number(s.head_command);text(" ESR_dec=");number(s.esr);text(" TSR_dec=");number(s.tsr);
+    text(" rejected_addr=");number(s.rejected_id>>8);text(" rejected_command_dec=");number(s.rejected_command);
+    text(" rejected_ESR_dec=");number(s.rejected_esr);text(" rejected_TSR_dec=");number(s.rejected_tsr);text("\r\n");
+}
+static void can_tx_update(void)
+{
+    static uint32_t warned_ms;
+    static uint8_t warned,waiting_logged;
+    CanTxSnapshot s;
+    can_tx_service();can_tx_snapshot(&s);
+    if(s.blocked) {
+        if(!warned || (uint32_t)(clock_ms-warned_ms)>=1000u) {
+            warned=waiting_logged=1;warned_ms=clock_ms;
+            text("[can tx waiting] mailboxes busy; commands retained\r\n");can_tx_status();
+        }
+    } else if(waiting_logged) {
+        waiting_logged=0;text("[can tx resumed] queued frames submitted; motor feedback still required\r\n");
+    }
+}
+
 static void feedback_status(void)
 {
     uint8_t i;
     text("[feedback] invalid="); number(invalid_can_replies);
     text(" rejected_shape="); number(rejected_can_frames);
     text(" can_rx_fault="); number(can_rx_fault); text("\r\n");
+    can_tx_status();
     for (i = 0; i < MOTOR_COUNT; i++) {
         MotorFeedback *feedback = &motor_feedback[i];
         text("[motor] addr="); number(i + 1u);
@@ -895,10 +927,12 @@ static void run_warning(const char *reason)
 
 static void run_fault(const char *reason)
 {
+    can_tx_cancel(0);if(run.vision_debug)run.job=0;run.vision_debug=0;
     if (run_rx_overflow) reason = "CAN reply queue overflow";
-    else if (can_rx_fault & 2u) reason = "CAN transmit mailbox full; command incomplete";
+    else if (can_rx_fault & 2u) reason = "CAN transmit queue full; command not queued";
     else if (can_rx_fault & 1u) reason = "CAN hardware FIFO overrun; feedback lost";
     run_active = 0;
+    run.departure_overlap = 0;
     if (run.station_enabled) {station_abort();vision_cancel_pick();if (arm_enabled()) {arm_stop();arm_lock.state=3;}}
     else if (!run.turn_only && !run.translation_only) station_clear_task();
     run.state = RUN_FAULT;
@@ -941,6 +975,11 @@ static int run_resolve_leg(const RoadPlan *road, uint8_t segment, uint8_t edge,
         }
     }
     done = (completed & (uint16_t)(1u << road->road)) != 0;
+    if (CAR_RUN_REVISIT_LATERAL_ENABLED && done
+        && road_motion_parameters(p, heading, &body) && body.axis == BODY_LEFT) {
+        leg->axis = body.axis;leg->sign = body.mm > 0 ? 1 : -1;leg->heading = heading;
+        return 1;
+    }
     if (CAR_RUN_REVERSE_ENABLED && done
         && ((unsigned)leg->heading + 4u - (unsigned)heading) % 4u == 2u) {
         leg->heading = heading;leg->sign = -1;
@@ -989,7 +1028,7 @@ static void run_segment_log(uint16_t mm)
     text(" continue_mm="); number(run.continuation_mm);text("\r\n");
 }
 
-/* 普通道路按既有朝向策略执行；最终回程保持车头方向。 */
+/* 已完成道路可前后/左右平移，首次道路与工位朝向保持既有策略。 */
 static int run_segment(void)
 {
     RunLeg leg;
@@ -1190,7 +1229,7 @@ static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
     }
     station_parent = run;
     if (!start_heading_shift(mm, (uint16_t)index_rpm)) {run = station_parent;return 0;}
-    run.station_shift = run.station_enabled = 1;
+    run.station_shift = run.station_enabled = 1;run.vision_debug=station_parent.vision_debug;
     run.travel_axis = axis;
     run.plan = station_parent.plan;run.edge = station_parent.edge;run.job = station_parent.job;
     run.heading = run.target_heading = station_parent.heading;
@@ -1204,6 +1243,57 @@ int station_chassis_busy(void) { return (run.station_shift && run_active) || run
 int station_chassis_failed(void)
 {
     return run.station_shift && (run.state == RUN_FAULT || run.state == RUN_STOPPED);
+}
+
+static int vision_debug_command(const char *s)
+{
+    const char *argument;
+    char operation='D';uint8_t color=0;
+    int slide,lift;
+    HeadingSample sample;
+    if(strcmp(s,"vision debug") && strncmp(s,"vision debug ",13))return 0;
+    argument=s+12;if(*argument==' ')argument++;
+    if(!strcmp(argument,"status")) {
+        text("[vision debug] active=");number(run.vision_debug);text("\r\n");
+        (void)vision_command("vision status",clock_ms);return 1;
+    }
+    if(!strcmp(argument,"off")) {
+        if(run.vision_debug) {stop_pending=1;text("[vision debug] stopping; pending moves cancelled by global stop\r\n");}
+        else text("[vision debug] inactive\r\n");
+        return 1;
+    }
+    if(*argument) {
+        if((argument[0]=='D' || argument[0]=='E') && !argument[1])operation=argument[0];
+        else if(argument[0]=='F' && argument[1]==' ' && argument[2]>='1' && argument[2]<='4' && !argument[3]) {
+            operation='F';color=(uint8_t)(argument[2]-'0');
+        } else {
+            text("[vision debug usage] vision debug [D|E|F 1..4] | vision debug status | vision debug off\r\n");return 1;
+        }
+    }
+    if(run_active || run.state==RUN_STATION || station_active() || stop_pending
+        || drive.state==MOTION_RUNNING || drive.state==MOTION_WAIT_CONFIRM
+        || nav.state==NAV_PLAN || nav.state==NAV_MOVING || nav.state==NAV_WAIT_NODE || nav.state==NAV_WAIT_RETURN) {
+        text("[vision debug rejected: motion/station active; use ! or finish current work]\r\n");return 1;
+    }
+    arm_pose_now(&slide,&lift,NULL,NULL);sample=heading_snapshot();
+    if(arm_lock.state!=2 || !arm_ready() || slide!=ARM_SLIDE_HOME_MM || lift!=ARM_LIFT_HOME_MM) {
+        text("[vision debug rejected: arm on + declared pose/platform and high/retracted pose required]\r\n");return 1;
+    }
+    if(!heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
+        text("[vision debug rejected: fresh IMU required for correction motion]\r\n");return 1;
+    }
+    if(!station_start_vision_debug(operation,color,clock_ms)) {
+        text("[vision debug rejected: cannot start alignment]\r\n");return 1;
+    }
+    memset(&run,0,sizeof(run));run.state=RUN_STATION;
+    run.imu_mode=run.station_enabled=run.station_phase=run.vision_debug=1;
+    run.job=operation=='D' ? 2u : operation=='E' ? 3u : 6u;
+    run.turn_rpm=CAR_TURN_CLOSED_LOOP_RPM;imu_uart_fault=0;run_clear_rx();
+    pose_set=nav.position_confirmed=0;turn_postcheck.active=0;
+    text("[vision debug started] operation=");send_byte((uint8_t)operation);
+    if(color){text(" color=");number(color);}
+    text("; upper MOVE/MOVEY FIFO; no automatic grip or route\r\n");
+    return 1;
 }
 
 /* 四轮到位后推进当前动作；此函数可能提交下一动作或结束全程。 */
@@ -1299,9 +1389,13 @@ static void run_station_handoff(void)
 }
 static void run_resume_after_station(void)
 {
-    if (full_route_nodes[run.plan][run.edge] != full_route_jobs[run.plan][run.job] || !arm_ready() || !arm_parked()) {
+    int overlap=station_departure_ready();
+    if (full_route_nodes[run.plan][run.edge] != full_route_jobs[run.plan][run.job]
+        || (!(arm_ready() && arm_parked()) && !overlap)) {
         run_fault("station completion/parked pose mismatch");return;
     }
+    run.departure_overlap=(uint8_t)overlap;
+    if(overlap)text("[station departure] grips done; final yaw/platform rotation overlaps preflight/turn; translation waits for parking\r\n");
     run.job++;text("[run station] complete; job=");number(run.job);text("/8; resume after fresh feedback\r\n");
     run_station_handoff();
 }
@@ -1328,8 +1422,13 @@ static void run_station_update(void)
     }
     station_update(clock_ms);
     if (station_failed()) {run_fault("station work failed");return;}
-    if (!station_active()) {
-        if (!arm_ready() || !arm_parked()) {run_fault("station ended without parked arm");return;}
+    if(run.vision_debug && !station_active()) {
+        run.vision_debug=run.station_enabled=run.station_phase=0;run.job=0;run.state=RUN_IDLE;
+        text("[vision debug done] commanded moves complete; hold position/yaw; no grip, return or route\r\n");
+        return;
+    }
+    if (!station_active() || station_departure_ready()) {
+        if (!station_departure_ready() && (!arm_ready() || !arm_parked())) {run_fault("station ended without parked arm");return;}
         /* 扫码完成也直接选择下一道路，不再恢复进站前航向后又转回B->E。 */
         run_resume_after_station();
     }
@@ -2008,6 +2107,7 @@ static void run_velocity_update(void)
         run_fault("IMU rotation direction mismatch");return;
     }
     if (run.velocity_phase == VELOCITY_BASELINE) {
+        if (run.departure_overlap) {run_velocity_query();return;}
         for (i = 0; i < MOTOR_COUNT; i++)
             if ((uint32_t)(motor_feedback[i].position_ms - run.baseline_after_ms) > 0x7fffffffu) {run_velocity_query();return;}
         for (i = 0; i < MOTOR_COUNT; i++) run.encoder_start[i] = motor_feedback[i].position;
@@ -2163,7 +2263,7 @@ static void run_update(void)
     }
 #endif
     if (can_rx_fault) {
-        run_fault((can_rx_fault & 2u) ? "CAN transmit mailbox full; command incomplete"
+        run_fault((can_rx_fault & 2u) ? "CAN transmit queue full; command not queued"
                                     : "CAN hardware FIFO overrun; feedback lost");
         return;
     }
@@ -2262,6 +2362,7 @@ static int parse_node(const char *s, uint8_t *node)
 
 static void help(void)
 {
+    text("VISION: vision debug [D|E|F 1..4] = standalone correction, no grip/route; vision debug off = stop\r\n");
     text("ARM: arm on (wait four-wheel stop) | arm status | arm pose SLIDE LIFT YAW CLAW\r\n");
     text("ARM: arm slide/lift/yaw N | arm open/close | arm pick/place/cycle | arm home\r\n");
     text("ARM: arm platform pose DEG | arm platform 1/2/3 | arm stop | arm off (park first)\r\n");
@@ -2471,6 +2572,7 @@ static void command(char *command_text)
         scanner_init(!strcmp(command_text + 8, "9600") ? 9600u : 115200u);return;
     }
     if (!strcmp(command_text,"s") || !strcmp(command_text,"z") || !strcmp(command_text,"S") || !strcmp(command_text,"Z")) {stop_pending=1;return;}
+    if(vision_debug_command(command_text))return;
     if (!strncmp(command_text,"vision",6)) {
         if ((run_active || run.state==RUN_STATION) && strcmp(command_text,"vision") && strcmp(command_text,"vision status"))
             text("[vision rejected: route/station owns request]\r\n");
@@ -2485,7 +2587,7 @@ static void command(char *command_text)
         else (void)station_command(command_text);
         return;
     }
-    if (!strcmp(command_text,"obstacle") && (run.state==RUN_STATION || run.station_shift)) {run_fault("obstacle during station work; no automatic reverse");return;}
+    if (!strcmp(command_text,"obstacle") && (run.state==RUN_STATION || run.station_shift || run.departure_overlap)) {run_fault("obstacle during station work; no automatic reverse");return;}
     if (arm_serial_command(command_text)) return;
     if (arm_lock.state || arm_enabled()) {
         int allow_run=station_auto_enabled() && arm_lock.state==2 && arm_ready() && arm_parked()
@@ -2614,11 +2716,12 @@ static void firmware_step(void)
     if (stop_pending)
     {
         uint8_t overflow;
+        can_tx_cancel(0);if(run.vision_debug)run.job=0;run.vision_debug=0;
         if (arm_lock.state || arm_enabled()) {
             arm_stop();
             arm_lock.state = 3;
         }
-        station_abort();vision_cancel_pick();
+        station_abort();vision_cancel_pick();run.departure_overlap=0;
         if (run.state != RUN_IDLE)
         {
             run_active = 0;
@@ -2637,6 +2740,7 @@ static void firmware_step(void)
         if (run.state == RUN_STOPPED)
             run_status();
     }
+    if(!stop_pending)can_tx_update();
     start_button_update();
     scanner_update();
     vision_update(clock_ms);
@@ -2665,8 +2769,18 @@ static void firmware_step(void)
     {
         if (arm_lock.state==2) arm_update(clock_ms);
         if (run.state==RUN_STATION) {run_station_update();return;}
+        if(run.departure_overlap) {
+            station_update(clock_ms);
+            if(station_failed() || arm_failed()) {run_fault("departure parking failed");return;}
+            if(!station_active()) {
+                if(!arm_ready() || !arm_parked() || arm_platform_slot()!=1) {run_fault("departure parking mismatch");return;}
+                run.departure_overlap=0;
+                text("[station departure] parking finished; translation released\r\n");
+            }
+        }
         if (run_active && run.station_enabled
-            && !(run.station_shift ? station_chassis_pose_safe() : (arm_ready() && arm_parked()))) {
+            && !(run.station_shift ? station_chassis_pose_safe()
+                 : ((arm_ready() && arm_parked()) || (run.departure_overlap && arm_departure_rotation_active())))) {
             run_fault("arm left parked pose during route");return;
         }
         if ((arm_lock.state || arm_enabled()) && !run_active) return;
@@ -2750,7 +2864,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261021-merge2-r44; hold homebound heading; lateral speed matches forward\r\n");
+    text("[drive] version=20261022-merge2-r56; storage keeps upper-commanded corrected position\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

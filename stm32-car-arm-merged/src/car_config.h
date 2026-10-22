@@ -10,16 +10,17 @@
 
 /* 1. 常用速度与加速度，RPM 为电机转速，驱动器加速度档位为200（与下面RPM/s速度斜坡不同）。 */
 #define CAR_TEST_RPM                60       /* test 模式上电默认速度；可用 rpm 命令改。 */
-#define CAR_RUN_RPM                 3000      /* runimu 全程直行速度；覆盖道路表速度。 */
+#define CAR_RUN_RPM                 3000 /* runimu行驶速度请求上限，RPM；混控单轮另限300，改此值不等于实速3000。 */
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
+#define CAR_RUN_REVISIT_LATERAL_ENABLED 1    /* 本轮完整走过的道路保持当前车头，以左右横移代替90度转向。 */
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */
 #define CAR_RUN_RETURN_LATERAL_ENABLED 1     /* 最终H->E->B->A/C保持暂存离站航向，以前后/横移返回。 */
 #define CAR_LATERAL_MAX_RPM          CAR_RUN_RPM /* 横移与前后行驶共用速度上限，RPM。 */
 #define CAR_OBSTACLE_RETURN_RPM      60      /* obstacle触发后沿已走道路退回的速度上限，RPM。 */
 /* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y，暂存H向+X；A/C及B/E不移动。
  * 单位mm。修改后先运行tools/rebuild-route-table.ps1重生成并验证查表，再编译。 */
-#define CAR_MAP_TOP_INSET_MM         90
-#define CAR_MAP_BOTTOM_INSET_MM      50
+#define CAR_MAP_TOP_INSET_MM         90 /* 上侧工位向场内内移距离，mm；改后须重生成离线路表。 */
+#define CAR_MAP_BOTTOM_INSET_MM      50 /* 下侧工位向场内内移距离，mm；改后须重生成离线路表。 */
 #define CAR_MAP_RAW_EXTRA_INSET_MM   50      /* 仅原料F再向场内内移；G点不随动，单位mm。 */
 #define CAR_MAP_STORAGE_INSET_MM     80      /* 仅暂存H向地图中部(+X)内移，单位mm。 */
 #if CAR_MAP_TOP_INSET_MM < 0 || CAR_MAP_TOP_INSET_MM >= 1000 || \
@@ -39,12 +40,12 @@
 /* 3. 横移往后偏的预补偿，单位：前移 mm/横移米。正值向前，0 关闭。
  * 20/8 是待实测的初值；横移闭环仍叠加该平移前馈，IMU仅负责车头航向。
  */
-#define LEFT_FORWARD_MM_PER_M     20
-#define RIGHT_FORWARD_MM_PER_M     8
+#define LEFT_FORWARD_MM_PER_M     20 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
+#define RIGHT_FORWARD_MM_PER_M     8 /* 向右横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 
 /* 原地转向只使用IMU闭环；方向位同时供四轮速度混控使用，不能随旧入口删除。 */
 #define CAR_TURN_RPM                  30       /* turn模式手动定角转向默认速度上限，RPM。 */
-#define CAR_TURN_CLOSED_LOOP_RPM      1000       /* runimu连续转向速度上限；不靠固定脉冲确认角度。 */
+#define CAR_TURN_CLOSED_LOOP_RPM      1000 /* runimu原地转向请求上限，RPM；混控单轮另限300。 */
 #define CAR_TURN_CCW_DIR               1u      /* 正向旋转的驱动器dir位；IMU左转角应增加。 */
 
 /* 6. runimu航向闭环。现场日志已有新角度，沿用当前开启的USART2接收。
@@ -74,7 +75,7 @@
 #define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
 #define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
 #define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向的最低转速跳变。 */
-#define CAR_DRIVE_ACCEL_RPM_PER_S    120u      /* 速度指令上升率RPM/s；0到90RPM至少750ms，沿用可跟随斜坡，与驱动器200档位不是同一单位。 */
+#define CAR_DRIVE_ACCEL_RPM_PER_S    150u      /* 速度指令上升率RPM/s；原120，起步提高25%；减速及制动距离沿用120。 */
 #define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速及制动距离计算共用RPM/s；沿用120的可跟随制动斜坡，不能由驱动器200档位推定制动能力。 */
 #define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 100u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */
 #define CAR_DRIVE_SLEW_MAX_DT_MS      50u      /* 吸收正常日志开销；长时间延迟最多推进50ms的斜坡。 */
@@ -91,9 +92,9 @@
 #define CAR_ENCODER_LEARN_RPM        20       /* 四轮方向全部确认前的平移速度上限，RPM。 */
 #define CAR_ENCODER_LEARN_TIMEOUT_MS 1500u    /* 起步方向无法确认时停车；不带着未知里程继续加速。 */
 #define CAR_DISTANCE_KP_X100          50       /* 剩余1mm对应0.50 RPM，近终点减速。 */
-#define CAR_DISTANCE_MIN_RPM           3
-#define CAR_DISTANCE_TOLERANCE_MM      1
-#define CAR_DISTANCE_OVERRUN_MM       15       /* 反馈距离超过目标15mm则故障，不放行。 */
+#define CAR_DISTANCE_MIN_RPM           3 /* 终点附近非零平移速度下限，RPM；增大会更快接近但更易过冲。 */
+#define CAR_DISTANCE_TOLERANCE_MM      1 /* 编码器到站距离窗口，mm；增大降低停车距离精度。 */
+#define CAR_DISTANCE_OVERRUN_MM      500       /* 操作者指定：距离超程阈值500mm；不改变目标距离与到位精度。 */
 #define CAR_DRIVE_TIMEOUT_MS      30000u      /* 单个几何直行段总时限。 */
 #define CAR_CONTROL_LOG_MS          500u
 #define CAR_HEADING_MAX_DRIFT_CDEG  1500       /* 直行偏航15度请求停车。 */
@@ -106,6 +107,7 @@
 #if (CAR_IMU_YAW_SIGN != 1 && CAR_IMU_YAW_SIGN != -1) || \
     (CAR_MAP_YAW_SIGN != 1 && CAR_MAP_YAW_SIGN != -1) || \
     (CAR_RUN_REVERSE_ENABLED != 0 && CAR_RUN_REVERSE_ENABLED != 1) || \
+    (CAR_RUN_REVISIT_LATERAL_ENABLED != 0 && CAR_RUN_REVISIT_LATERAL_ENABLED != 1) || \
     (CAR_RUN_START_LATERAL_ENABLED != 0 && CAR_RUN_START_LATERAL_ENABLED != 1) || \
     (CAR_RUN_RETURN_LATERAL_ENABLED != 0 && CAR_RUN_RETURN_LATERAL_ENABLED != 1) || \
     CAR_LATERAL_MAX_RPM < 20 || CAR_LATERAL_MAX_RPM > 3000 || \

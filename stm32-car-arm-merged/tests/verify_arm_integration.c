@@ -121,6 +121,7 @@ static void mutual_exclusion_tests(void)
     send_line("runimu C");CHECK(strstr(output,"arm session owns motion"));
     send_line("arm off");CHECK(arm_enabled() && strstr(output,"park with arm home"));
     stop_request();CHECK(arm_stops==2 && arm_lock.state==3 && !position_count);
+    CHECK(host_tx_cancels[0] && host_tx_cancels[5] && host_tx_cancels[7]);
     send_line("arm slide 0");CHECK(strstr(output,"confirmation required"));
     send_line("arm on");advance_arm(400);CHECK(arm_lock.state==2);
     send_line("arm pick");CHECK(strstr(output,"pose unknown"));
@@ -250,7 +251,7 @@ static void speed_and_feedback_gates_tests(void)
     started=clock_ms;send_line("arm close");advance_arm(ARM_CLAW_TIME_MS/2u);CHECK(arm_busy());
     advance_arm(500);CHECK(!arm_busy() && !arm_failed() && arm_claw_us==604);
     CHECK(clock_ms-started>=ARM_CLAW_TIME_MS);
-    send_line("arm yaw 256");advance_arm(ARM_SERVO_TIME_MS/2u);CHECK(arm_busy() && arm_yaw_us>553);
+    send_line("arm yaw 256");advance_arm(ARM_YAW_TIME_MS/2u);CHECK(arm_busy() && arm_yaw_us>553);
     advance_arm(1400);CHECK(!arm_busy() && arm_yaw_us==553);
 
     /* 即使已取消2秒下限，迟到的位置反馈和缺失ACK仍不能放行，非零轴速单独验证为只记日志。 */
@@ -269,8 +270,39 @@ static void speed_and_feedback_gates_tests(void)
         else {CHECK(arm_busy());arm_missing_motor=0;advance_arm(1500);CHECK(!arm_busy() && !arm_failed());}
     }
 
-    printf("PASS arm speed: axes use fresh verified feedback; claw_ms=%u yaw_platform_ms=%u; position/status must arrive; missing ACK or RPM magnitude alone cannot cancel or gate measured completion\n",
-        ARM_CLAW_TIME_MS,ARM_SERVO_TIME_MS);
+    printf("PASS arm speed: axes use fresh verified feedback; claw_ms=%u yaw_ms=%u platform_ms=%u close_hold_ms=%u; position/status must arrive; missing ACK or RPM magnitude alone cannot cancel or gate measured completion\n",
+        ARM_CLAW_TIME_MS,ARM_YAW_TIME_MS,ARM_SERVO_TIME_MS,ARM_CLAW_CLOSE_HOLD_MS);
+}
+static void feedback_reuse_tests(void)
+{
+    unsigned variant;
+    uint32_t saved=0;
+    for(variant=0;variant<3;variant++) {
+        uint32_t start,deadline;unsigned before;
+        reset_fixture();declare_pose();send_line("arm slide 55");
+        deadline=clock_ms+1000;
+        while(arm_busy() && clock_ms<deadline)advance_arm(1);
+        CHECK(!arm_busy() && arm_positions==1);
+        if(variant==1)advance_arm(ARM_FEEDBACK_TIMEOUT_MS+1u);
+        if(variant==2)send_line("arm pose 55 135 0 45");
+        before=arm_positions;start=clock_ms;arm_freeze=1;
+        send_line("arm lift 100");deadline=clock_ms+1000;
+        while(arm_positions==before && clock_ms<deadline)advance_arm(1);
+        CHECK(arm_positions==before+1 && arm_busy());
+        if(!variant) {
+            saved=arm_trace_ms[before]-start;
+            CHECK(saved<40u && strstr(output,"reuse fresh completed-axis feedback"));
+        } else CHECK(arm_trace_ms[before]-start>=50u);
+        advance_arm(600);CHECK(arm_busy() && !arm_failed()); /* 旧到位数据不能完成真实新目标。 */
+        arm_encoder[1]+=(int64_t)2800*65536u/3200u;
+        advance_arm(100);CHECK(!arm_busy() && !arm_failed());
+        if(!variant) {
+            before=arm_positions;start=clock_ms;
+            send_line("arm open");while(arm_busy() && clock_ms-start<1000)advance_arm(1);
+            CHECK(!arm_busy() && arm_positions==before && clock_ms-start<ARM_CLAW_TIME_MS);
+        }
+    }
+    printf("PASS feedback reuse: warm next-axis submit within%lums; stale/manual redeclaration reacquire; real changed-axis target feedback still required; unchanged servo target skips interpolation\n",(unsigned long)saved);
 }
 static void axis_speed_log_only_tests(void)
 {
@@ -317,9 +349,9 @@ static void axis_status_log_only_tests(void)
         }
         before=output_size;advance_arm(1500);CHECK(output_size==before); /* 相同异常不刷屏。 */
         arm_status_override[axis]=3;advance_arm(400);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
-        send_line("arm yaw 125");advance_arm(200);CHECK(arm_busy());
-        arm_status_override[axis]=7;before=output_size;advance_arm(200);CHECK(output_size>before); /* 恢复后再次异常重新记录。 */
-        seen=output_size;arm_status_override[axis]=11;advance_arm(200);CHECK(output_size>seen); /* 标志变化同样记录。 */
+        send_line("arm yaw 125");advance_arm(ARM_SERVO_TIME_MS/4u);CHECK(arm_busy());
+        arm_status_override[axis]=7;before=output_size;advance_arm(ARM_SERVO_TIME_MS/4u);CHECK(output_size>before); /* 恢复后再次异常重新记录。 */
+        seen=output_size;arm_status_override[axis]=11;advance_arm(ARM_SERVO_TIME_MS/4u);CHECK(output_size>seen); /* 标志变化同样记录。 */
         stop_request();CHECK(arm_stops>=2 && arm_failed());
     }
     reset_fixture();declare_pose();arm_status_override[0]=7;arm_freeze=1;
@@ -329,6 +361,194 @@ static void axis_status_log_only_tests(void)
     reset_fixture();declare_pose();clock_ms=UINT32_MAX-100u;arm_status_override[1]=11;
     send_line("arm lift 100");advance_arm(700);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
     puts("PASS arm axis status log-only: both5/7 disabled/stalled/protected combinations retain raw flags, per-axis/change/recovery diagnostics without repeated spam; actual arrived/position still required, explicit stop retained, timer wrap");
+}
+static void clearance_link_tests(void)
+{
+    unsigned variant;
+    for(variant=0;variant<4;variant++) {
+        uint16_t yaw_start,platform_start,claw_start;
+        reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 35 100 256 15");
+        if(variant==1)clock_ms=UINT32_MAX-200u;
+        yaw_start=arm_yaw_us;platform_start=arm_platform_us;claw_start=arm_claw_us;
+        arm_freeze=1;CHECK(arm_retract_with_yaw(126.5f,2,clock_ms));advance_arm(200);
+        CHECK(arm_positions==1 && arm_trace_address[0]==5 && arm_trace_pulses[0]==2800);
+        CHECK(arm_yaw_us==yaw_start && arm_platform_us==platform_start && arm_claw_us==claw_start);
+        arm_flags=1;
+        arm_encoder[1]=-(int64_t)((ARM_CLEARANCE_MM-100-0.5f)*ARM_LIFT_PULSES_PER_MM*ARM_ENCODER_COUNTS_PER_REV/ARM_PULSES_PER_REV);
+        advance_arm(200);CHECK(arm_positions==1 && arm_yaw_us==yaw_start && arm_platform_us==platform_start);
+        if(variant==2) {
+            stop_request();advance_arm(500);CHECK(arm_failed() && arm_positions==1 && arm_yaw_us==yaw_start);continue;
+        }
+        arm_encoder[1]=-(int64_t)((ARM_CLEARANCE_MM-100)*ARM_LIFT_PULSES_PER_MM*ARM_ENCODER_COUNTS_PER_REV/ARM_PULSES_PER_REV);
+        advance_arm(60);CHECK(arm_positions==2 && arm_trace_address[1]==7 && arm_busy());
+        advance_arm(100);CHECK(arm_yaw_us!=yaw_start && arm_platform_us!=platform_start && arm_claw_us==claw_start);
+        if(variant==3) {
+            yaw_start=arm_yaw_us;platform_start=arm_platform_us;stop_request();advance_arm(500);
+            CHECK(arm_failed() && arm_positions==2 && arm_yaw_us==yaw_start && arm_platform_us==platform_start);continue;
+        }
+        advance_arm(500);CHECK(arm_busy() && arm_positions==2); /* 舵机已完成，升降仍在115，不能假报135。 */
+        arm_encoder[1]=-(int64_t)arm_trace_pulses[0]*ARM_ENCODER_COUNTS_PER_REV/ARM_PULSES_PER_REV;
+        arm_encoder[0]=(int64_t)arm_trace_pulses[1]*ARM_ENCODER_COUNTS_PER_REV/ARM_PULSES_PER_REV;
+        arm_flags=3;advance_arm(250);
+        CHECK(arm_ready() && arm_positions==2 && arm_platform_slot()==2);
+        expect_pose(0,135,126.5f,15);
+    }
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 35 115 256 15");
+    CHECK(arm_retract_with_yaw(126.5f,2,clock_ms));advance_arm(100);
+    CHECK(arm_positions==2 && arm_trace_address[0]==7 && arm_trace_address[1]==5);
+    puts("PASS clearance linking: one continuous lift command to135; actual clearance-minus0.5 holds horizontal/servo, actual clearance releases them while lift remains in transit; real final position still required; both PWM channels, held claw, initial clear pose, timer wrap, emergency before/after release");
+}
+static void yaw_settle_tests(void)
+{
+    unsigned variant;
+    for(variant=0;variant<3;variant++) {
+        uint32_t start,written;
+        uint16_t prior;
+        reset_fixture();declare_pose();send_line("arm platform pose 20");
+        if(variant==1)send_line("arm pose 0 135 256 45");
+        if(variant==2)clock_ms=UINT32_MAX-180u;
+        start=clock_ms;prior=arm_yaw_us;
+        send_line(variant==1 ? "arm yaw 0" : "arm yaw 256");
+        while(arm_yaw_us!=(variant==1 ? 1975 : 553) && (uint32_t)(clock_ms-start)<1000u) {
+            uint16_t before=arm_yaw_us;advance_arm(1);
+            CHECK(variant==1 ? arm_yaw_us>=before : arm_yaw_us<=before);
+        }
+        written=clock_ms;
+        CHECK(arm_yaw_us!=prior && arm_busy());
+        advance_arm(ARM_YAW_SETTLE_MS-1u);CHECK(arm_busy());
+        while(arm_busy() && (uint32_t)(clock_ms-start)<1000u)advance_arm(1);
+        CHECK(arm_ready() && !arm_failed() && (uint32_t)(clock_ms-written)>=ARM_YAW_SETTLE_MS);
+        CHECK((uint32_t)(clock_ms-start)>=ARM_YAW_TIME_MS+ARM_YAW_SETTLE_MS);
+        start=clock_ms;send_line(variant==1 ? "arm yaw 0" : "arm yaw 256");
+        while(arm_busy() && (uint32_t)(clock_ms-start)<1000u)advance_arm(1);
+        CHECK(arm_ready() && (uint32_t)(clock_ms-start)<ARM_YAW_SETTLE_MS);
+    }
+    printf("PASS yaw settle: smooth monotonic180ms commands, final target PWM then hold%ums, both directions/time wrap, unchanged target no extra hold; no physical position feedback\n",ARM_YAW_SETTLE_MS);
+}
+static void independent_servo_and_grip_hold_tests(void)
+{
+    unsigned variant;
+    uint32_t start,written,deadline;
+    uint16_t yaw_start,platform_start;
+    for(variant=0;variant<2;variant++) {
+        reset_fixture();declare_pose();send_line("arm platform pose 20");
+        if(variant)clock_ms=UINT32_MAX-180u;
+        start=clock_ms;send_line("arm close");
+        while(arm_claw_us!=604 && (uint32_t)(clock_ms-start)<1000u)advance_arm(1);
+        written=clock_ms;
+        CHECK(arm_claw_us==604 && arm_busy());
+        advance_arm(ARM_CLAW_CLOSE_HOLD_MS-1u);CHECK(arm_busy());
+        while(arm_busy() && (uint32_t)(clock_ms-written)<1000u)advance_arm(1);
+        CHECK(arm_ready() && !arm_failed() && (uint32_t)(clock_ms-written)>=ARM_CLAW_CLOSE_HOLD_MS);
+        start=clock_ms;send_line("arm close");
+        while(arm_busy() && (uint32_t)(clock_ms-start)<1000u)advance_arm(1);
+        CHECK(arm_ready() && (uint32_t)(clock_ms-start)<ARM_CLAW_CLOSE_HOLD_MS);
+        start=clock_ms;send_line("arm open");
+        while(arm_busy() && (uint32_t)(clock_ms-start)<1000u)advance_arm(1);
+        CHECK(arm_ready() && arm_claw_us==826 && (uint32_t)(clock_ms-start)<ARM_CLAW_TIME_MS+ARM_CLAW_CLOSE_HOLD_MS);
+    }
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 15");
+    yaw_start=arm_yaw_us;platform_start=arm_platform_us;start=clock_ms;
+    CHECK(arm_high_approach(35,ARM_CLEARANCE_MM,256,2,1,clock_ms));advance_arm(150);
+    CHECK(arm_busy() && arm_claw_us==826 && arm_yaw_us!=yaw_start && arm_yaw_us!=553 && arm_platform_us!=platform_start);
+    while(arm_yaw_us!=553 && clock_ms-start<1000u)advance_arm(1);
+    CHECK(arm_yaw_us==553 && arm_busy() && clock_ms-start<ARM_SERVO_TIME_MS);
+    while(arm_busy() && clock_ms-start<1000u)advance_arm(1);
+    CHECK(arm_ready() && arm_platform_slot()==2 && clock_ms-start>=ARM_SERVO_TIME_MS);
+
+    /* 真实load1顺序：合爪最终PWM写入后满保持时间，才提交抬升指令。 */
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 131 45");
+    send_line("arm load1");deadline=clock_ms+5000u;written=0;
+    while(clock_ms<deadline) {
+        advance_arm(1);if(!written && arm_claw_us==604)written=clock_ms;
+        if(arm_positions && arm_trace_address[arm_positions-1u]==5 && arm_trace_dir[arm_positions-1u]==1)break;
+    }
+    CHECK(written && clock_ms<deadline && arm_trace_address[arm_positions-1u]==5 && arm_trace_dir[arm_positions-1u]==1);
+    CHECK(arm_trace_ms[arm_positions-1u]-written>=ARM_CLAW_CLOSE_HOLD_MS);
+    printf("PASS independent servo/grip hold: yaw%ums, platform%ums, claw%ums; close target PWM then hold%ums before actual load1 lift; open/unchanged close no hold, timer wrap covered\n",
+           ARM_YAW_TIME_MS,ARM_SERVO_TIME_MS,ARM_CLAW_TIME_MS,ARM_CLAW_CLOSE_HOLD_MS);
+}
+static void parallel_high_approach_tests(void)
+{
+    uint32_t start,serial_ms,parallel_ms,deadline;
+    uint16_t yaw_start,platform_start,claw_start;
+    unsigned positions;
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 15");
+    start=clock_ms;CHECK(arm_platform_with_yaw(2,256,clock_ms));
+    while(arm_busy() && clock_ms-start<3000)advance_arm(1);
+    send_line("arm slide 35");while(arm_busy() && clock_ms-start<3000)advance_arm(1);
+    send_line("arm open");while(arm_busy() && clock_ms-start<3000)advance_arm(1);
+#if ARM_LIFT_PARALLEL_ENABLED
+    send_line("arm lift " CAR_STRING_VALUE(ARM_CLEARANCE_MM));while(arm_busy() && clock_ms-start<3000)advance_arm(1);
+#endif
+    CHECK(arm_ready());serial_ms=clock_ms-start;
+
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 125 15");
+    yaw_start=arm_yaw_us;platform_start=arm_platform_us;claw_start=arm_claw_us;
+    CHECK(!arm_high_approach(35,ARM_CLEARANCE_MM,256,4,1,clock_ms));
+    CHECK(!arm_high_approach(ARM_SLIDE_MAX_MM+1,ARM_CLEARANCE_MM,256,2,1,clock_ms));
+    start=clock_ms;CHECK(arm_high_approach(35,ARM_CLEARANCE_MM,256,2,1,clock_ms));
+    advance_arm(ARM_SERVO_TIME_MS/2u+100u);
+    CHECK(arm_busy() && arm_positions==(ARM_LIFT_PARALLEL_ENABLED ? 2u : 1u) && arm_trace_address[0]==7);
+    CHECK(arm_trace_ms[0]-start<200u);
+    CHECK(arm_yaw_us!=yaw_start && arm_platform_us!=platform_start && arm_claw_us!=claw_start);
+    CHECK(!arm_high_approach(55,ARM_CLEARANCE_MM,125,0,0,clock_ms));
+    while(arm_busy() && clock_ms-start<3000)advance_arm(1);
+    parallel_ms=clock_ms-start;
+    CHECK(arm_ready() && arm_platform_slot()==2 && parallel_ms<serial_ms);
+    expect_pose(35,ARM_LIFT_PARALLEL_ENABLED ? ARM_CLEARANCE_MM : ARM_LIFT_HOME_MM,256,45);
+    printf("HIGH_APPROACH_TIMING serial_ms=%lu parallel_ms=%lu; immediate stepper replies, not physical timing\n",
+           (unsigned long)serial_ms,(unsigned long)parallel_ms);
+
+    /* 原料直接降到105；平推/升降未实际到位时，即使插值结束也不能合爪。 */
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 131 45");
+    arm_freeze=1;send_line("arm load1");start=clock_ms;
+    advance_arm(ARM_SERVO_TIME_MS+500u);
+    CHECK(arm_busy() && !arm_failed() && arm_positions==(ARM_LIFT_PARALLEL_ENABLED ? 2u : 1u) && arm_trace_address[0]==7);
+    if(ARM_LIFT_PARALLEL_ENABLED)CHECK(arm_trace_address[1]==5 && arm_trace_pulses[1]==(ARM_LIFT_HOME_MM-ARM_PICK_LIFT_MM)*ARM_LIFT_PULSES_PER_MM);
+    CHECK(arm_claw_us==826);
+    arm_encoder[0]-=(int64_t)arm_trace_pulses[0]*65536u/3200u;
+    if(ARM_LIFT_PARALLEL_ENABLED)arm_encoder[1]+=(int64_t)arm_trace_pulses[1]*65536u/3200u;
+    arm_freeze=0;positions=arm_positions;
+    deadline=clock_ms+1000;
+    while(arm_positions==positions && clock_ms<deadline)advance_arm(1);
+    CHECK(arm_positions==positions+1u && arm_trace_address[positions]==5 && arm_trace_ms[positions]-start>=ARM_SERVO_TIME_MS+500u);
+
+    /* 带物块的高位转向保留夹爪；同一步急停也同时取消轴和PWM。 */
+    reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 256 15");
+    claw_start=arm_claw_us;platform_start=arm_platform_us;
+    CHECK(arm_high_approach(55,5,126.5f,0,0,clock_ms));advance_arm(ARM_YAW_TIME_MS/2u+100u);
+    CHECK(arm_claw_us==claw_start && arm_platform_us==platform_start && arm_busy());
+    yaw_start=arm_yaw_us;positions=arm_positions;stop_request();advance_arm(1500);
+    CHECK(arm_failed() && !arm_pose_known() && arm_positions==positions && arm_yaw_us==yaw_start);
+    reset_fixture();declare_pose();send_line("arm platform pose 20");
+    send_line("arm pose 1 135 125 45");CHECK(!arm_high_approach(35,ARM_CLEARANCE_MM,256,2,1,clock_ms));
+    send_line("arm pose 0 100 125 45");CHECK(!arm_high_approach(35,ARM_CLEARANCE_MM,256,2,1,clock_ms));
+    puts("PASS high approach: raw direct105 and right-side direct5 overlap slide/yaw; platform retains clearance approach; actual axes must complete before grip/release; held claw and manual recipes retained; explicit emergency stops all");
+}
+static void direct_side_descent_tests(void)
+{
+    static const int targets[]={5,65,105};
+    unsigned i;
+    for(i=0;i<sizeof(targets)/sizeof(targets[0]);i++) {
+        uint16_t claw,yaw;
+        int slide,lift;uint32_t start;
+        reset_fixture();declare_pose();send_line("arm platform pose 20");send_line("arm pose 0 135 256 15");
+        arm_freeze=1;claw=arm_claw_us;yaw=arm_yaw_us;start=clock_ms;
+        CHECK(arm_high_approach(55,targets[i],126.5f,0,0,clock_ms));
+        advance_arm(500);
+        CHECK(arm_busy() && !arm_failed() && arm_claw_us==claw && arm_yaw_us!=yaw);
+        CHECK(arm_positions==2 && arm_trace_address[0]==7 && arm_trace_address[1]==5);
+        CHECK(arm_trace_ms[1]-start<200u && arm_trace_dir[1]==0);
+        CHECK(arm_trace_pulses[1]==(ARM_LIFT_HOME_MM-targets[i])*ARM_LIFT_PULSES_PER_MM);
+        arm_target_now(&slide,&lift,NULL,NULL);CHECK(slide==55 && lift==targets[i]);
+        /* 只提交最终高度一条下降命令；轴未到位时不把舵机结束当动作完成。 */
+        arm_encoder[0]=-(int64_t)arm_trace_pulses[0]*ARM_ENCODER_COUNTS_PER_REV/ARM_PULSES_PER_REV;
+        arm_encoder[1]=(int64_t)arm_trace_pulses[1]*ARM_ENCODER_COUNTS_PER_REV/ARM_PULSES_PER_REV;
+        arm_freeze=0;advance_arm(200);
+        CHECK(arm_ready() && arm_positions==2);expect_pose(55,targets[i],126.5f,15);
+    }
+    puts("PASS right-side direct descent: lift135 goes directly to5/65/105 with slide/yaw, one full-distance lift command, no clearance waypoint; closed claw held and actual axis completion required");
 }
 static void parallel_platform_yaw_tests(void)
 {
@@ -364,8 +584,8 @@ static void parallel_platform_yaw_tests(void)
 
 int main(void)
 {
-    manual_and_recipe_tests();station_platform_tests();parallel_platform_yaw_tests();mutual_exclusion_tests();wheel_lock_failures();
-    arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();axis_speed_log_only_tests();axis_status_log_only_tests();
+    manual_and_recipe_tests();station_platform_tests();parallel_platform_yaw_tests();parallel_high_approach_tests();direct_side_descent_tests();independent_servo_and_grip_hold_tests();clearance_link_tests();yaw_settle_tests();mutual_exclusion_tests();wheel_lock_failures();
+    arm_faults_and_stop_tests();bounds_and_shared_service_tests();english_console_tests();speed_and_feedback_gates_tests();feedback_reuse_tests();axis_speed_log_only_tests();axis_status_log_only_tests();
     printf("PASS arm integration: %u assertions; host simulation only, no hardware accessed\n",assertions);
     return 0;
 }

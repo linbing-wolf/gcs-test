@@ -25,19 +25,22 @@ int vision_command(const char *s, uint32_t now);
 void vision_request_pick(uint8_t color, uint32_t now);
 int vision_pick_state(void);
 void vision_pick_result(uint8_t *color, int16_t *x, int16_t *y);
-/* F,<颜色>返回STACK,x,y；不带高度。结束/急停沿用vision_cancel_pick取消全部任务。 */
+/* F,<颜色>接收MOVE/MOVEY，终包STACK,x,y,dx,ok；兼容旧两坐标终包，不带高度。 */
 void vision_request_stack(uint8_t color,uint32_t now);
 int vision_stack_state(void);
 void vision_stack_result(int16_t *x,int16_t *y);
 void vision_cancel_pick(void);
 /* 粗加工D、首次暂存E各一次：MOVE,dx前后，MOVEY,dy横移（像素，支持+/-）。
- * 每轴只缓存最新未执行值，0也覆盖；DISC,x,y,dx,1结束接收，不清除已接收指令。
+ * 每条位移按接收顺序入队，0不覆盖旧指令；DISC,x,y,dx,1结束接收，不清除已接收指令。
  * 不重算dx，不设偏差门槛；不发R、不等READY；ring只用于本地环位编排。 */
 void vision_request_align(char command, uint8_t ring, uint32_t now);
 int vision_align_state(void);
 int16_t vision_align_offset_px(void);
 /* axis=0前后、1横移；WAITING/READY均可读取。peek不消费，启动成功后take。
- * 移动期间每轴独立更新，不累计同轴旧指令；取消/新请求清空两轴。 */
+ * 兼容轴查询读取本轴最早未执行项；取消/新请求清空指令队列。 */
+/* D/E/F共用离散指令FIFO；启动成功后才消费，终包不清除未执行项。 */
+int vision_motion_peek(uint8_t *axis,int16_t *offset,uint32_t *received_ms);
+void vision_motion_take(void);
 int vision_align_peek_axis(uint8_t axis,int16_t *offset,uint32_t *received_ms);
 int vision_align_take_axis(uint8_t axis,int16_t *offset,uint32_t *received_ms);
 /* 兼容既有前后轴调用。 */

@@ -24,7 +24,7 @@ try {
     }
     $headingCanExe=Join-Path $headingOut 'verify_can_rx.exe'
     $headingRelativeCanExe='evidence/'+(Split-Path -Leaf $headingOut)+'/verify_can_rx.exe'
-    & $headingGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror tests/verify_can_rx.c -o $headingRelativeCanExe
+    & $headingGccPath -DARM_HOST_TEST -std=c99 -Wall -Wextra -Werror -Isrc tests/verify_can_rx.c -o $headingRelativeCanExe
     if($LASTEXITCODE -ne 0){throw 'CAN IRQ test compilation failed'}
     & $headingCanExe | Tee-Object -FilePath (Join-Path $headingOut 'can-rx.log')
     if($LASTEXITCODE -ne 0){throw 'CAN IRQ test failed'}
@@ -33,7 +33,7 @@ try {
         'src/motion.c','src/navigation.c','src/road_map.c','lookup/route_table.c','lookup/table_data.h','lookup/generation.json',
         'src/full_route.h','src/structure.h','src/road_map.h','src/motion.h','src/navigation.h',
         'tests/verify_entry.c','tests/entry_host_io.h','tests/verify_heading.c','tests/verify_can_rx.c','tools/verify-heading.ps1',
-        'vendor/stm32/can_ZDT/can.c','vendor/stm32/imu/imu.c','vendor/stm32/SYSTEM/Serial.c')) {
+        'vendor/stm32/can_ZDT/can.c','vendor/stm32/can_ZDT/board.c','src/can_tx.h','vendor/stm32/imu/imu.c','vendor/stm32/SYSTEM/Serial.c')) {
         $headingHashes[$headingName]=(Get-FileHash -LiteralPath (Join-Path $headingRoot $headingName) -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;scope='host mocks and simulated heading, not physical vehicle';legacyRunRemoved=$true;retainedEntryIncluded=$true;imuUartVariants=@(0,1);sourceHashes=$headingHashes;results=$headingOutputs} |

@@ -28,7 +28,8 @@ int main(void)
         prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;deadline=clock_ms+30000;
         while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
         CHECK(clock_ms<deadline && peer_stack_count==1);positions=arm_positions;
-        peer_reply(direction ? "STACK,280,240" : "STACK,360,240",0);tick(1);
+        peer_reply(direction ? "MOVE,-40" : "MOVE,+40",0);
+        peer_reply("STACK,600,100,620,1",0);tick(1);
         while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
         CHECK(run.state!=RUN_FAULT && run.station_shift && run.remaining_mm==20);
         CHECK(run.travel_sign==(direction ? 1 : -1));
@@ -43,15 +44,16 @@ int main(void)
         prepare_storage(1,"task 134+231+314+123");peer_stack_hold=1;deadline=clock_ms+30000;
         while(!peer_stack_count && clock_ms<deadline){serve_peer(&offset);plant_step();}
         CHECK(clock_ms<deadline && peer_stack_count==1);positions=arm_positions;
-        peer_reply(direction ? "STACK,320,200" : "STACK,320,280",0);tick(1);
+        peer_reply(direction ? "MOVEY,-40" : "MOVEY,+40",0);
+        peer_reply("STACK,600,100,620,1",0);tick(1);
         while(!run.station_shift && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
         CHECK(run.state!=RUN_FAULT && run.station_shift && run.travel_axis==BODY_LEFT && run.remaining_mm==20);
-        CHECK(run.travel_sign==(direction ? 1 : -1));
+        CHECK(run.travel_sign==(direction ? -1 : 1));
         while(station_chassis_busy() && run.state!=RUN_FAULT && clock_ms<deadline) {
             CHECK(arm_positions==positions);plant_step();
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==8);stop_request();
     }
-    printf("PASS configurable pixel gain: %u assertions; test-only0.5mm/px maps signed40px to20mm for D/E MOVE/MOVEY and both F STACK axes, not production calibration\n",assertions);
+    printf("PASS configurable pixel gain: %u assertions; test-only0.5mm/px maps signed40px to20mm for D/E MOVE/MOVEY and F MOVE/MOVEY (STACK report alone never moves), not production calibration\n",assertions);
     return 0;
 }

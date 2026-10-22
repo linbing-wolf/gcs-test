@@ -19,8 +19,12 @@ int station_task_ready(void);
 void station_task_words(int32_t *first,int32_t *second);
 /* 返回 1 已启动作业，0 该节点无动作，-1 拒绝执行（已打印原因）。 */
 int station_start(uint8_t node, uint8_t job_index, uint32_t now);
+/* 独立D/E/F纠偏，需已声明高位收回姿态；不要求任务码或取放标定表。 */
+int station_start_vision_debug(char command,uint8_t color,uint32_t now);
 void station_update(uint32_t now);
 int station_active(void);
+/* 最后仅剩高位收回后的云台/载物台回正，可提前开始离站预检和转弯。 */
+int station_departure_ready(void);
 int station_failed(void);
 void station_abort(void);
 /* 一轮含两批作业；仅整轮结束/取消时清除，普通工位交接不得调用。 */

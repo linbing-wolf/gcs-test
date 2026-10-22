@@ -1,7 +1,7 @@
 #ifndef STATION_CONFIG_H
 #define STATION_CONFIG_H
 /* B点二维码板位于+X；扫码模块在车尾，车头须朝-X，让车尾朝+X。 */
-#define STN_SCAN_HEADING 1u
+#define STN_SCAN_HEADING 1u /* B点扫码车头地图朝向编号；1=向左，使车尾扫码器朝二维码板。 */
 /* 粗加工区 / 暂存区的取放姿态标定表。
  *
  * 粗加工使用操作者2026-10-19指定参数；暂存第一层取放沿用粗加工参数，第二层在同一放料姿态上增加物块高度。
@@ -21,16 +21,12 @@ typedef struct {
 /* 两区D/MOVE/DISC对准：MOVE是像素偏差，按完整幅值换算毫米。
  * 粗加工及首次暂存进站对准2号一次（D/E），连续MOVE纠偏；第二次暂存直接F定位已有物块。 */
 #define STN_ALIGN_MOVE_SIGN -1 /* 正像素偏差后退、负偏差前进；实车待核验。 */
-/* 操作者假定1px=1mm，非实测；修改此处统一影响MOVE及STACK水平修正。 */
+/* 操作者假定1px=1mm，非实测；修改此处统一影响D/E/F的MOVE/MOVEY位移。 */
 #ifndef STN_VISION_MM_PER_PX_X1000
-#define STN_VISION_MM_PER_PX_X1000 1000
+#define STN_VISION_MM_PER_PX_X1000 1000 /* 像素到毫米比例×1000；1000=假定1px/1mm，D/E/F两轴统一换算。 */
 #endif
-#define STN_STACK_CENTER_X_PX 320
-#define STN_STACK_CENTER_Y_PX 240
 #define STN_ALIGN_Y_MOVE_SIGN       1  /* 实车反馈反向：MOVEY正值向左、负值向右；接口正值向左。 */
-#define STN_STACK_Y_MOVE_SIGN -1 /* 操作者确认：y>240向右（车体横移负向），y<240向左。 */
-#define STN_ALIGN_TRAVEL_MM 75
-#define STN_ALIGN_TIMEOUT_MS 60000u
+#define STN_ALIGN_TIMEOUT_MS 60000u /* 工位视觉等待告警周期，ms；不是每次发D/E的间隔。 */
 
 /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
@@ -39,22 +35,22 @@ typedef struct {
  * 作业内云台只在126.5/256度间直转，离站回0度；不等于实车验收。
  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
 #ifndef STN_ROUGH_PLACE_READY
-#define STN_ROUGH_PLACE_READY   1
+#define STN_ROUGH_PLACE_READY   1 /* 粗加工地面姿态启用标记，1启用/0未标定；不是速度开关。 */
 #endif
-#define STN_ROUGH_INDEX_MM    150
-#define STN_ROUGH_INDEX_SIGN   -1
-#define STN_ROUGH_INDEX_RPM    60
+#define STN_ROUGH_INDEX_MM    150 /* 粗加工相邻环中心距，mm；1到3自动一次走两倍距离。 */
+#define STN_ROUGH_INDEX_SIGN   -1 /* 环编号增加时的移车方向，-1=后退；前1、中2、后3。 */
+#define STN_ROUGH_INDEX_RPM    60 /* 粗加工环位索引/视觉微调速度请求上限，RPM；允许20~60。 */
 #ifndef STN_ROUGH_SLIDE_MM
-#define STN_ROUGH_SLIDE_MM     55
+#define STN_ROUGH_SLIDE_MM     55 /* 粗加工地面放料/抓回的平推目标，mm；不是车载杯位参数。 */
 #endif
 #ifndef STN_ROUGH_PLACE_LIFT_MM
 #define STN_ROUGH_PLACE_LIFT_MM 5 /* 放料松爪高度，mm；抓回高度同为5mm。 */
 #endif
 #ifndef STN_ROUGH_LIFT_MM
-#define STN_ROUGH_LIFT_MM       5
+#define STN_ROUGH_LIFT_MM       5 /* 粗加工地面抓回高度，mm；绝对坐标，放料高度由上一项定义。 */
 #endif
 #ifndef STN_ROUGH_YAW_DEG
-#define STN_ROUGH_YAW_DEG     126.5f
+#define STN_ROUGH_YAW_DEG     126.5f /* 粗加工观察/放料/抓回角，度；车载杯取放256度在arm_config.h。 */
 #endif
 static const StationPose stn_rough_place = {
     STN_ROUGH_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_YAW_DEG
@@ -63,9 +59,9 @@ static const StationPose stn_rough_grip = {
     STN_ROUGH_SLIDE_MM, STN_ROUGH_LIFT_MM, STN_ROUGH_YAW_DEG
 };
 /* 粗加工仅覆盖平台取料高度，平推/云台和放回平台高度仍用ARM_PLACE_*。 */
-#define STN_ROUGH_PLATFORM_TAKE_LIFT_MM 100
+#define STN_ROUGH_PLATFORM_TAKE_LIFT_MM 100 /* 从车载杯取出物块的高度，mm；粗加工和两批暂存共用100。 */
 #ifndef STN_ROUGH_PLATFORM_TAKE_READY
-#define STN_ROUGH_PLATFORM_TAKE_READY 1
+#define STN_ROUGH_PLATFORM_TAKE_READY 1 /* 粗加工平台取料标定启用，1启用/0未标定。 */
 #endif
 #if (STN_ROUGH_INDEX_SIGN != 1 && STN_ROUGH_INDEX_SIGN != -1) || \
     STN_ROUGH_INDEX_MM < 1 || STN_ROUGH_INDEX_MM > 300 || \
@@ -79,17 +75,17 @@ static const StationPose stn_rough_grip = {
  * 第一层沿用粗加工55mm/5mm/126.5度；物块60mm，第二层lift=5+60=65mm。
  * 配置值来自作业方案，并不等于实车标定或叠放验收。 */
 #ifndef STN_STORAGE_PLACE_READY
-#define STN_STORAGE_PLACE_READY 1
+#define STN_STORAGE_PLACE_READY 1 /* 暂存放料姿态启用，1启用/0未标定。 */
 #endif
-#define STN_STORAGE_INDEX_MM 150
-#define STN_STORAGE_INDEX_SIGN -1
-#define STN_STORAGE_INDEX_RPM 60
-#define STN_STORAGE_SLIDE_MM 55
-#define STN_STORAGE_LIFT_MM 5
-#define STN_STORAGE_YAW_DEG 126.5f
+#define STN_STORAGE_INDEX_MM 150 /* 暂存相邻环中心距，mm；当前编译约束为150。 */
+#define STN_STORAGE_INDEX_SIGN -1 /* 环编号增加时的移车方向，-1=后退；前1、中2、后3。 */
+#define STN_STORAGE_INDEX_RPM 60 /* 暂存索引/视觉微调速度请求上限，RPM；允许20~60。 */
+#define STN_STORAGE_SLIDE_MM 55 /* 暂存地面放料平推目标，mm；第一层与第二层共用。 */
+#define STN_STORAGE_LIFT_MM 5 /* 暂存第一层松爪绝对高度，mm；第二层在此基础上加层高。 */
+#define STN_STORAGE_YAW_DEG 126.5f /* 暂存地面放料云台角，度；需与观察角配合。 */
 #define STN_STORAGE_ALIGN_YAW_DEG 126.5f /* 观察/换盘/微调角；放料角同为126.5度。 */
 #ifndef STN_STORAGE_LAYER_LIFT_MM
-#define STN_STORAGE_LAYER_LIFT_MM 60
+#define STN_STORAGE_LAYER_LIFT_MM 60 /* 物块/层高增量，mm；第二层=5+60=65，非从车上取料高度。 */
 #endif
 static const StationPose stn_storage_place = {
     STN_STORAGE_SLIDE_MM, STN_STORAGE_LIFT_MM, STN_STORAGE_YAW_DEG
@@ -97,7 +93,7 @@ static const StationPose stn_storage_place = {
 
 /* 暂存两批平台取料均沿用粗加工100mm；叠层只改变地面放料高度。 */
 #ifndef STN_PLATFORM_TAKE_READY
-#define STN_PLATFORM_TAKE_READY 1
+#define STN_PLATFORM_TAKE_READY 1 /* 暂存平台取料标定启用，1启用/0未标定。 */
 #endif
 #if (STN_STORAGE_INDEX_SIGN != 1 && STN_STORAGE_INDEX_SIGN != -1) || \
     STN_STORAGE_INDEX_MM != 150 || STN_STORAGE_INDEX_RPM < 20 || STN_STORAGE_INDEX_RPM > 60 || \

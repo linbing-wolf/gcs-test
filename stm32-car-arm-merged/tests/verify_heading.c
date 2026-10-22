@@ -197,7 +197,7 @@ static void plant_step(void)
         if(magnitude && last_turn_step!=run.steps) {rotation_starts++;last_turn_step=run.steps;}
         if(run.heading_control.target_cdeg>0 && simulated_wheel_rpm[0]<0)reverse_seen=1;
     }
-    if(!run.turn_only && !run.translation_only && run.job>checked_job) {
+    if(!run.vision_debug && !run.turn_only && !run.translation_only && run.job>checked_job) {
         /* Task order is independently fixed from the official rule, not copied from full_route_jobs. */
         static const uint8_t expected[8]={NODE_B,NODE_F,NODE_D,NODE_H,NODE_F,NODE_D,NODE_H,NODE_A};
         RoadPoint point;
@@ -287,9 +287,9 @@ static void continuous_route_tests(void)
         CHECK(forward_actions==18 && injected_heading && corrected_during_drive);
         CHECK(checked_job==8 && station_alignment_entries==6);
         printf("RETURN_COUNTS plan=%u turns=%u reverse=%u lateral=%u reuses=%u baselines=%u\n",plan,rotation_starts,reverse_actions,lateral_actions,heading_reuses,baseline_transitions);
-        CHECK(rotation_starts==16 && reverse_actions==(plan ? 0u : 1u) && lateral_actions==4);
-        CHECK(heading_reuses==3 && baseline_transitions==15 && baseline_delay_max<=5);
-        CHECK(moving_transitions==15 && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
+        CHECK(rotation_starts==10 && reverse_actions==(plan ? 2u : 3u) && lateral_actions==10);
+        CHECK(heading_reuses==5 && baseline_transitions==16 && baseline_delay_max<=5);
+        CHECK(moving_transitions==16 && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
         {
             unsigned edge;
             uint16_t expected_roads=0;
@@ -583,8 +583,10 @@ static void map_reverse_and_postcheck_tests(void)
     unsigned heading,travel,history,road;
     for(road=0;road<ROAD_COUNT;road++)for(history=0;history<3;history++)
     for(heading=0;heading<4;heading++)for(travel=0;travel<4;travel++) {
-        unsigned reverse=history==1 && (travel+4u-heading)%4u==2u;
-        int expected_heading=reverse ? (int)heading : (int)travel;
+        unsigned delta=(travel+4u-heading)%4u;
+        int expected_heading=history==1 ? (int)heading : (int)travel;
+        BodyAxis axis=history==1 && (delta&1u) ? BODY_LEFT : BODY_FORWARD;
+        int sign=history==1 && (delta==1 || delta==2) ? -1 : 1;
         reset_heading_fixture();sample_yaw(heading_wrap_cdeg(-(int32_t)heading*9000));
         run.imu_mode=1;run.heading=(RoadHeading)heading;run.yaw_zero_cdeg=0;
         run.road.count=1;run.road.road=(uint8_t)road;
@@ -592,7 +594,7 @@ static void map_reverse_and_postcheck_tests(void)
         run.road.segments[0].axis=travel==0 || travel==2 ? BODY_FORWARD : BODY_LEFT;
         run.road.segments[0].mm=travel==0 || travel==1 ? 1000 : -1000;
         CHECK(run_segment());
-        CHECK(run.target_heading==(RoadHeading)expected_heading && run.travel_sign==(reverse ? -1 : 1));
+        CHECK(run.target_heading==(RoadHeading)expected_heading && run.travel_sign==sign && run.travel_axis==axis);
         CHECK(run.heading_control.target_cdeg==heading_wrap_cdeg((int32_t)(heading-expected_heading)*9000));
     }
     reset_plant(0,1.2);send_line("turn");send_line("left90");finish_plant(20000);
@@ -610,7 +612,7 @@ static void map_reverse_and_postcheck_tests(void)
         }
         CHECK(!turn_postcheck.active);
     }
-    puts("PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward travel, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs");
+    puts("PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward/lateral travel, first/unrelated roads keep original policy, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs");
 }
 
 static void return_lateral_policy_tests(void)

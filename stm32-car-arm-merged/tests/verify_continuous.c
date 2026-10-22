@@ -39,7 +39,7 @@ static void continuous_pass_tests(void)
                 injections++;
             }
             if(strstr(output,"[route pass]")) {
-                CHECK(edge==3 || edge==9 || edge==13);
+                CHECK(edge==9 || edge==13);
                 CHECK(run.edge==edge+1 && run.velocity_phase==VELOCITY_FORWARD);
                 CHECK(run.target_heading==heading);
                 if(run.travel_axis==BODY_FORWARD)CHECK(run.forward_mrpm>0 && run.forward_cmd_rpm>0);
@@ -50,12 +50,12 @@ static void continuous_pass_tests(void)
                 passes++;
             }
             if(run.velocity_phase==VELOCITY_STOP_FORWARD)
-                CHECK(run.edge!=3 && run.edge!=9 && run.edge!=13);
+                CHECK(run.edge!=9 && run.edge!=13);
         }
         if(run.state!=RUN_DONE)fprintf(stderr,"Route fault: %s\n",output);
-        CHECK(run.state==RUN_DONE && run.job==8 && passes==3 && injections==2);
-        CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && baseline_transitions==15);
-        printf("PASS nonstop route %c uart_cost=%u: three E passes preserve heading, ramp and encoder baseline; all jobs stop; configured_run_rpm=%u\n",
+        CHECK(run.state==RUN_DONE && run.job==8 && passes==2 && injections==2);
+        CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && baseline_transitions==16);
+        printf("PASS nonstop route %c uart_cost=%u: two E passes preserve heading, ramp and encoder baseline; first E-D keeps its first-visit heading transition; all jobs stop; configured_run_rpm=%u\n",
                (variant&1)?'C':'A',variant/2,(unsigned)CAR_RUN_RPM);
     }
 }
@@ -72,7 +72,9 @@ static void reach_leg(unsigned edge,unsigned segment,unsigned mm)
 static void return_cases(void)
 {
     static const struct {unsigned edge,segment,mm;} cases[]={
-        {0,0,20},{0,1,200},{3,0,200},{4,0,200},{6,0,200},{14,0,150},{15,0,200},{15,1,20}
+        {0,0,20},{0,1,200},{3,0,200},{4,0,200},{5,0,200},{6,0,200},
+        {7,0,200},{8,0,200},{9,0,200},{10,0,200},{11,0,200},{12,0,200},
+        {14,0,150},{15,0,200},{15,1,20}
     };
     unsigned plan,test;
     for(plan=0;plan<2;plan++)for(test=0;test<sizeof(cases)/sizeof(cases[0]);test++) {

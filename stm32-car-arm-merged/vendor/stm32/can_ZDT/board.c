@@ -81,7 +81,7 @@ void can_init(void)
 	CAN_InitStructure.CAN_AWUM = DISABLE;					// 关闭自动唤醒模式
 	CAN_InitStructure.CAN_NART = DISABLE;					// 关闭非自动重传模式	DISABLE-自动重传
 	CAN_InitStructure.CAN_RFLM = DISABLE;					// 接收FIFO锁定模式		DISABLE-溢出时新报文会覆盖原有报文
-	CAN_InitStructure.CAN_TXFP = DISABLE;					// 发送FIFO优先级			DISABLE-优先级取决于报文标识符
+	CAN_InitStructure.CAN_TXFP = ENABLE; /* Local mailboxes transmit in request order. */					// 发送FIFO优先级			DISABLE-优先级取决于报文标识符
 	CAN_InitStructure.CAN_Mode = CAN_Mode_Normal;	// 正常工作模式
 	CAN_InitStructure.CAN_SJW = CAN_SJW_1tq;			// 重新同步跳跃宽度为SJW + 1个时间单位
 	CAN_InitStructure.CAN_BS1 = CAN_BS1_9tq;

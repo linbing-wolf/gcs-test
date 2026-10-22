@@ -26,17 +26,17 @@ static void drive_core_tests(void)
     for(i=0;i<30;i++) {
         int32_t before=run.forward_mrpm;
         clock_ms+=25;run_forward_slew(90);
-        CHECK(run.forward_mrpm-before<=3000 && run.forward_mrpm>=before);
+        CHECK(run.forward_mrpm-before<=(int32_t)(CAR_DRIVE_ACCEL_RPM_PER_S*25u) && run.forward_mrpm>=before);
         CHECK(run.forward_mrpm<=90000);
     }
     CHECK(run.forward_mrpm==90000);
     clock_ms+=1000;CHECK(run_forward_slew(0)==84); /* 延迟后最多吸收50ms，不追补成一次骤停。 */
     run.forward_mrpm=0;run.travel_sign=-1;clock_ms=run.forward_profile_ms=UINT32_MAX-10u;
-    clock_ms+=25;CHECK(run_forward_slew(-90)==-3);
+    clock_ms+=25;CHECK(run_forward_slew(-90)==-(int)(CAR_DRIVE_ACCEL_RPM_PER_S*25u/1000u));
     run.forward_mrpm=90000;run.profile_sign=1;
     for(i=0;i<30;i++) {clock_ms+=25;CHECK(run_forward_slew(-90)>=0);}
     CHECK(!run.forward_mrpm);
-    clock_ms+=25;CHECK(run_forward_slew(-90)==-3);
+    clock_ms+=25;CHECK(run_forward_slew(-90)==-(int)(CAR_DRIVE_ACCEL_RPM_PER_S*25u/1000u));
     CHECK(run_forward_target(0)==0 && run_forward_target(1)==0);
     for(i=10;i<=780;i+=10) {
         double rpm=abs(run_forward_target((int32_t)i));
@@ -89,7 +89,8 @@ static void drive_stop_and_log_tests(void)
     reset_plant(0,1);road_point(NODE_A,&start);field_x=planned_x=start.x;field_y=planned_y=start.y;
     send_line("runimu A");
     while(run_active && !run.forward_cmd_rpm && clock_ms<20000)plant_step();
-    CHECK(run_active && run.forward_cmd_rpm>0 && run.forward_cmd_rpm<=3);
+    CHECK(run_active && run.forward_cmd_rpm>0
+        && run.forward_cmd_rpm<=(int)(CAR_DRIVE_ACCEL_RPM_PER_S*CAR_DRIVE_SLEW_MAX_DT_MS/1000u));
     stop_request();
     puts("PASS drive execution: ramp applied at submit opportunities, command/feedback logs, immediate emergency bypass and fresh profile after restart");
 }
@@ -208,11 +209,11 @@ static void drive_dynamics_benchmark(void)
         }
         if(run.state==RUN_FAULT)fprintf(stderr,"Dynamics fault: %s\n",output);
         CHECK(run_active && run.edge>=8 && entered[0] && entered[1] && clock_ms<deadline);
+        printf("DYNAMICS %c uart_cost=%u E-H yaw_max=%.3fdeg cross_max=%.3fmm; H-E yaw_max=%.3fdeg cross_max=%.3fmm; simulated, not hardware\n",
+               (plan&1)?'C':'A',simulate_uart_cost,max_error[0],cross[0],max_error[1],cross[1]);
 #ifndef DRIVE_BASELINE_BENCHMARK
         CHECK(max_error[0]<3.0 && max_error[1]<3.0 && cross[0]<30.0 && cross[1]<30.0);
 #endif
-        printf("DYNAMICS %c uart_cost=%u E-H yaw_max=%.3fdeg cross_max=%.3fmm; H-E yaw_max=%.3fdeg cross_max=%.3fmm; simulated, not hardware\n",
-               (plan&1)?'C':'A',simulate_uart_cost,max_error[0],cross[0],max_error[1],cross[1]);
         stop_request();
     }
 }

@@ -9,6 +9,17 @@ static uint32_t assertions;
 #include "../src/main_table_nav.c"
 #define EXPECTED_FULL_ROUTE_MM (15040u - 4u*CAR_MAP_TOP_INSET_MM - 4u*CAR_MAP_BOTTOM_INSET_MM - 4u*CAR_MAP_RAW_EXTRA_INSET_MM - 4u*CAR_MAP_STORAGE_INSET_MM)
 
+/* 入口/机构替身只核验服务与取消接线；真实FIFO和硬件邮箱模型在verify_can_rx.c。 */
+static CanTxSnapshot host_tx_stats;
+static unsigned host_tx_services,host_tx_cancels[8];
+void can_tx_service(void){host_tx_services++;}
+void can_tx_snapshot(CanTxSnapshot *s){*s=host_tx_stats;}
+void can_tx_cancel(uint8_t address)
+{
+    CHECK(address<8);host_tx_cancels[address]++;
+    if(!address){host_tx_stats.queued=0;host_tx_stats.blocked=0;}
+}
+
 typedef struct {
     uint8_t addr,dir,acc;
     uint16_t rpm;
@@ -69,6 +80,7 @@ static int16_t arm_status_override[2]; /* -1沿用全局flags；测试可独立�
 static uint8_t arm_missing_motor,arm_inject_stop,arm_inject_can_error;
 static uint8_t arm_trace_address[128],arm_trace_dir[128];
 static uint32_t arm_trace_pulses[128];
+static uint32_t arm_trace_ms[128];
 static uint16_t arm_trace_yaw_us[128],arm_trace_claw_us[128];
 void entry_host_arm_pwm(uint16_t claw,uint16_t yaw) {arm_claw_us=claw;arm_yaw_us=yaw;}
 void entry_host_arm_platform_pwm(uint16_t pulse) {arm_platform_us=pulse;}
@@ -79,9 +91,11 @@ static void arm_fixture_position(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t a
 {
     const uint8_t reply[3]={0xfd,2,0x6b};
     int64_t delta=(int64_t)pulses*65536u/3200u;
-    CHECK((addr==5 || addr==7) && dir<=1 && rpm==ARM_AXIS_RPM && acc==ARM_AXIS_ACCEL && !absolute && !synchronous);
+    CHECK((addr==5 || addr==7) && dir<=1 && rpm==(addr==5 ? ARM_LIFT_RPM : ARM_SLIDE_RPM)
+          && acc==ARM_AXIS_ACCEL && !absolute && !synchronous);
     CHECK(arm_positions<128);
     arm_trace_address[arm_positions]=addr;arm_trace_dir[arm_positions]=dir;
+    arm_trace_ms[arm_positions]=clock_ms;
     arm_trace_yaw_us[arm_positions]=arm_yaw_us;arm_trace_claw_us[arm_positions]=arm_claw_us;
     arm_trace_pulses[arm_positions++]=pulses;
     if(dir)delta=-delta;
@@ -195,6 +209,7 @@ static void reset_fixture(void)
     MotionConfig config={CALIBRATED_PPM_X,CALIBRATED_PPM_Y,1,0,-1,1,
                          LEFT_FORWARD_MM_PER_M,RIGHT_FORWARD_MM_PER_M};
     NavMotionPort port={port_start,port_poll,port_stop,&drive};
+    memset(&host_tx_stats,0,sizeof(host_tx_stats));memset(host_tx_cancels,0,sizeof(host_tx_cancels));host_tx_services=0;
     arm_init();memset(&arm_lock,0,sizeof(arm_lock));
     simulate_uart_cost=0;uart_fraction_us=0;
     arm_claw_us=arm_yaw_us=arm_platform_us=0;
@@ -569,9 +584,27 @@ static void body_coordinate_tests(void)
     puts("PASS body coordinates: independent drawing vectors, four headings, forward/backward/left/right, stored-road encoding preserved");
 }
 
+static void can_tx_entry_tests(void)
+{
+    reset_fixture();host_tx_stats.queued=4;host_tx_stats.blocked=1;
+    host_tx_stats.head_id=0x701;host_tx_stats.head_command=0xfd;host_tx_stats.esr=16;host_tx_stats.tsr=7;
+    firmware_step();
+    CHECK(host_tx_services && !can_rx_fault && run.state!=RUN_FAULT);
+    CHECK(strstr(output,"[can tx waiting]") && strstr(output,"addr=7 packet=1 command_dec=253 ESR_dec=16 TSR_dec=7"));
+    output_size=0;output[0]=0;clock_ms+=100;firmware_step();
+    CHECK(!strstr(output,"[can tx waiting]"));
+    host_tx_stats.queued=0;host_tx_stats.blocked=0;firmware_step();
+    CHECK(strstr(output,"[can tx resumed]"));
+    host_tx_stats.queued=9;host_tx_stats.blocked=1;stop_pending=1;firmware_step();
+    CHECK(host_tx_cancels[0] && !host_tx_stats.queued && !stop_pending);
+    reset_fixture();run_active=1;run.state=RUN_MOVING;run_fault("test cancellation");
+    CHECK(host_tx_cancels[0] && run.state==RUN_FAULT);
+    puts("PASS CAN TX entry wiring: foreground pump, mailbox-busy only logs with address/packet/command/ESR/TSR, rate-limited/recovery logs, global stop and route fault clear queued old work");
+}
+
 int main(void)
 {
-    body_coordinate_tests();direction_tests();range_and_mode_tests();stop_and_timeout_tests();navigation_regression();trim_tests();rotation_tests();removed_run_tests();
+    can_tx_entry_tests();body_coordinate_tests();direction_tests();range_and_mode_tests();stop_and_timeout_tests();navigation_regression();trim_tests();rotation_tests();removed_run_tests();
     start_button_tests();
     scanner_tests();
     printf("PASS entry: %lu assertions; 12 direction/speed cases; trim/stop/range/mode/timeout/navigation/removed-run checks\n",(unsigned long)assertions);
