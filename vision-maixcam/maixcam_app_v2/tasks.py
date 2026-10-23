@@ -197,6 +197,96 @@ def _wait_stable_post(cam, ctl, detect, initial_ms, max_ms, tol, need,
     return last
 
 
+def _frame_sig(img, cols=32, rows=24):
+    """画面的降采样灰度签名（32x24=768 点），用来比较相邻帧是否变化。
+
+    纯 get_pixel 采样，不依赖 cv2/numpy；img 没有像素接口时返回 None。
+    """
+    if not hasattr(img, "get_pixel"):
+        return None
+    try:
+        w, h = img.width(), img.height()
+    except Exception:
+        return None
+    vals = []
+    for r in range(rows):
+        y = int((r + 0.5) * h / rows)
+        for c in range(cols):
+            x = int((c + 0.5) * w / cols)
+            v = vision._pixel_luma(img, x, y)
+            vals.append(0.0 if v is None else float(v))
+    return vals
+
+
+def _sig_diff(a, b):
+    if not a or not b:
+        return 1e9
+    n = min(len(a), len(b))
+    s = 0.0
+    for i in range(n):
+        s += abs(a[i] - b[i])
+    return s / n
+
+
+def _wait_scene_settle(cam, ctl, disp, max_ms, tag=""):
+    """等画面稳定：连续 SCENE_SETTLE_FRAMES 帧画面变化 < 阈值就立即返回 True。
+
+    为什么要它：任务开头原来死等固定毫秒（D/E=200、F=500）。
+    但机构（机械臂/转盘）什么时候停不确定——固定值要么等太久、要么没停就开始识别。
+    改成判稳后：还在动就继续等，一停就马上读第一帧。
+
+    max_ms 是「最长等待」上限（沿用各任务原来的 *_START_DELAY_MS）。
+    SCENE_SETTLE_ON=False 时退回固定等待（行为与旧版一致）。
+    返回 True=可以开始识别；False=被 R 中断（调用方应回 READY）。
+    """
+    max_ms = max(0, int(max_ms))
+    if max_ms <= 0:
+        return True
+    if not bool(getattr(config, "SCENE_SETTLE_ON", True)):
+        t0 = ticks_ms()                       # 退回固定等待
+        while ticks_ms() - t0 < max_ms:
+            if app.need_exit():
+                return False
+            if ctl is not None and not ctl.tick():
+                return False
+            sleep_ms(20)
+        return True
+
+    need = max(1, int(getattr(config, "SCENE_SETTLE_FRAMES", 3)))
+    thr = float(getattr(config, "SCENE_SETTLE_DIFF", 2.0))
+    min_ms = max(0, int(getattr(config, "SCENE_SETTLE_MIN_MS", 100)))
+    t0 = ticks_ms()
+    prev = None
+    stable = 0
+    while True:
+        if app.need_exit():
+            return False
+        if ctl is not None and not ctl.tick():
+            return False
+        img = cam.read()
+        if disp is not None:
+            try:
+                disp.show(img)
+            except Exception:
+                pass
+        sig = _frame_sig(img)
+        if sig is not None and prev is not None:
+            d = _sig_diff(prev, sig)
+            if d <= thr:
+                stable += 1
+            else:
+                stable = 0
+        prev = sig
+        el = ticks_ms() - t0
+        if stable >= need and el >= min_ms:
+            log("[%s] 画面已稳定（%d 帧变化<%.1f，用时 %dms）" % (tag, stable, thr, el))
+            return True
+        if el >= max_ms:
+            log("[%s] 画面稳定等待到上限（%dms），继续" % (tag, max_ms))
+            return True
+        sleep_ms(20)
+
+
 def _confirm_road(ai, img, roi):
     """右侧道路二次确认：灰色占比过线后，再用分类模型确认是 other。
 
@@ -621,15 +711,12 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
            float(getattr(config, "MOVE_SCALE", 1.0)),
            float(getattr(config, "MOVEY_SCALE", 1.0)), dx_offset, dy_offset,
            "无" if step_max <= 0 else str(step_max)))
-    # 收到 D/E 后先等一会，让车/机构停稳，再读第一帧
+    # 收到 D/E 后等画面稳定（上限 DISC_START_DELAY_MS），再读第一帧
     start_delay = max(0, int(getattr(config, "DISC_START_DELAY_MS", 0)))
     if start_delay > 0:
-        log("[%s] 收到命令，等待 %dms 后再读第一帧" % (tag, start_delay))
-        t_delay = ticks_ms()
-        while ticks_ms() - t_delay < start_delay:
-            if ctl is not None and not ctl.tick():
-                return finish(pack_ready())
-            sleep_ms(20)
+        log("[%s] 等待画面稳定（上限 %dms）" % (tag, start_delay))
+        if not _wait_scene_settle(cam, ctl, disp, start_delay, tag):
+            return finish(pack_ready())
     P.reset(tag)                         # 清掉上一次同名任务的多帧平均缓存
     tracker = StabilityTracker(need_stable)
     t0 = ticks_ms()
@@ -969,13 +1056,12 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
         % (init_cx, init_cy, init_r, tx, ty, tol_x, tol_y,
            "MOVEXY 双轴" if _align_movexy_mode() else "MOVE+MOVEY", timeout_ms))
 
-    # 收到 H 后先等机构/画面停稳再读第一帧
+    # 收到 H 后等画面稳定（上限 PLATE_START_DELAY_MS）再读第一帧
     start_delay = max(0, int(getattr(config, "PLATE_START_DELAY_MS", 0)))
-    t_delay = ticks_ms()
-    while ticks_ms() - t_delay < start_delay:
-        if ctl is not None and not ctl.tick():
+    if start_delay > 0:
+        log("[H] 等待画面稳定（上限 %dms）" % start_delay)
+        if not _wait_scene_settle(cam, ctl, disp, start_delay, "H"):
             return pack_ready()
-        sleep_ms(20)
 
     P.reset("H")
     t0 = ticks_ms()
@@ -1249,12 +1335,9 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
 
     start_delay = max(0, int(getattr(config, "STACK_START_DELAY_MS", 0)))
     if start_delay > 0:
-        log("[F] 收到命令，等待 %dms 后再读第一帧" % start_delay)
-        t_delay = ticks_ms()
-        while ticks_ms() - t_delay < start_delay:
-            if ctl is not None and not ctl.tick():
-                return finish(pack_ready())
-            sleep_ms(20)
+        log("[F] 等待画面稳定（上限 %dms）" % start_delay)
+        if not _wait_scene_settle(cam, ctl, disp, start_delay, "F"):
+            return finish(pack_ready())
 
     P.reset("F")
     tracker = StabilityTracker(config.STABLE_FRAMES)

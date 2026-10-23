@@ -186,7 +186,46 @@ if out.startswith("DISC,"):
 else:
     check("闭环返回 DISC", False, out)
 
-# ---------------- 4) 看不到下弧 → NONE ----------------
+# ---------------- 4) 画面稳定判定 ----------------
+print("\n== _wait_scene_settle：画面稳定后提前开始 ==")
+
+
+class _SettleCam(FakeArcCam):
+    """前 move_frames 帧画面在变（cx 每帧 +6），之后固定不动。"""
+
+    def __init__(self, move_frames=5, **k):
+        super().__init__(**k)
+        self.n = 0
+        self.move_frames = move_frames
+
+    def read(self):
+        Clock.tick(60)
+        self.n += 1
+        cx = self.cx + (6 * self.n if self.n <= self.move_frames else 6 * self.move_frames)
+        return FakeArcImage(cx, self.cy, self.r, visible=self.visible)
+
+
+config.SCENE_SETTLE_ON = True
+config.SCENE_SETTLE_FRAMES = 3
+config.SCENE_SETTLE_DIFF = 2.0
+config.SCENE_SETTLE_MIN_MS = 0
+cam = _SettleCam(move_frames=5, cx=300.0)
+t0 = Clock.t
+ok = tasks._wait_scene_settle(cam, None, None, 5000, "T")
+el = Clock.t - t0
+check("返回 True", ok, "elapsed=%dms" % el)
+check("画面稳定后提前返回（未用满 5000ms 上限）", el < 5000, "elapsed=%dms" % el)
+
+config.SCENE_SETTLE_ON = False
+cam2 = _SettleCam(move_frames=5, cx=300.0)
+t1 = Clock.t
+ok2 = tasks._wait_scene_settle(cam2, None, None, 400, "T")
+el2 = Clock.t - t1
+check("SCENE_SETTLE_ON=False 退回固定等待（≥上限）", ok2 and el2 >= 400,
+      "elapsed=%dms" % el2)
+config.SCENE_SETTLE_ON = True
+
+# ---------------- 5) 看不到下弧 → NONE ----------------
 print("\n== task_plate：看不到下弧 ==")
 config.ALIGN_ONE_SHOT = True
 cam = FakeArcCam(visible=False)

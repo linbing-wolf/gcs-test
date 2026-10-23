@@ -80,6 +80,16 @@ touch /tmp/run_stack_move
 > ⚠️ 目标最低点 `PLATE_TARGET_X/Y` 要现场标定：把盘摆到希望对齐的位置，看日志里
 > `[H] 物料盘最低点 (x,y)`，把 x/y 填进 config。
 
+### 启动延时：等画面稳定（替代固定等待）
+
+收到 D/E、F、H 后**不再死等固定毫秒**，而是等画面连续稳定后再读第一帧：
+
+- 机构（机械臂/转盘/车体）还在动 → 画面变化大 → 继续等；停下来 → 立即开始
+- `DISC_/STACK_/PLATE_START_DELAY_MS` 变成**最长等待上限**（判稳会提前返回，通常 100~300ms 就开始了）
+- 参数：`SCENE_SETTLE_ON`(True) / `SCENE_SETTLE_FRAMES`(3) / `SCENE_SETTLE_DIFF`(3.0) / `SCENE_SETTLE_MIN_MS`(100)
+- 判定用画面的 32×24 降采样灰度签名，纯 `get_pixel`，无 cv2 依赖
+- 想回到旧行为（固定等待）：`SCENE_SETTLE_ON = False`
+
 ### 串口日志与运行信息
 
 每次 APP 启动都会在 `/root/yyb_mover_serial/` 新建：

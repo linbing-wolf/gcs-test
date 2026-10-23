@@ -81,14 +81,14 @@ STACK_ALIGN_DX_OFFSET = 5      # 参数本身=5；目标 x=320-5=315
 STACK_ALIGN_DY_OFFSET = 45     # 参数本身=45；目标 y=240-45=195
 STACK_INVERT_X       = False   # F 的 MOVE 方向反了置 True
 STACK_INVERT_Y       = False   # F 的 MOVEY 方向反了置 True
-STACK_START_DELAY_MS = 500     # F 识别前延迟；加大到 500ms 等机构和画面稳定
+STACK_START_DELAY_MS = 800     # 【最长等待】等画面稳定再识别；判稳即提前开始（见 SCENE_SETTLE_*）
 STACK_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_stack_move"  # 调试：直接跑一次真实 F
 STACK_DEBUG_TRIGGER_COLOR = "3"  # ""=F 不带颜色；"1"~"4"=按颜色找底座
 # ---- F 颜色中心：CV 找不到同色底座时，用 AI 分类器分块扫描兜底 ----
 STACK_AI_LOCATE      = True    # True = 启用 AI 分块找颜色中心
 STACK_AI_ONLY        = True    # True = F,<颜色> 只用 AI，不再走 CV/空环兜底
 STACK_AI_TILE        = 96      # 扫描块边长(px，640x480 口径)
-STACK_AI_STRIDE      = 48      # 扫描步长(px)，块之间 50% 重叠
+STACK_AI_STRIDE      = 96      # 扫描步长(px)：96=无重叠→25 块(快)；48=50% 重叠→81 块(准)
 STACK_AI_MIN_PROB    = 0.75    # AI 置信度下限
 STACK_AI_BLUE_MIN_PROB = 0.90   # 蓝色(3)单独提高阈值，压掉蓝色误判
 STACK_AI_BLUE_MAX_TILES = 12    # 蓝色命中块上限；新模型对物料边缘块也会命中，实测约 9~10 块
@@ -105,7 +105,7 @@ STACK_TOP_R_MAX      = 55      # circle 模式：物料顶部圆半径上限(px)
 STACK_TOP_THRESHOLD  = 1500    # circle 模式：顶部圆霍夫阈值
 STACK_CV_SEARCH_MARGIN = 24    # AI 框外扩后再精修(px)
 # ---- F 码垛调试记录（JPEG + meta.jsonl，放在 APP 目录外）----
-STACK_DEBUG_SAVE        = True
+STACK_DEBUG_SAVE        = False   # 比赛提速：默认关；要抓 F 调试图改回 True
 STACK_DEBUG_DIR         = "/root/yyb_mover_data/stack_debug"
 STACK_DEBUG_MAX_FRAMES  = 80   # 每次 F 最多存 80 张，覆盖完整的动作前/动作后
 STACK_DEBUG_QUALITY     = 85
@@ -140,7 +140,7 @@ DISC_RING_R_MIN        = 20     # 圆环兜底半径范围（px）
 DISC_RING_R_MAX        = 140
 DISC_RING_THRESHOLD    = 1200   # 圆环霍夫累加阈值（环线细，比圆盘低）
 DISC_TIMEOUT_MS        = 8000   # D/E 专属兜底超时（比通用 TASK_TIMEOUT_MS 短）
-DISC_START_DELAY_MS    = 200    # 收到 D/E 后先等这么久再读第一次相机（加速：500→200）
+DISC_START_DELAY_MS    = 600    # 【最长等待】等画面稳定再读第一帧；判稳即提前开始（见 SCENE_SETTLE_*）
 DISC_LOST_FRAMES       = 2      # 连续 N 帧看不到圆 → 立即回 NONE（1=第一帧就回）
 DISC_TRACK_MAX_JUMP    = 50     # 优先选离上一次圆心 ≤N px 的候选（0=不启用）
 
@@ -366,10 +366,21 @@ PLATE_TOL_Y         = 6        # 垂直容差(px)
 PLATE_STABLE_FRAMES = 3        # 进入容差后连续 N 帧稳定才回 ok=1
 PLATE_LOST_FRAMES   = 2        # 连续 N 帧看不到下弧 → 立即回 NONE
 PLATE_TIMEOUT_MS    = 8000     # 专属兜底超时（比通用 TASK_TIMEOUT_MS 短）
-PLATE_START_DELAY_MS = 200     # 收到 H 后先等机构/画面停稳再读第一帧
+PLATE_START_DELAY_MS = 600     # 【最长等待】等画面稳定再读第一帧；判稳即提前开始（见 SCENE_SETTLE_*）
 # 一次/闭环模式跟随 D/E 的 ALIGN_ONE_SHOT（True=只发一轮 MOVEXY，回读后即回复）
 PLATE_GAIN          = 0.65     # 步长增益（比例系数）
 PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
 PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
 PLATE_INVERT_Y      = False    # 垂直方向反了置 True
 PLATE_DEBUG_SAVE    = False    # True=每次 H 存关键帧到 PLATE_DEBUG_DIR
+
+# ============================== 启动延时：改为「画面稳定」判定 ==============================
+# 收到 D/E、F、H 后不再死等固定毫秒，而是等画面连续稳定后再读第一帧：
+#   · 机构（机械臂/转盘/车体）还在动 → 画面变化大 → 继续等
+#   · 停下来了 → 立即开始识别（通常比固定值更快、更可靠）
+# 各任务原来的 DISC_/STACK_/PLATE_START_DELAY_MS 现在作为「最长等待上限」。
+# SCENE_SETTLE_ON=False 时退回旧的固定等待（行为与 3.9.46 一致）。
+SCENE_SETTLE_ON     = True
+SCENE_SETTLE_FRAMES = 3        # 连续 N 帧画面变化 < 阈值 → 判定已稳定
+SCENE_SETTLE_DIFF   = 3.0      # 降采样(32x24)灰度均差阈值；越小越严、越大越松
+SCENE_SETTLE_MIN_MS = 100      # 至少等这么久，防止刚收到命令就误判稳定
