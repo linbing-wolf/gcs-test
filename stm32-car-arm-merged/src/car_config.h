@@ -14,6 +14,10 @@
 #ifndef CAR_ARM_TRANSLATION_OVERLAP_ENABLED
 #define CAR_ARM_TRANSLATION_OVERLAP_ENABLED 1 /* 1=实际高位收回后，云台/载物台旋转可与下一段前后/横移并行；0=平移等旋转完成。 */
 #endif
+#ifndef CAR_RUN_OMNI_ENABLED
+#define CAR_RUN_OMNI_ENABLED          1       /* 无障碍路线：所有道路保持当前车头，直接前后/横移；工位和扫码朝向另行对准。 */
+#endif
+/* 以下四项仅在CAR_RUN_OMNI_ENABLED=0时控制旧的首次/已走道路策略。 */
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
 #define CAR_RUN_REVISIT_LATERAL_ENABLED 1    /* 本轮完整走过的道路保持当前车头，以左右横移代替90度转向。 */
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */

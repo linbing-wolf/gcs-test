@@ -45,13 +45,13 @@ static void complete_flow_overlap_tests(void)
         printf("OVERLAP_FLOW plan=%u entry=%02x moving_pwm=%02x index_axes=%02x ground_axes=%02x\n",
                plan,entry_started,entry_moving_pwm,index_motor_mask,ground_motor_mask);
         CHECK(clock_ms<deadline && run.state==RUN_DONE && run.job==8);
-        CHECK(entry_started==0x7eu && entry_moving_pwm==0x7eu);
+        CHECK(entry_started==0x7eu && entry_moving_pwm==(CAR_RUN_OMNI_ENABLED ? 0x7cu : 0x7eu));
         CHECK((index_motor_mask&0x2cu)==0x2cu); /* 粗加工两批2/5、首次暂存3。 */
         CHECK((ground_motor_mask&0x24u)==0x24u); /* 两次粗加工地面抓回：下降也确实提前。 */
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && arm_ready() && arm_parked());
         stop_request();
     }
-    puts("PASS all areas: both complete A/C routes, six entry visits have changing PWM with nonzero chassis turn; rough pickup/ground retrieval and storage index have axis commands with nonzero translation; original eight jobs and13960mm retained");
+    puts("PASS all areas: both complete A/C routes, entry PWM overlaps every required station turn; first raw visit retains already-correct scanner heading in omni mode; rough pickup/ground retrieval and storage index have axis commands with nonzero translation; original eight jobs and13960mm retained");
 }
 
 static void index_overlap_delay_and_cancel_tests(void)

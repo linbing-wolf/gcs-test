@@ -290,9 +290,12 @@ static void continuous_route_tests(void)
         CHECK(forward_actions==18 && injected_heading && corrected_during_drive);
         CHECK(checked_job==8 && station_alignment_entries==6);
         printf("RETURN_COUNTS plan=%u turns=%u reverse=%u lateral=%u reuses=%u baselines=%u\n",plan,rotation_starts,reverse_actions,lateral_actions,heading_reuses,baseline_transitions);
-        CHECK(rotation_starts==10 && reverse_actions==(plan ? 2u : 3u) && lateral_actions==10);
-        CHECK(heading_reuses==5 && baseline_transitions==16 && baseline_delay_max<=5);
-        CHECK(moving_transitions==16 && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
+        CHECK(rotation_starts==(CAR_RUN_OMNI_ENABLED ? 6u : 10u)
+            && reverse_actions==(CAR_RUN_OMNI_ENABLED ? (plan ? 3u : 5u) : (plan ? 2u : 3u))
+            && lateral_actions==(CAR_RUN_OMNI_ENABLED ? 12u : 10u));
+        CHECK(heading_reuses==(CAR_RUN_OMNI_ENABLED ? 8u : 5u)
+            && baseline_transitions==(CAR_RUN_OMNI_ENABLED ? 15u : 16u) && baseline_delay_max<=5);
+        CHECK(moving_transitions==(CAR_RUN_OMNI_ENABLED ? 15u : 16u) && motion_delay_max<=CAR_VELOCITY_CONTROL_MS+4u);
         {
             unsigned edge;
             uint16_t expected_roads=0;
@@ -631,9 +634,10 @@ static void map_reverse_and_postcheck_tests(void)
     for(road=0;road<ROAD_COUNT;road++)for(history=0;history<3;history++)
     for(heading=0;heading<4;heading++)for(travel=0;travel<4;travel++) {
         unsigned delta=(travel+4u-heading)%4u;
-        int expected_heading=history==1 ? (int)heading : (int)travel;
-        BodyAxis axis=history==1 && (delta&1u) ? BODY_LEFT : BODY_FORWARD;
-        int sign=history==1 && (delta==1 || delta==2) ? -1 : 1;
+        int preserve=CAR_RUN_OMNI_ENABLED || history==1;
+        int expected_heading=preserve ? (int)heading : (int)travel;
+        BodyAxis axis=preserve && (delta&1u) ? BODY_LEFT : BODY_FORWARD;
+        int sign=preserve && (delta==1 || delta==2) ? -1 : 1;
         reset_heading_fixture();sample_yaw(heading_wrap_cdeg(-(int32_t)heading*9000));
         run.imu_mode=1;run.heading=(RoadHeading)heading;run.yaw_zero_cdeg=0;
         run.road.count=1;run.road.road=(uint8_t)road;
@@ -659,7 +663,7 @@ static void map_reverse_and_postcheck_tests(void)
         }
         CHECK(!turn_postcheck.active);
     }
-    puts("PASS map/reverse/postcheck: 576 road/history/heading/travel cases, completed current road required for backward/lateral travel, first/unrelated roads keep original policy, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs");
+    puts("PASS map/reverse/postcheck: 576 road/history/heading/travel cases, all roads independent of history in omni mode; legacy mode retains completed-road policy, drawing-to-IMU handedness, passive 0.5/1/2-second drift logs");
 }
 
 static void return_lateral_policy_tests(void)
@@ -849,7 +853,7 @@ static void completed_road_history_tests(void)
         while(run_active && !(run.edge==2 && !run.turning && run.progress_mm>=100) && clock_ms<deadline)plant_step();
         CHECK(run_active && run.edge==2 && run.progress_mm>=100);
         CHECK(run.completed_roads==(uint16_t)(first_road|second_road));
-        CHECK(!(run.completed_roads&raw_road) && run.travel_sign==1);
+        CHECK(!(run.completed_roads&raw_road) && run.travel_sign==(CAR_RUN_OMNI_ENABLED ? -1 : 1));
         if(fault) {heading_sensor_invalidate(&heading_sensor);firmware_step();CHECK(run_active && run.state!=RUN_FAULT && !(run.completed_roads&raw_road));stop_request();}
         else {stop_request();CHECK(run.state==RUN_STOPPED);}
         CHECK(!run_active && !(run.completed_roads&raw_road));
@@ -857,7 +861,7 @@ static void completed_road_history_tests(void)
         CHECK(run_active && !run.completed_roads);
         stop_request();
     }
-    puts("PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach forward, partial stop/fault not recorded, every new run clears history");
+    puts("PASS completed-road history: multi-segment road recorded only at endpoint, first raw approach uses selected policy, partial stop/fault not recorded, every new run clears history");
 }
 
 /* 起步微小反向样本不能决定整段里程的符号；随后仍使用独立车辆模型。 */

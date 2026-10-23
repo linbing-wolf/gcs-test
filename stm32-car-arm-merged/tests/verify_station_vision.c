@@ -639,6 +639,7 @@ static void prepare_rough(unsigned batch, const char *task)
 static void departure_overlap_tests(void)
 {
     unsigned variant;
+    if(CAR_RUN_OMNI_ENABLED)return; /* 当前离站直接平移，由translation_overlap_tests覆盖；旧90度分支另用legacy变体核验。 */
     if(!STN_ROUGH_PLACE_READY || !STN_ROUGH_PLATFORM_TAKE_READY
         || !(STN_ROUGH_SLIDE_MM || STN_ROUGH_LIFT_MM || STN_ROUGH_YAW_DEG))return;
     for(variant=0;variant<4;variant++) {
@@ -1656,7 +1657,8 @@ static void station_alignment_tests(void)
         CHECK(arm_parked() && arm_platform_slot()==1 && run.distance_mm==4567+(run.velocity_phase==VELOCITY_FORWARD ? run.action_mm : 0) && run.completed_roads==0x123);
         CHECK(road_point(storage ? NODE_H : NODE_D,&point) && hypot(field_x-point.x,field_y-point.y)<25);
         if(variant>=3) {
-            CHECK(clock_ms<deadline && run.station_departing && arm_lock.state==2);
+            CHECK(clock_ms<deadline && arm_lock.state==2
+                && (run.station_departing || (CAR_RUN_OMNI_ENABLED && run.velocity_phase==VELOCITY_FORWARD)));
             while(run.state!=RUN_MOVING && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
             if(run.state!=RUN_MOVING || run.station_departing)fprintf(stderr,"DEPART storage=%u variant=%u state=%u departing=%u: %s\n",storage,variant,run.state,run.station_departing,output);
             CHECK(run.state==RUN_MOVING && clock_ms<deadline && !run.station_departing);

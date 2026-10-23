@@ -1,7 +1,7 @@
 ﻿/* 小车控制入口：硬件初始化、串口命令、单段标定、完整路线调度。
  * 日常调参：car_config.h；道路动作：structure.h；全程顺序：full_route.h。
  * 主循环入口：firmware_step()；全程状态推进：run_update()。
- * runimu发车短段横移，其余按航向行驶；估时不确认实际到位或车身角度。
+ * runimu道路直接前后/横移，工位单独对准；估时不确认实际到位或车身角度。
  */
 #ifdef NAV_ENTRY_HOST_TEST
 #include "../tests/entry_host_io.h"
@@ -1084,11 +1084,20 @@ static int run_resolve_leg(const RoadPlan *road, uint8_t segment, uint8_t edge,
                            RoadHeading heading, uint16_t completed, RunLeg *leg)
 {
     MotionParameters p, body;
+#if !CAR_RUN_OMNI_ENABLED
     uint8_t done;
+#endif
     if (segment >= road->count || road->count > ROAD_MAX_SEGMENTS) return 0;
     p = road->segments[segment];
     if ((unsigned)p.axis > BODY_LEFT || !p.mm) return 0;
     leg->mm = (uint16_t)(p.mm < 0 ? -p.mm : p.mm);
+#if CAR_RUN_OMNI_ENABLED
+    /* 无障碍时首次/已走道路同等处理；接口保留旧策略参数供兼容变体使用。 */
+    (void)edge;(void)completed;
+    if(!road_motion_parameters(p,heading,&body))return 0;
+    leg->axis=body.axis;leg->sign=body.mm>0 ? 1 : -1;leg->heading=heading;
+    return 1;
+#else
     /* 第二次暂存作业结束后，H->E->B->A/C保持离站航向，只换算车身平移方向。 */
     if (CAR_RUN_RETURN_LATERAL_ENABLED && run.job == FULL_ROUTE_JOBS - 1u
         && edge >= FULL_ROUTE_NODES - 4u) {
@@ -1117,6 +1126,7 @@ static int run_resolve_leg(const RoadPlan *road, uint8_t segment, uint8_t edge,
         leg->heading = heading;leg->sign = -1;
     }
     return 1;
+#endif
 }
 
 static int run_next_straight(RoadPlan *road, uint8_t *edge, uint8_t *segment,
@@ -1160,7 +1170,7 @@ static void run_segment_log(uint16_t mm)
     text(" continue_mm="); number(run.continuation_mm);text("\r\n");
 }
 
-/* 已完成道路可前后/左右平移，首次道路与工位朝向保持既有策略。 */
+/* 无障碍模式的所有道路直接前后/左右平移；工位朝向仍单独对准。 */
 static int run_segment(void)
 {
     RunLeg leg;
@@ -3398,7 +3408,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261023-merge2-r71; station entry and index terminal arm overlap\r\n");
+    text("[drive] version=20261023-merge2-r72; obstacle-free omni route keeps heading\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
