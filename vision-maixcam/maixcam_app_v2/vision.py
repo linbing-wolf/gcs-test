@@ -241,6 +241,89 @@ def _radial_edge_points(img, cx, cy, r, rays=72, band=10, step=2, min_grad=6.0):
     return pts
 
 
+def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
+    """沿 a0..a1 的圆弧射线，在 r±band 内找亮度梯度最大的点（边缘点）。
+
+    和 _radial_edge_points 的区别：只采样指定角度范围（物料盘只有下半弧可见），
+    且每条约200点内取最大梯度。返回 [(x,y), ...]（像素坐标）。
+    """
+    pts = []
+    w, h = img.width(), img.height()
+    rays = max(8, int(rays))
+    step = max(0.5, float(step))
+    r0 = max(2.0, float(r) - float(band))
+    r1 = max(r0 + step, float(r) + float(band))
+    span = a1 - a0
+    for i in range(rays):
+        a = a0 + span * i / (rays - 1)
+        ca, sa = math.cos(a), math.sin(a)
+        rr = r0
+        prev = None
+        best_g, best_xy = -1.0, None
+        while rr <= r1:
+            x = int(round(cx + ca * rr))
+            y = int(round(cy + sa * rr))
+            if 0 <= x < w and 0 <= y < h:
+                v = _pixel_luma(img, x, y)
+                if v is not None and prev is not None:
+                    g = abs(v - prev)
+                    if g > best_g:
+                        best_g, best_xy = g, (x, y)
+                prev = v
+            else:
+                prev = None
+            rr += step
+        if best_xy is not None and best_g >= min_grad:
+            pts.append(best_xy)
+    return pts
+
+
+def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
+                  min_grad=None, arc_deg=None, meta=None):
+    """物料盘下弧检测：从粗圆心沿下半弧找边缘点，迭代最小二乘拟合圆。
+
+    为什么需要：物料盘（白色带孔大圆盘）常常只拍得到下半弧，圆心落在画面外，
+    find_circles / Hough 找不到整圆；但可见的下弧足够外推出圆心和半径。
+
+    参数 cx/cy/r 是「粗圆心 + 粗半径」先验（圆心可为负），bands 是几轮搜索带半径
+    （大→小逐步精修，可容忍物料盘移动）。返回 (cx, cy, r) 或 None。
+    盘最低点 = (cx, cy + r)。
+    """
+    if not hasattr(img, "get_pixel"):
+        if meta is not None:
+            meta["reason"] = "no-pixel-api"
+        return None
+    bands = bands if bands is not None else getattr(
+        config, "PLATE_SEARCH_BANDS", (60.0, 28.0, 16.0))
+    if isinstance(bands, (int, float)):
+        bands = (float(bands),)
+    rays = int(rays if rays is not None else getattr(config, "PLATE_RAYS", 140))
+    step = float(step if step is not None else getattr(config, "PLATE_STEP", 2.0))
+    min_grad = float(min_grad if min_grad is not None
+                     else getattr(config, "PLATE_MIN_GRAD", 8.0))
+    arc = arc_deg if arc_deg is not None else getattr(
+        config, "PLATE_ARC_DEG", (-20.0, 200.0))
+    a0, a1 = math.radians(float(arc[0])), math.radians(float(arc[1]))
+    cx, cy, r = float(cx), float(cy), float(r)
+    for band in bands:
+        pts = _arc_edge_points(img, cx, cy, r, float(band), rays, step, min_grad, a0, a1)
+        if meta is not None:
+            meta["npts"] = len(pts)
+        if len(pts) < 12:
+            if meta is not None:
+                meta["reason"] = "points=%d<12" % len(pts)
+            return None
+        fit = precision.fit_circle(pts)
+        if fit is None:
+            if meta is not None:
+                meta["reason"] = "fit-degenerate"
+            return None
+        cx, cy, r = fit
+    if meta is not None:
+        meta["reason"] = "ok(npts=%d)" % (meta.get("npts", 0))
+    return cx, cy, r
+
+
 def refine_disc_center(img, cx, cy, r, rays=None, band=None, step=None,
                        min_points=None, max_shift=None, max_rms=None, meta=None):
     """径向边缘点 + 最小二乘拟合，细化圆心/半径。

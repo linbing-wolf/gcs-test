@@ -916,6 +916,188 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
 
 
 # ======================================================================
+# 任务 H：物料盘下弧对齐（盘太大只见下弧，以「最低点」为基准）
+# ======================================================================
+def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
+    """任务 H：把物料盘的「最低点」对齐到目标位置。
+
+    识别：vision.find_disc_arc 从粗圆心沿下弧找边缘 → 最小二乘拟合圆 → 最低点 (cx, cy+r)。
+    对齐：与 D/E 同一套，发 MOVEXY,dx,dy 微调（ALIGN_MODE="split" 时退回 MOVE+MOVEY）。
+    回复：DISC,x,y,dx,1（x,y = 盘最低点，dx = 水平偏差；dy 只随 MOVEXY 下发）
+          NONE,H  连续 PLATE_LOST_FRAMES 帧看不到下弧 / 超时
+    """
+    P = _pipeline(p)
+    link = getattr(ctl, "link", None) if ctl is not None else None
+    align_on = bool(getattr(config, "PLATE_ON", True)) and link is not None
+    sx = getattr(P, "sx", 1.0) or 1.0
+    sy = getattr(P, "sy", 1.0) or 1.0
+    init_cx = float(getattr(config, "PLATE_INIT_CX", 310.0)) / sx
+    init_cy = float(getattr(config, "PLATE_INIT_CY", -55.0)) / sy
+    init_r = float(getattr(config, "PLATE_INIT_R", 330.0)) / sx
+    bands = getattr(config, "PLATE_SEARCH_BANDS", (60.0, 28.0, 16.0))
+    bands = tuple(float(b) / sx for b in bands)
+    tx = float(getattr(config, "PLATE_TARGET_X", 311.0))
+    ty = float(getattr(config, "PLATE_TARGET_Y", 267.0))
+    tol_x = int(getattr(config, "PLATE_TOL_X", 6))
+    tol_y = int(getattr(config, "PLATE_TOL_Y", 6))
+    need_stable = max(1, int(getattr(config, "PLATE_STABLE_FRAMES", 3)))
+    lost_limit = max(1, int(getattr(config, "PLATE_LOST_FRAMES", 2)))
+    gain = float(getattr(config, "PLATE_GAIN", getattr(config, "ALIGN_GAIN", 0.65)))
+    step_min = max(1, int(getattr(config, "ALIGN_STEP_MIN", 2)))
+    step_max = int(getattr(config, "ALIGN_STEP_MAX", 0))
+    if step_max > 0:
+        step_max = max(step_min, step_max)
+    inv_x = bool(getattr(config, "PLATE_INVERT_X", False))
+    inv_y = bool(getattr(config, "PLATE_INVERT_Y", False))
+    oneshot = bool(getattr(config, "ALIGN_ONE_SHOT", True))  # 跟随 D/E 的一次/闭环模式
+    max_iter = max(1, int(getattr(config, "PLATE_MAX_ITER", 3)))
+    settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 800)))
+    if timeout_ms is None:
+        timeout_ms = int(getattr(config, "PLATE_TIMEOUT_MS", 8000))
+
+    def _detect(img):
+        """一帧：检测下弧 → 返回 (最低点x, 最低点y, meta)（对外口径）或 None"""
+        meta = {}
+        c = vision.find_disc_arc(img, init_cx, init_cy, init_r, bands=bands, meta=meta)
+        if c is None:
+            return None
+        cx, cy, r = c
+        lx, ly = P.point(cx, cy + r)        # 检测域最低点 → 对外口径（含去畸变）
+        return lx, ly, {"c": c, "meta": meta}
+
+    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f | 容差 ±%d/±%d | %s | 超时 %dms）"
+        % (init_cx, init_cy, init_r, tx, ty, tol_x, tol_y,
+           "MOVEXY 双轴" if _align_movexy_mode() else "MOVE+MOVEY", timeout_ms))
+
+    # 收到 H 后先等机构/画面停稳再读第一帧
+    start_delay = max(0, int(getattr(config, "PLATE_START_DELAY_MS", 0)))
+    t_delay = ticks_ms()
+    while ticks_ms() - t_delay < start_delay:
+        if ctl is not None and not ctl.tick():
+            return pack_ready()
+        sleep_ms(20)
+
+    P.reset("H")
+    t0 = ticks_ms()
+    iters = 0
+    stable = 0
+    lost = 0
+    while not app.need_exit():
+        if ctl is not None and not ctl.tick():
+            return pack_ready()
+        img = cam.read()
+        r = _detect(img)
+
+        # ---- 看不到下弧：连续 N 帧立即回 NONE ----
+        if r is None:
+            lost += 1
+            stable = 0
+            img.draw_string(2, 2, "H: no arc %d/%d" % (lost, lost_limit),
+                            image.COLOR_RED, 2)
+            if disp:
+                disp.show(img)
+            if lost >= lost_limit:
+                log("[H] 连续 %d 帧看不到下弧 → NONE" % lost)
+                return pack_none("H")
+            if ticks_ms() - t0 > timeout_ms:
+                log("[H] 超时（看不到下弧）")
+                return pack_none("H")
+            continue
+
+        lost = 0
+        lx, ly, info = r
+        cx, cy, rr = info["c"]
+        flx, fly = P.smooth("H", lx, ly)
+        dx = int(round(flx - tx))
+        dy = int(round(fly - ty))
+        ok_xy = abs(dx) <= tol_x and abs(dy) <= tol_y
+
+        # 画出拟合圆 + 最低点 + 目标十字（调试抓图/预览都看得到）
+        try:
+            img.draw_circle(int(round(cx)), int(round(cy)), int(round(rr)),
+                            image.COLOR_GREEN, 2)
+            img.draw_cross(int(round(cx)), int(round(cy + rr)), image.COLOR_RED, 6, 2)
+            img.draw_line(0, int(round(ty)), img.width() - 1, int(round(ty)),
+                          image.COLOR_YELLOW, 1)
+            img.draw_line(int(round(tx)), 0, int(round(tx)), img.height() - 1,
+                          image.COLOR_YELLOW, 1)
+        except Exception:
+            pass
+        img.draw_string(2, 2, "dx=%+d dy=%+d %s n=%d" %
+                        (dx, dy, "OK" if ok_xy else "MOVE",
+                         info["meta"].get("npts", 0)),
+                        image.COLOR_GREEN if ok_xy else image.COLOR_YELLOW, 2)
+
+        # ---- 容差内：连续 N 帧稳定才回 ok=1 ----
+        if ok_xy:
+            reset_guard()
+            stable += 1
+            if stable >= need_stable:
+                log("[H] 物料盘最低点 (%d,%d) dx=%+d dy=%+d 已对齐（%d 次微调）"
+                    % (flx, fly, dx, dy, iters))
+                if disp:
+                    disp.show(img)
+                return pack_disc(flx, fly, dx, 1)
+            if disp:
+                disp.show(img)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[H] 超时（等待稳定），带偏差回复")
+                return pack_disc(flx, fly, dx, 1)
+            continue
+
+        stable = 0
+
+        # ---- 超差：发 MOVEXY（并行）或 MOVE / MOVEY（拆分）----
+        if align_on and iters < max_iter:
+            x_out = abs(dx) > tol_x
+            y_out = abs(dy) > tol_y
+            sx_step = _axis_step(dx, gain, step_min, step_max, 1.0, inv_x) if x_out else 0
+            sy_step = _axis_step(dy, gain, step_min, step_max, 1.0, inv_y) if y_out else 0
+            actions = _make_align_actions(x_out, y_out, sx_step, sy_step)
+            parts = []
+            for name, step, payload in actions:
+                log("[H] dx=%+d dy=%+d 超差(±%d/±%d) → %s"
+                    % (dx, dy, tol_x, tol_y, payload))
+                link.send_payload(payload)
+                parts.append(payload)
+            iters += 1
+            if parts:
+                screen_echo.set_tx(" ".join(parts))
+            if disp:
+                disp.show(img)
+            if oneshot:
+                # 只读回读：先等一会，再等最低点连续 N 帧基本不动；绝不补发
+                post = _wait_stable_post(
+                    cam, ctl, _detect,
+                    int(getattr(config, "ONE_SHOT_VERIFY_MS", 600)),
+                    int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 2500)),
+                    int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
+                    int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
+                    baseline=(lx, ly),
+                    require_x=x_out, require_y=y_out)
+                rx, ry, rdx = lx, ly, dx
+                if post is not None:
+                    rx, ry = post["cx"], post["cy"]
+                    rdx = int(round(rx - tx))
+                    log("[H] 调整后最低点 (%d,%d) dx=%+d（回传此值，不再发 MOVEXY）"
+                        % (rx, ry, rdx))
+                return pack_disc(rx, ry, rdx, 1)
+            if settle:
+                sleep_ms(settle)
+            if ticks_ms() - t0 > timeout_ms:
+                log("[H] 超时（微调中），带偏差回复")
+                return pack_disc(flx, fly, dx, 1)
+            continue
+
+        if disp:
+            disp.show(img)
+        if ticks_ms() - t0 > timeout_ms:
+            log("[H] 超时")
+            return pack_disc(flx, fly, dx, 1)
+    return pack_none("H")
+
+
+# ======================================================================
 # 调试：连续抓一段画面（不发 MOVE，不需要 STM32）
 # ======================================================================
 def task_snapshot(cam, disp, roi, tag, duration_ms=None, p=None):

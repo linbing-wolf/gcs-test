@@ -26,6 +26,7 @@ payload 文本约定：
   E            暂存区圆盘中心/对齐       → DISC,x,y,dx,ok
   F            码垛中心/双轴对齐       → STACK,x,y,dx,ok (高度由下位机自己算)
   G            前方障碍物              → OBST,x,y,w,h,dist / CLEAR
+  H            物料盘下弧对齐          → DISC,x,y,dx,ok（x,y=盘最低点）
   R            复位/重新握手            → READY
   Z            结束                    → OK
 失败统一回：NONE[,<tag>]    异常回：ERR,<msg>
@@ -86,6 +87,7 @@ CMD_STACK = "F"
 CMD_FORWARD = "G"
 CMD_RESET = "R"
 CMD_END = "Z"
+CMD_PLATE = "H"
 
 
 def crc8(data):

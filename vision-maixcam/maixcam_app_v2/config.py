@@ -342,3 +342,34 @@ OBST_WIDTH_MM = 50.0                   # 障碍物物理宽度(mm)，用于估�
 OBST_CLEAR_FRAMES = 3                  # 连续 N 帧没看到 → 判定"前方无障碍"(CLEAR)
 OBST_STABLE_FRAMES = 5                 # 障碍物中心稳定帧数（行进中连续问，要快）
 OBST_TIMEOUT_MS = 3000                 # 兜底超时，超时按无障碍回
+
+# ============================== 物料盘下弧对齐（命令字 'H'）==============================
+# 场景：物料盘（白色带孔圆盘）太大，画面只能拍到它的下弧，圆心落在画面外（y 为负）。
+# 做法：从「粗圆心」沿下半弧发射射线找边缘点 → 最小二乘拟合圆 → 取「最低点」(cx, cy+r)
+#       作为基准；再与目标最低点相减得到 dx/dy，像 D/E 一样发 MOVEXY,dx,dy 微调。
+# 回复复用 D/E 的 DISC 格式：DISC,<最低点x>,<最低点y>,<dx>,<ok>
+#   （dy 不放进回复帧，而是随 MOVEXY 下发，与 D/E 的做法一致；STM32 侧解析无需改动）
+# ⚠️ 粗圆心/半径和目标最低点都要现场标定；先把盘移到目标位置，看日志里的 low=(x,y)。
+PLATE_ON            = True
+PLATE_INIT_CX       = 310.0    # 粗圆心 x（对外 640x480 口径）
+PLATE_INIT_CY       = -55.0    # 粗圆心 y（可为负：圆心在画面外）
+PLATE_INIT_R        = 330.0    # 粗半径（像素）
+PLATE_SEARCH_BANDS  = (60.0, 28.0, 16.0)  # 迭代搜索带半径(px)：大→小逐步精修，容忍盘移动
+PLATE_RAYS          = 140      # 下半弧采样射线数（越大越准、越慢）
+PLATE_STEP          = 2.0      # 径向采样步长(px)
+PLATE_MIN_GRAD      = 8.0      # 边缘最小亮度梯度（抗噪）
+PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见下弧
+PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定）
+PLATE_TARGET_Y      = 267.0    # 目标最低点 y（对外口径，现场标定）
+PLATE_TOL_X         = 6        # 水平容差(px)
+PLATE_TOL_Y         = 6        # 垂直容差(px)
+PLATE_STABLE_FRAMES = 3        # 进入容差后连续 N 帧稳定才回 ok=1
+PLATE_LOST_FRAMES   = 2        # 连续 N 帧看不到下弧 → 立即回 NONE
+PLATE_TIMEOUT_MS    = 8000     # 专属兜底超时（比通用 TASK_TIMEOUT_MS 短）
+PLATE_START_DELAY_MS = 200     # 收到 H 后先等机构/画面停稳再读第一帧
+# 一次/闭环模式跟随 D/E 的 ALIGN_ONE_SHOT（True=只发一轮 MOVEXY，回读后即回复）
+PLATE_GAIN          = 0.65     # 步长增益（比例系数）
+PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
+PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
+PLATE_INVERT_Y      = False    # 垂直方向反了置 True
+PLATE_DEBUG_SAVE    = False    # True=每次 H 存关键帧到 PLATE_DEBUG_DIR

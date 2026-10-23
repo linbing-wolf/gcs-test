@@ -17,6 +17,7 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 | `D` / `E` | 粗加工区 / 暂存区 圆盘中心 + 双轴对齐 | `DISC,x,y,dx,ok` |
 | `F` | 码垛中心 + 双轴对齐 | `STACK,x,y,dx,ok` |
 | `G` | 前进状态：检测前方黑色障碍物 | 有：`OBST,x,y,w,h,dist`／无：`CLEAR` |
+| `H` | 物料盘下弧对齐（以盘最低点为基准） | `DISC,x,y,dx,ok` |
 | `R` / `Z` | 复位 / 结束 | `READY` / `OK` |
 
 帧格式（双向）：`AA 55 LEN payload CRC8 0D`
@@ -61,6 +62,23 @@ MaixCAM2 作为**视觉上位机**，被动应答 STM32 的查询：
 ```bash
 touch /tmp/run_stack_move
 ```
+
+### H 物料盘下弧对齐
+
+物料盘（白色带孔圆盘）常常**只拍得到下半弧**（圆心落在画面外），`find_circles` 找不到整圆。
+`H` 用**粗圆心先验 + 沿下弧射线找边缘 + 最小二乘拟合圆**外推圆心，再取**最低点** (cx, cy+r)
+作为基准，与目标最低点相减得到 dx/dy，和 D/E 一样发 `MOVEXY,dx,dy` 微调：
+
+- 识别：`vision.find_disc_arc()`（纯 `get_pixel` + `precision.fit_circle`，无 cv2 依赖）
+- 参数：`PLATE_INIT_CX/CY/R`（粗圆心，cy 可为负）、`PLATE_SEARCH_BANDS`（迭代搜索带，大→小）、
+  `PLATE_TARGET_X/Y`（目标最低点，现场标定）、`PLATE_TOL_X/Y`；一次/闭环跟随 `ALIGN_ONE_SHOT`
+- 回复：`DISC,x,y,dx,1`（x,y = 盘最低点，dx = 水平偏差；dy 随 `MOVEXY` 下发）
+- 看不到下弧连续 `PLATE_LOST_FRAMES` 帧 → `NONE,H`
+- 方向反了改 `PLATE_INVERT_X/Y`，不要改 STM32 符号
+- 自检：`python selftest_plate.py`（合成下弧图 + 对齐闭环）
+
+> ⚠️ 目标最低点 `PLATE_TARGET_X/Y` 要现场标定：把盘摆到希望对齐的位置，看日志里
+> `[H] 物料盘最低点 (x,y)`，把 x/y 填进 config。
 
 ### 串口日志与运行信息
 

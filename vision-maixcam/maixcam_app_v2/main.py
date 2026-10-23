@@ -191,6 +191,9 @@ def dispatch(cmd, arg):
     elif cmd == protocol.CMD_FORWARD:
         reply(tasks.task_forward(cam, disp, p=pline, ctl=ctl))
 
+    elif cmd == protocol.CMD_PLATE:
+        reply(tasks.task_plate(cam, disp, p=pline, ctl=ctl))
+
     elif cmd == protocol.CMD_RESET:
         log("[R] 复位/握手")
         TASK = None
@@ -262,7 +265,7 @@ def main():
     log("串口: %s @ %d | 分辨率: %dx%d @%dfps"
         % (config.UART_DEV, config.UART_BAUDRATE, config.DET_W, config.DET_H, config.FPS))
     log("精度: %s" % pline.describe())
-    log("命令: A=启停区 T=任务码 C=原料区 D/E=圆盘 F=码垛 G=障碍物 R=复位 Z=结束")
+    log("命令: A=启停区 T=任务码 C=原料区 D/E=圆盘 F=码垛 G=障碍物 H=物料盘 R=复位 Z=结束")
     log("握手: 下位机发 R → READY；任务中收到 R 立即中断，收到其它命令回 BUSY")
     log("=" * 56)
 
