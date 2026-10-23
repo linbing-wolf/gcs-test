@@ -199,6 +199,11 @@ ALIGN_ONE_SHOT    = True    # True = 只发一轮 MOVEXY（或 MOVE/MOVEY）就�
 ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定为 1
 # one-shot 后回读一次：回复改用调整后的 x/y/dx（dy 仅写日志），
 # 但绝不再发 MOVE/MOVEY。会增加 ONE_SHOT_VERIFY_MS 的回复延迟。
+# ---- 对齐回复模式（D/E、F、H 发完 MOVEXY 之后怎么回）----
+#   "direct" = 【去回读】发完 MOVEXY 立即返回「动作前」的 x/y/dx（快，省掉 0.6~2.5s 回读）
+#   "verify" = 回读一次，用调整后（动作后）的 x/y/dx 回复（更准但慢）
+# STM32 若自己知道移动了多少、只想快速拿到偏差，就用 "direct"。
+ALIGN_REPLY_MODE     = "direct"
 ONE_SHOT_VERIFY      = True
 ONE_SHOT_VERIFY_MS   = 600    # 先等至少这么久，再开始判断是否停稳（加速：1200→600）
 ONE_SHOT_VERIFY_MAX_MS = 2500 # 停稳判断最多再等这么久（加速：4000→2500）

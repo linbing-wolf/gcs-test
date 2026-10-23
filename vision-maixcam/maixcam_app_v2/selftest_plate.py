@@ -159,15 +159,29 @@ for (cx0, cy0, r0) in [(311.0, -55.0, 330.0), (350.0, -90.0, 345.0),
         check("恢复 (%.0f,%.0f,%.0f)" % (cx0, cy0, r0), False, "返回 None: %s" % meta)
 
 # ---------------- 2) task_plate one-shot ----------------
-print("\n== task_plate：one-shot ==")
+print("\n== task_plate：one-shot（direct 去回读 / verify 回读）==")
 config.ALIGN_ONE_SHOT = True
+# --- direct：发完 MOVEXY 直接回动作前的值 ---
+config.ALIGN_REPLY_MODE = "direct"
 cam = FakeArcCam(cx=350.0, cy=-55.0, r=330.0)      # low=(350,275) → 目标 (311,267)
 link = ArcLink(cam)
 out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
+parts = out.split(",")
 check("返回 DISC 帧", out.startswith("DISC,"), out)
 check("超差时发过 MOVEXY", any(s.startswith("MOVEXY,") for s in link.sent),
       str(link.sent))
-check("DISC 带 5 个字段", len(out.split(",")) == 5, out)
+check("DISC 带 5 个字段", len(parts) == 5, out)
+check("direct：回动作前的值 (x=350, dx=39)",
+      len(parts) == 5 and int(parts[1]) == 350 and int(parts[3]) == 39, out)
+
+# --- verify：回读后用调整后的值 ---
+config.ALIGN_REPLY_MODE = "verify"
+cam = FakeArcCam(cx=350.0, cy=-55.0, r=330.0)
+link = ArcLink(cam)
+out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
+parts = out.split(",")
+check("verify：回调整后的值（≈325）",
+      len(parts) == 5 and abs(int(parts[1]) - 325) <= 6, out)
 
 # ---------------- 3) task_plate 闭环收敛 ----------------
 print("\n== task_plate：闭环（多轮）==")

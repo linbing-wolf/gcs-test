@@ -90,6 +90,18 @@ touch /tmp/run_stack_move
 - 判定用画面的 32×24 降采样灰度签名，纯 `get_pixel`，无 cv2 依赖
 - 想回到旧行为（固定等待）：`SCENE_SETTLE_ON = False`
 
+### 对齐回复模式：回读 / 去回读
+
+D/E、F、H 发完 `MOVEXY` 之后怎么回复，由 `ALIGN_REPLY_MODE` 决定：
+
+- `"direct"`（默认，**去回读**）：发完 `MOVEXY` 立即返回**动作前**的 `x/y/dx`，
+  省掉 0.6~2.5s 回读；STM32 自己知道移动了多少时用这个最快
+- `"verify"`：回读一次，用**调整后**的 `x/y/dx` 回复（更准但慢）
+
+```python
+ALIGN_REPLY_MODE = "direct"   # "direct"=去回读 | "verify"=回读后再回
+```
+
 ### 串口日志与运行信息
 
 每次 APP 启动都会在 `/root/yyb_mover_serial/` 新建：

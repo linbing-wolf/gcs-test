@@ -111,6 +111,15 @@ def _align_movexy_mode():
         "movexy", "xy", "combined")
 
 
+def _align_verify_on():
+    """发完 MOVEXY 后是否回读一次再回复。
+
+    True  = ALIGN_REPLY_MODE="verify"：回读，用调整后的 x/y/dx 回复（准但慢）
+    False = ALIGN_REPLY_MODE="direct"：去回读，立即回动作前的 x/y/dx（快）
+    """
+    return str(getattr(config, "ALIGN_REPLY_MODE", "direct")).strip().lower() == "verify"
+
+
 def _make_align_actions(x_out, y_out, sx_step, sy_step):
     """按当前模式组装指令；返回 (name, step, payload) 列表。"""
     if _align_movexy_mode():
@@ -913,16 +922,17 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                 sx_out, sy_out = P.smooth(tag, cx, cy)
                 ok = 1  # 回复 ok 固定为 1
                 reply_x, reply_y, reply_dx = sx_out, sy_out, dx
-                log("[%s] 一次性模式：已发 %s，回读调整后值再回 DISC"
-                    % (tag, " ".join(parts)))
+                log("[%s] 一次性模式：已发 %s，%s"
+                    % (tag, " ".join(parts),
+                       "回读调整后值再回 DISC" if _align_verify_on()
+                       else "去回读：直接回动作前偏差"))
                 if rec:
                     rec.snap(img, dict(f, action="move_oneshot",
                                        steps=[s for _, s, _ in actions]),
                              "final_oneshot", force=True)
 
-                # 只读回读：先等 initial_ms，再等到目标连续几帧不再移动；
-                # 只记录/回传，绝不再发 MOVE/MOVEY。
-                if bool(getattr(config, "ONE_SHOT_VERIFY", True)):
+                # ALIGN_REPLY_MODE="verify" 时才回读；"direct" 直接回动作前的值。
+                if _align_verify_on():
                     def detect_post(pimg):
                         pmeta = {}
                         pc = vision.find_disc_center(
@@ -1152,21 +1162,26 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
             if disp:
                 disp.show(img)
             if oneshot:
-                # 只读回读：先等一会，再等最低点连续 N 帧基本不动；绝不补发
-                post = _wait_stable_post(
-                    cam, ctl, _detect,
-                    int(getattr(config, "ONE_SHOT_VERIFY_MS", 600)),
-                    int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 2500)),
-                    int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
-                    int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
-                    baseline=(lx, ly),
-                    require_x=x_out, require_y=y_out)
-                rx, ry, rdx = lx, ly, dx
-                if post is not None:
-                    rx, ry = post["cx"], post["cy"]
-                    rdx = int(round(rx - tx))
-                    log("[H] 调整后最低点 (%d,%d) dx=%+d（回传此值，不再发 MOVEXY）"
-                        % (rx, ry, rdx))
+                rx, ry, rdx = flx, fly, dx
+                if _align_verify_on():
+                    # 只读回读：先等一会，再等最低点连续 N 帧基本不动；绝不补发
+                    post = _wait_stable_post(
+                        cam, ctl, _detect,
+                        int(getattr(config, "ONE_SHOT_VERIFY_MS", 600)),
+                        int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 2500)),
+                        int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
+                        int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
+                        baseline=(lx, ly),
+                        require_x=x_out, require_y=y_out)
+                    if post is not None:
+                        rx, ry = post["cx"], post["cy"]
+                        rdx = int(round(rx - tx))
+                        log("[H] 调整后最低点 (%d,%d) dx=%+d（回传此值，不再发 MOVEXY）"
+                            % (rx, ry, rdx))
+                    else:
+                        log("[H] 调整后偏差：未检测到目标，回传移动前值")
+                else:
+                    log("[H] 去回读：直接回动作前偏差 dx=%+d" % dx)
                 return pack_disc(rx, ry, rdx, 1)
             if settle:
                 sleep_ms(settle)
@@ -1516,14 +1531,15 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
             if bool(getattr(config, "ALIGN_ONE_SHOT", False)):
                 sx_out, sy_out = P.smooth("F", cx, cy)
                 reply_x, reply_y, reply_dx = sx_out, sy_out, dx
-                log("[F] 一次性模式：已发 %s，回读调整后值再回 STACK"
-                    % " ".join(parts))
+                log("[F] 一次性模式：已发 %s，%s"
+                    % (" ".join(parts),
+                       "回读调整后值再回 STACK" if _align_verify_on()
+                       else "去回读：直接回动作前偏差"))
                 if disp:
                     disp.show(img)
 
-                # 只读回读：先等 initial_ms，再等到目标连续几帧不再移动；
-                # 只记录/回传，绝不再发 MOVE/MOVEY。
-                if bool(getattr(config, "ONE_SHOT_VERIFY", True)):
+                # ALIGN_REPLY_MODE="verify" 时才回读；"direct" 直接回动作前的值。
+                if _align_verify_on():
                     def detect_post(pimg):
                         if color_code:
                             pit = vision.find_stack_base(clf, pimg, roi, color_code, ai)
