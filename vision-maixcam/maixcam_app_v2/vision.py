@@ -641,12 +641,29 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
     t0 = ticks_ms()
 
     def _accept(p, src):
-        """内容校验：候选圆附近必须能匹配到数字“2”，否则丢弃。"""
+        """内容校验：候选圆附近必须能匹配到数字“2”，否则丢弃。
+
+        校验通过时**直接用数字“2”的匹配位置作为环组中心**：
+        数字“2”画在环组正中，实测模板 score>0.9、比黑环质心 / 霍夫大圈都稳；
+        这样无论前面走的是 inner / black / cluster，最终中心都会统一到“2”的位置，
+        彻底消除同一目标在不同路径间来回跳变（D 中心不稳的根因）。
+        """
         if p is None:
             return None
         if not bool(getattr(config, "DISC_TEMPLATE_ON", True)):
             return p
-        if verify_target2(img, p[0], p[1], meta=meta):
+        m2 = {}
+        if verify_target2(img, p[0], p[1], meta=m2):
+            if meta is not None:
+                meta.update(m2)
+            tpl = m2.get("tpl")
+            if tpl and len(tpl) == 4:
+                tx, ty, tw, th = tpl
+                cx2 = int(round(tx + tw / 2.0))
+                cy2 = int(round(ty + th / 2.0))
+                if meta is not None:
+                    meta["center_src"] = "tpl2"
+                return (cx2, cy2, p[2])
             return p
         if meta is not None:
             meta["tpl_reject"] = src
