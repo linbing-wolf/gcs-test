@@ -7,6 +7,7 @@ void entry_host_send_byte(uint8_t value);
 uint8_t entry_host_start_button_pressed(void);
 void entry_host_scanner_init(uint32_t baud);
 int entry_host_scanner_tx_ready(void);
+int entry_host_scanner_tx_complete(void);
 void entry_host_scanner_send_byte(uint8_t value);
 void delay_ms(uint16_t milliseconds);
 void Emm_V5_Pos_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,

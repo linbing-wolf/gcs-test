@@ -58,7 +58,7 @@
 #ifndef CAR_IMU_UART_ENABLED
 #define CAR_IMU_UART_ENABLED           1
 #endif
-#define CAR_IMU_UART_BAUD         115200u
+#define CAR_IMU_UART_BAUD         230400u
 #define CAR_IMU_YAW_SIGN               1       /* 实车左转时角度应增加；反向改为-1。 */
 #define CAR_MAP_YAW_SIGN              -1       /* 场地图X向右、Y向下；地图方向递增与左转角相反。 */
 #define CAR_IMU_MAX_AGE_MS           250u
@@ -72,12 +72,21 @@
 #define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
+#define CAR_WHEEL_MAX_RPM            300      /* 四轮混控的既有限幅；直行横向纠偏预留同一轮速余量。 */
+#ifndef CAR_STRAIGHT_HOLD_ENABLED
+#define CAR_STRAIGHT_HOLD_ENABLED      1      /* 普通前进/后退按编码器估计横向位移补偿；不含工位、横移和obstacle。 */
+#endif
+#define CAR_STRAIGHT_HOLD_KP_X100     50      /* 横向误差比例增益，RPM/mm x100；初值须实车标定。 */
+#define CAR_STRAIGHT_HOLD_DEADBAND_MM  2      /* 编码器估计横向位移死区，mm；不是地面精度保证。 */
+#define CAR_STRAIGHT_HOLD_MAX_RPM     20      /* 横向补偿上限，RPM；低速时进一步限制，保持四轮原行驶方向。 */
 /* 直行保持航向独立于原地转向：沿用PD增益初值，小角度仍保留角速度阻尼。 */
 #define CAR_DRIVE_HEADING_KP_X100    120       /* RPM/度 ×100，尚待本车实测调节。 */
 #define CAR_DRIVE_HEADING_KD_X100     30       /* RPM/(度/秒) ×100。 */
 #define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
 #define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
 #define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向的最低转速跳变。 */
+#define CAR_MOVEXY_FINE_MAX_RPM        6       /* 仅工位双轴低速微调：两轴均不超过此RPM时，不放大小于1RPM的航向控制量。 */
+#define CAR_MOVEXY_MIN_RPM             1       /* 双轴最后几毫米允许降到1RPM；不沿用普通平移3RPM下限覆盖末端制动结果。 */
 #define CAR_DRIVE_ACCEL_RPM_PER_S    150u      /* 速度指令上升率RPM/s；原120，起步提高25%；减速及制动距离沿用120。 */
 #define CAR_DRIVE_DECEL_RPM_PER_S    120u      /* 正常减速及制动距离计算共用RPM/s；沿用120的可跟随制动斜坡，不能由驱动器200档位推定制动能力。 */
 #define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 100u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */
@@ -120,6 +129,8 @@
     CAR_DRIVE_HEADING_KP_X100 < 1 || CAR_DRIVE_HEADING_KD_X100 < 0 || \
     CAR_DRIVE_HEADING_QUIET_CDEG < 1 || CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S < 1 || \
     CAR_DRIVE_HEADING_MIN_RPM < 1 || CAR_DRIVE_HEADING_MIN_RPM > CAR_HEADING_DRIVE_TRIM_RPM || \
+    CAR_MOVEXY_FINE_MAX_RPM < 1 || CAR_MOVEXY_FINE_MAX_RPM > CAR_ENCODER_LEARN_RPM || \
+    CAR_MOVEXY_MIN_RPM < 1 || CAR_MOVEXY_MIN_RPM > CAR_DISTANCE_MIN_RPM || \
     CAR_DRIVE_ACCEL_RPM_PER_S < 1 || CAR_DRIVE_DECEL_RPM_PER_S < 1 || \
     CAR_DRIVE_SLEW_MAX_DT_MS < CAR_VELOCITY_CONTROL_MS || CAR_DRIVE_SLEW_MAX_DT_MS > CAR_VELOCITY_REPLY_MS || \
     CAR_VELOCITY_QUERY_MS < 1 || CAR_VELOCITY_FEEDBACK_MS <= CAR_VELOCITY_REPLY_MS || \
@@ -127,6 +138,11 @@
     CAR_ENCODER_LEARN_MM < 1 || CAR_ENCODER_LEARN_RPM < CAR_DISTANCE_MIN_RPM || \
     CAR_ENCODER_LEARN_RPM > CAR_LATERAL_MAX_RPM || CAR_ENCODER_LEARN_TIMEOUT_MS < CAR_VELOCITY_FEEDBACK_MS
 #error Invalid_heading_configuration
+#endif
+#if CAR_STRAIGHT_HOLD_ENABLED < 0 || CAR_STRAIGHT_HOLD_ENABLED > 1 || \
+    CAR_STRAIGHT_HOLD_KP_X100 < 1 || CAR_STRAIGHT_HOLD_DEADBAND_MM < 1 || \
+    CAR_STRAIGHT_HOLD_MAX_RPM < 1 || CAR_STRAIGHT_HOLD_MAX_RPM >= CAR_WHEEL_MAX_RPM
+#error Invalid_straight_hold_configuration
 #endif
 #if CAR_STATION_RAW_HEADING < 0 || CAR_STATION_RAW_HEADING > 3 || \
     CAR_STATION_ROUGH_HEADING < 0 || CAR_STATION_ROUGH_HEADING > 3 || \
@@ -145,6 +161,7 @@
  * 9600是待现场确认的初值；qr baud命令只改STM32串口，不写模块波特率。 */
 #define CAR_SCANNER_UART_BAUD              9600u
 #define CAR_SCANNER_BOOT_MS                1000u
+#define CAR_SCANNER_TX_MS                  1000u /* 单条配置发送限时；只影响扫码配置状态，不新增底盘停机。 */
 #define CAR_SCANNER_ACK_MS                 1000u
 
 /* 5. 运动估时/超时。估时不确认到位；全程仍需四轮反馈，导航仍需确认。 */

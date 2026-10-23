@@ -28,6 +28,12 @@ typedef struct {
 #define STN_ALIGN_Y_MOVE_SIGN       1  /* 实车反馈反向：MOVEY正值向左、负值向右；接口正值向左。 */
 #define STN_ALIGN_TIMEOUT_MS 60000u /* 工位视觉等待告警周期，ms；不是每次发D/E的间隔。 */
 
+/* 视觉终包且FIFO清空或固定索引的末段，允许下一靠近动作与低速修正并行。
+ * mm为每轴剩余距离，RPM为每轴已提交速度；夹爪闭合仍按原顺序等待底盘完成。 */
+#define STN_APPROACH_OVERLAP_MM 5
+#define STN_APPROACH_OVERLAP_RPM 6
+#define STN_APPROACH_OVERLAP_YAW_CDEG 300 /* 最后小角度修正窗口，0.01度；也用于进站准备姿态。 */
+
 /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
  * 进站先视觉对准2号基准一次，此后相邻150mm、1↔3直接300mm索引取放。

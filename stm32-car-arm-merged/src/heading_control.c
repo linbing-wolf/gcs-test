@@ -109,5 +109,5 @@ void heading_control_translate_wheels(int16_t forward, int16_t left,
         if (magnitude > maximum) maximum = magnitude;
     }
     for (i = 0; i < 4; i++)
-        rpm[i] = (int16_t)(maximum > 300 ? values[i] * 300 / maximum : values[i]);
+        rpm[i] = (int16_t)(maximum > CAR_WHEEL_MAX_RPM ? values[i] * CAR_WHEEL_MAX_RPM / maximum : values[i]);
 }

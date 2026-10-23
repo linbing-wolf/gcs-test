@@ -34,7 +34,7 @@ int main(void)
         CHECK(run.state!=RUN_FAULT && run.station_shift && run.remaining_mm==20);
         CHECK(run.travel_sign==(direction ? 1 : -1));
         while(station_chassis_busy() && run.state!=RUN_FAULT && clock_ms<deadline) {
-            CHECK(arm_positions==positions);plant_step();
+            check_correction_arm(positions);plant_step();
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==8);
         stop_request();
@@ -50,7 +50,7 @@ int main(void)
         CHECK(run.state!=RUN_FAULT && run.station_shift && run.travel_axis==BODY_LEFT && run.remaining_mm==20);
         CHECK(run.travel_sign==(direction ? -1 : 1));
         while(station_chassis_busy() && run.state!=RUN_FAULT && clock_ms<deadline) {
-            CHECK(arm_positions==positions);plant_step();
+            check_correction_arm(positions);plant_step();
         }
         CHECK(clock_ms<deadline && run.state!=RUN_FAULT && vision_tx_count==8);stop_request();
     }

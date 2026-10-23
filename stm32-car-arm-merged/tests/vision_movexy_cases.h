@@ -166,7 +166,7 @@ static void movexy_station_tests(void)
         CHECK(clock_ms<deadline);x=field_x;y=field_y;positions=arm_positions;
         peer_reply("MOVEXY,+40,-25",0);peer_reply(area==2 ? "STACK,700,-50,620,1" : "DISC,700,-50,620,1",0);
         while(clock_ms<deadline && run.state!=RUN_FAULT && !finished) {
-            plant_step();CHECK(arm_positions==positions);
+            plant_step();check_correction_arm(positions);
             if(run.vector_move && abs(run.forward_cmd_rpm)>1 && abs(run.wheel_rpm[0]-run.wheel_rpm[1])>2)concurrent++;
             if(strstr(output,area==2 ? "[station stack]" : "[station aligned]"))finished=1;
         }
@@ -174,7 +174,7 @@ static void movexy_station_tests(void)
         CHECK(fabs(field_x-x-(area ? -25 : -40))<3.0 && fabs(field_y-y-(area ? -40 : 25))<3.0);
         CHECK(vision_tx_count==(area==2 ? 8u : 6u));stop_request();
     }
-    puts("PASS MOVEXY automatic jobs: rough D, first storage E, second storage direct F; true two-axis endpoint before next arm command; no extra requests or terminal-coordinate movement");
+    puts("PASS MOVEXY automatic jobs: rough D, first storage E, second storage direct F; true two-axis endpoint before grip; final approach may overlap; no extra requests or terminal-coordinate movement");
 }
 static void movexy_storage_retained_tests(void)
 {

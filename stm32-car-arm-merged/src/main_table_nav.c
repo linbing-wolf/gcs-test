@@ -63,11 +63,18 @@ static volatile uint32_t clock_ms;       /* 系统毫秒计时，TIM5 中断更�
 #define SCANNER_RX_SIZE 128u
 typedef enum {SCANNER_OFF, SCANNER_BOOT, SCANNER_SET_ENDING, SCANNER_SET_CONTINUOUS,
               SCANNER_READY, SCANNER_FAULT} ScannerState;
+typedef enum {SCANNER_NO_FAULT, SCANNER_TX_TIMEOUT, SCANNER_ACK_TIMEOUT,
+              SCANNER_RX_ERROR} ScannerFailure;
 static struct {
     ScannerState state;
     uint32_t baud, phase_ms, rx_bytes, results;
     uint32_t uart_errors, overflows;
-    uint8_t tx_offset, ack_offset, length, discard;
+    volatile uint8_t tx_offset, tx_active, tx_complete, tx_command;
+    volatile uint32_t tx_completed_ms;
+    uint8_t waiting_ack, ack_offset, ack_peak, binary_length, binary_good, length, discard;
+    uint8_t fault_stage, fault_tx, fault_ack;
+    ScannerFailure fault_reason;
+    uint8_t recent[32], recent_head, recent_count;
     char result[128];
 } scanner;
 static volatile uint8_t scanner_rx[SCANNER_RX_SIZE], scanner_head, scanner_tail;
@@ -144,10 +151,14 @@ typedef struct
     uint8_t station_departing, station_speed_logged; /* 工位离站预检范围及每轮日志去重。 */
     uint8_t departure_overlap; /* 末尾回正与离站转弯/平移重叠；两轴已实际135/0。 */
     uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
+    uint8_t station_entry_overlap; /* 原料/粗加工/暂存进站小角度末修正与准备姿态并行。 */
+    uint8_t station_approach_overlap; /* 视觉/索引最后一段与下一靠近动作并行；夹爪仍等子动作完成。 */
     uint8_t transition_ready; /* 已完成道路或工位持续确认的航向/停车状态，只向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
     uint16_t lateral_rpm;
     uint8_t vector_move;      /* 仅MOVEXY工位子动作：前后/横移目标独立闭环，同一批四轮速度。 */
+    int8_t vector_last_wheel_sign[4];
+    uint16_t vector_wheel_reversals[4]; /* 本段成功提交的非零轮速命令换向次数，零速不清除上一方向。 */
     int32_t vector_target_mm[2], vector_progress_mm[2]; /* 0前后、1向左，均为有符号毫米。 */
     int32_t vector_mrpm[2];
     uint32_t vector_profile_ms[2];
@@ -169,6 +180,13 @@ typedef struct
     int64_t encoder_previous_delta[4];
     uint32_t encoder_sample_ms[4];
     uint8_t encoder_ready;    /* 四轮方向确认掩码；同一直行串连续通过节点时保留。 */
+    struct {
+        int64_t previous[4], latest[4];
+        uint32_t previous_ms[4], latest_ms[4], sample_ms;
+        int32_t lateral_mm, command_mrpm;
+        int16_t command_rpm;
+        uint8_t valid;
+    } straight_hold; /* 同时刻编码器投影；相对本直行串起点的车身横向位移，不是地面绝对位置。 */
     int32_t progress_mm;
     int32_t encoder_offset_mm; /* 同一直行串内已通过的段长；不中断编码器基线。 */
     uint16_t continuation_mm, blocked_roads;
@@ -178,6 +196,7 @@ typedef struct
     int8_t profile_sign;      /* 平移斜坡当前方向；横移过冲先减到零再反向。 */
     uint32_t forward_profile_ms, control_dt_ms;
     int16_t forward_ref_rpm, forward_cmd_rpm, turn_ref_rpm, turn_cmd_rpm;
+    int16_t left_ref_rpm, left_cmd_rpm;
     struct {
         uint32_t sequence, samples, min_ms, max_ms;
         int32_t min_cdeg, max_cdeg, min_mm, max_mm;
@@ -437,7 +456,7 @@ static const uint8_t scanner_commands[2][9] = {
 };
 static const uint8_t scanner_ack[7] = {0x02,0x00,0x00,0x01,0x00,0x33,0x31};
 
-/* USART1中断仅入队，字符串处理与输出留在主循环。 */
+/* USART1接收中断仅入队；字符串处理、诊断输出留在主循环。 */
 int route_test_scanner_rx(uint8_t byte, uint8_t uart_error)
 {
     uint8_t next = (uint8_t)((scanner_head + 1u) % SCANNER_RX_SIZE);
@@ -465,6 +484,8 @@ static void scanner_init(uint32_t baud)
     GPIO_Init(GPIOC, &gpio);
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
     USART_ITConfig(USART1, USART_IT_RXNE, DISABLE);
+    USART_ITConfig(USART1, USART_IT_TXE, DISABLE);
+    USART_ITConfig(USART1, USART_IT_TC, DISABLE);
     USART_Cmd(USART1, DISABLE);
     GPIO_StructInit(&gpio);
     gpio.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;
@@ -515,6 +536,77 @@ static void scanner_send_byte(uint8_t byte)
 #endif
 }
 
+/* 每次TXE中断最多送一个字节；最后一字节的TC中断记录真实发送完成时间。 */
+void route_test_scanner_tx_irq(void)
+{
+    if(!scanner.tx_active)return;
+    if(scanner.tx_offset<sizeof(scanner_commands[0])) {
+        if(scanner_tx_ready()) {
+            scanner_send_byte(scanner_commands[scanner.tx_command][scanner.tx_offset++]);
+#ifndef NAV_ENTRY_HOST_TEST
+            if(scanner.tx_offset==sizeof(scanner_commands[0])) {
+                USART_ITConfig(USART1,USART_IT_TXE,DISABLE);
+                USART_ITConfig(USART1,USART_IT_TC,ENABLE);
+            }
+#endif
+        }
+    } else {
+#ifdef NAV_ENTRY_HOST_TEST
+        if(!entry_host_scanner_tx_complete())return;
+#else
+        if(USART_GetFlagStatus(USART1,USART_FLAG_TC)==RESET)return;
+        USART_ITConfig(USART1,USART_IT_TC,DISABLE);
+#endif
+        scanner.tx_completed_ms=clock_ms;
+        scanner.tx_active=0;scanner.tx_complete=1;
+    }
+}
+
+static void scanner_begin_command(uint8_t command_index)
+{
+    scanner.state=command_index ? SCANNER_SET_CONTINUOUS : SCANNER_SET_ENDING;
+    scanner.phase_ms=clock_ms;scanner.waiting_ack=0;scanner.ack_peak=0;
+    scanner.binary_length=scanner.ack_offset=0;
+    scanner.tx_command=command_index;scanner.tx_offset=0;scanner.tx_complete=0;scanner.tx_active=1;
+#ifndef NAV_ENTRY_HOST_TEST
+    USART_ClearFlag(USART1,USART_FLAG_TC);
+    USART_ITConfig(USART1,USART_IT_TXE,ENABLE);
+#else
+    route_test_scanner_tx_irq(); /* 主机替身仅模拟一次TXE事件，后续可由专项独立驱动。 */
+#endif
+}
+
+static void scanner_recent_status(void)
+{
+    static const char hex[]="0123456789ABCDEF";
+    unsigned i;
+    text("[scanner rx hex] oldest_to_newest=");
+    for(i=0;i<scanner.recent_count;i++) {
+        uint8_t byte=scanner.recent[(scanner.recent_head+sizeof(scanner.recent)-scanner.recent_count+i)%sizeof(scanner.recent)];
+        if(i)send_byte(' ');
+        send_byte((uint8_t)hex[byte>>4]);send_byte((uint8_t)hex[byte&15u]);
+    }
+    text("\r\n");
+}
+
+static void scanner_configuration_fault(ScannerFailure reason)
+{
+    scanner.fault_stage=(uint8_t)scanner.state;
+    scanner.fault_tx=scanner.tx_offset;scanner.fault_ack=scanner.ack_peak;scanner.fault_reason=reason;
+    scanner.tx_active=0;scanner.waiting_ack=0;scanner.state=SCANNER_FAULT;
+    scanner.binary_length=scanner.ack_offset=0;
+#ifndef NAV_ENTRY_HOST_TEST
+    USART_ITConfig(USART1,USART_IT_TXE,DISABLE);
+    USART_ITConfig(USART1,USART_IT_TC,DISABLE);
+#endif
+    text("[scanner] configuration fault stage=");
+    text(scanner.fault_stage==SCANNER_SET_ENDING ? "CRLF" : scanner.fault_stage==SCANNER_SET_CONTINUOUS ? "CONTINUOUS" : "BOOT");
+    text(" reason=");text(reason==SCANNER_TX_TIMEOUT ? "TX_TIMEOUT" : reason==SCANNER_ACK_TIMEOUT ? "ACK_TIMEOUT" : "RX_ERROR");
+    text(" tx=");number(scanner.fault_tx);text("/9 ack=");number(scanner.fault_ack);
+    text("/7; text receiver remains active; qr for status\r\n");
+    scanner_recent_status();
+}
+
 static void scanner_status(void)
 {
     static const char *names[] = {"OFF","BOOT","SET_ENDING","SET_CONTINUOUS","READY","FAULT"};
@@ -523,13 +615,60 @@ static void scanner_status(void)
     text(" rx_bytes="); number(scanner.rx_bytes);
     text(" results="); number(scanner.results);
     text(" uart_errors="); number(scanner.uart_errors);
-    text(" overflows="); number(scanner.overflows); text("\r\n");
+    text(" overflows="); number(scanner.overflows);
+    text(" phase=");text(scanner.tx_active ? "TX" : scanner.waiting_ack ? "WAIT_ACK" : "IDLE");
+    text(" tx=");number(scanner.tx_offset);text("/9 ack=");number(scanner.ack_peak);text("/7");
+    if(scanner.fault_reason) {
+        text(" fault_stage=");text(scanner.fault_stage==SCANNER_SET_ENDING ? "CRLF" : scanner.fault_stage==SCANNER_SET_CONTINUOUS ? "CONTINUOUS" : "BOOT");
+        text(" reason=");text(scanner.fault_reason==SCANNER_TX_TIMEOUT ? "TX_TIMEOUT" : scanner.fault_reason==SCANNER_ACK_TIMEOUT ? "ACK_TIMEOUT" : "RX_ERROR");
+        text(" fault_tx=");number(scanner.fault_tx);text(" fault_ack=");number(scanner.fault_ack);
+    }
+    text("; text_rx=enabled\r\n");scanner_recent_status();
+}
+
+static void scanner_text_byte(uint8_t byte)
+{
+    if(byte=='\r' || byte=='\n') {
+        /* 实车已捕获CR单独结束；在CR提交，后续LF只清空边界，不重复提交。 */
+        if(byte=='\r' && !scanner.discard && scanner.length) {
+            scanner.result[scanner.length]=0;
+            if(scanner.length) {
+                text("[scan] ");text(scanner.result);text("\r\n");scanner.results++;
+                /* 配置状态与任务接收独立；仅首次B点接码，格式验证仍由原任务解析器完成。 */
+                if(run.station_enabled && run.job==0u && run.edge==1u
+                    && ((run_active && run.scan_turn_stage==1u) || (!run_active && run.state==RUN_STATION))
+                    && !stop_pending && !station_task_ready()) {
+                    char task_line[sizeof(scanner.result)+6u];
+                    snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
+                    (void)station_command(task_line);
+                }
+            }
+        }
+        scanner.length=scanner.discard=0;
+    } else if(!scanner.discard) {
+        if(scanner.length>=sizeof(scanner.result)-2u || byte<0x20u) { /* 保持原126字节正文上限。 */
+            scanner.discard=1;
+            text("[scanner] invalid/overlong result discarded\r\n");
+        } else scanner.result[scanner.length++]=(char)byte;
+    }
+}
+
+static void scanner_wait_ack_after_tc(void)
+{
+    if(scanner.tx_complete && !scanner.waiting_ack
+        && (scanner.state==SCANNER_SET_ENDING || scanner.state==SCANNER_SET_CONTINUOUS)) {
+        scanner.waiting_ack=1;scanner.phase_ms=scanner.tx_completed_ms;
+    }
 }
 
 static void scanner_update(void)
 {
     uint8_t budget = 32;
     if (scanner.state == SCANNER_OFF) return;
+#ifdef NAV_ENTRY_HOST_TEST
+    route_test_scanner_tx_irq();
+#endif
+    scanner_wait_ack_after_tc();
     if (scanner_rx_error || scanner_rx_overflow) {
         __disable_irq();
         scanner.uart_errors += scanner_rx_error != 0;
@@ -537,62 +676,48 @@ static void scanner_update(void)
         scanner_rx_error = scanner_rx_overflow = 0; scanner_tail = scanner_head;
         __enable_irq();
         scanner.length = scanner.ack_offset = 0; scanner.discard = 1;
-        if (scanner.state != SCANNER_READY) scanner.state = SCANNER_FAULT;
+        if (scanner.state != SCANNER_READY && scanner.state != SCANNER_FAULT) scanner_configuration_fault(SCANNER_RX_ERROR);
         text("[scanner] RX error/overflow; partial data discarded\r\n");
     }
     while (budget-- && scanner_tail != scanner_head) {
         uint8_t byte = scanner_rx[scanner_tail];
+        scanner_wait_ack_after_tc(); /* TC可能发生在主循环处理/打印上一条文本期间。 */
         scanner_tail = (uint8_t)((scanner_tail + 1u) % SCANNER_RX_SIZE);
         scanner.rx_bytes++;
-        if ((scanner.state == SCANNER_SET_ENDING || scanner.state == SCANNER_SET_CONTINUOUS)
-            && scanner.tx_offset == 9u) {
-            if (byte == scanner_ack[scanner.ack_offset]) scanner.ack_offset++;
-            else scanner.ack_offset = byte == scanner_ack[0] ? 1u : 0u;
-            if (scanner.ack_offset == sizeof(scanner_ack)) {
-                scanner.ack_offset = scanner.tx_offset = 0;
-                scanner.phase_ms = clock_ms;
-                if (scanner.state == SCANNER_SET_ENDING) {
-                    scanner.state = SCANNER_SET_CONTINUOUS;
-                    text("[scanner] CRLF acknowledged\r\n");
-                } else {
-                    scanner.state = SCANNER_READY;
-                    text("[scanner] READY continuous acknowledged\r\n");
-                }
+        scanner.recent[scanner.recent_head]=byte;
+        scanner.recent_head=(uint8_t)((scanner.recent_head+1u)%sizeof(scanner.recent));
+        if(scanner.recent_count<sizeof(scanner.recent))scanner.recent_count++;
+        /* 0x02开头的7字节配置应答整体分流，包括错误应答；不把其校验尾字节拼进文本。 */
+        if(scanner.binary_length || byte==scanner_ack[0]) {
+            if(!scanner.binary_length) {
+                scanner.binary_good=1;scanner.ack_offset=0;
+                if(scanner.length) {scanner.length=0;scanner.discard=1;}
             }
-        } else if (scanner.state == SCANNER_READY) {
-            if (byte == '\n') {
-                if (!scanner.discard && scanner.length && scanner.result[scanner.length - 1u] == '\r') {
-                    scanner.result[--scanner.length] = 0;
-                    if (scanner.length) {
-                        text("[scan] "); text(scanner.result); text("\r\n"); scanner.results++;
-                        /* 首次抵达B即接码，包含转向过程；首个有效任务锁定，闲置/回程不重装。 */
-                        if (run.station_enabled && run.job==0u && run.edge==1u
-                            && ((run_active && run.scan_turn_stage==1u) || (!run_active && run.state==RUN_STATION))
-                            && !stop_pending && !station_task_ready()) {
-                            char task_line[sizeof(scanner.result) + 6u];
-                            snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
-                            (void)station_command(task_line);
-                        }
+            if(byte!=scanner_ack[scanner.binary_length])scanner.binary_good=0;
+            if(scanner.binary_good) {
+                scanner.ack_offset++;
+                if(scanner.waiting_ack && scanner.ack_offset>scanner.ack_peak)scanner.ack_peak=scanner.ack_offset;
+            }
+            if(++scanner.binary_length==sizeof(scanner_ack)) {
+                scanner.binary_length=scanner.ack_offset=0;
+                if(scanner.binary_good && scanner.waiting_ack) {
+                    scanner.waiting_ack=0;
+                    if(scanner.state==SCANNER_SET_ENDING) {
+                        scanner_begin_command(1u);text("[scanner] CRLF acknowledged\r\n");
+                    } else if(scanner.state==SCANNER_SET_CONTINUOUS) {
+                        scanner.state=SCANNER_READY;text("[scanner] READY continuous acknowledged\r\n");
                     }
                 }
-                scanner.length = scanner.discard = 0;
-            } else if (!scanner.discard) {
-                if (scanner.length >= sizeof(scanner.result) - 1u || (byte < 0x20u && byte != '\r')) {
-                    scanner.discard = 1;
-                    text("[scanner] invalid/overlong result discarded\r\n");
-                } else scanner.result[scanner.length++] = (char)byte;
             }
-        }
+        } else scanner_text_byte(byte);
     }
     if (scanner.state == SCANNER_BOOT && (uint32_t)(clock_ms - scanner.phase_ms) >= CAR_SCANNER_BOOT_MS) {
-        scanner.state = SCANNER_SET_ENDING; scanner.phase_ms = clock_ms;
+        scanner_begin_command(0u);
     }
     if (scanner.state == SCANNER_SET_ENDING || scanner.state == SCANNER_SET_CONTINUOUS) {
-        if ((uint32_t)(clock_ms - scanner.phase_ms) >= CAR_SCANNER_ACK_MS) {
-            scanner.state = SCANNER_FAULT;
-            text("[scanner] configuration timeout; check baud/wiring; qr for status\r\n");
-        } else if (scanner.tx_offset < 9u && scanner_tx_ready())
-            scanner_send_byte(scanner_commands[scanner.state == SCANNER_SET_CONTINUOUS][scanner.tx_offset++]);
+        scanner_wait_ack_after_tc();
+        if((uint32_t)(clock_ms-scanner.phase_ms)>=(scanner.waiting_ack ? CAR_SCANNER_ACK_MS : CAR_SCANNER_TX_MS))
+            scanner_configuration_fault(scanner.waiting_ack ? SCANNER_ACK_TIMEOUT : SCANNER_TX_TIMEOUT);
     }
 }
 
@@ -939,7 +1064,7 @@ static void run_fault(const char *reason)
     else if (can_rx_fault & 2u) reason = "CAN transmit queue full; command not queued";
     else if (can_rx_fault & 1u) reason = "CAN hardware FIFO overrun; feedback lost";
     run_active = 0;
-    run.departure_overlap = 0;
+    run.departure_overlap = run.station_entry_overlap = 0;
     if (run.station_enabled) {station_abort();vision_cancel_pick();if (arm_enabled()) {arm_stop();arm_lock.state=3;}}
     else if (!run.turn_only && !run.translation_only) station_clear_task();
     run.state = RUN_FAULT;
@@ -1047,10 +1172,21 @@ static int run_segment(void)
     return 1;
 }
 
+/* 底盘已满足原完成判据，维持正在执行的机构动作并交还四轮轮询权。 */
+static void run_station_continue_arm(void)
+{
+    uint8_t i;
+    nav_stop(&nav); /* 结束drive状态，供下一环位正常启动。 */
+    run_clear_rx();memset(&arm_lock,0,sizeof(arm_lock));arm_lock.state=2;
+    for(i=0;i<MOTOR_COUNT;i++)arm_lock.seen[i]=3u;
+    arm_lock.poll_ms=clock_ms-ARM_POLL_MS;
+}
+
 static void run_done(void)
 {
     run_active = 0;
     if (run.station_shift) {
+        uint8_t approach_overlap=run.station_approach_overlap;
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
         /* 子动作已真实完成停车，保留其最新航向/停车证明供后续同向衔接。 */
         station_parent.heading_control=run.heading_control;
@@ -1058,6 +1194,11 @@ static void run_done(void)
 #endif
         run = station_parent;
         run.state = RUN_STATION;
+        if(approach_overlap) {
+            run_station_continue_arm();
+            text("[station approach overlap] chassis correction complete; arm approach continues\r\n");
+            return;
+        }
         run.station_relock = 1;
         arm_lock_begin();
         text("[station index done] encoder+IMU complete; zero commands confirmed; reacquiring fresh wheel status\r\n");
@@ -1219,6 +1360,8 @@ static int station_chassis_pose_safe(void)
     int slide,lift;float yaw;
     float work_yaw=(run.job==3u || run.job==6u) ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;
     arm_pose_now(&slide,&lift,&yaw,NULL);
+    if(run_active && run.station_shift && run.station_approach_overlap)
+        return arm_enabled() && arm_pose_known() && !arm_failed();
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
     if(arm_translation_overlap_ready()) {
         arm_target_now(&slide,&lift,&yaw,NULL);
@@ -1290,7 +1433,8 @@ int station_chassis_xy_start(int32_t forward_mm,int32_t left_mm)
 }
 
 
-int station_chassis_busy(void) { return (run.station_shift && run_active) || run.station_relock; }
+int station_chassis_entry_busy(void) {return run_active && run.station_entry_overlap;}
+int station_chassis_busy(void) { return ((run.station_shift || run.station_entry_overlap) && run_active) || run.station_relock; }
 int station_chassis_failed(void)
 {
     return run.station_shift && (run.state == RUN_FAULT || run.state == RUN_STOPPED);
@@ -1406,7 +1550,14 @@ static void run_finish_node(void)
     if (full_route_nodes[run.plan][run.edge] == full_route_jobs[run.plan][run.job])
     {
         if (run.station_enabled && run.job < 7u) {
-            run_active=0;run.state=RUN_STATION;run.turning=0;run.transition_ready=0;run.station_phase=0;
+            run_active=0;run.state=RUN_STATION;run.turning=0;run.transition_ready=0;
+            if(run.station_entry_overlap) {
+                run.station_entry_overlap=0;
+                run_station_continue_arm();
+                text("[station entry overlap] chassis aligned; prepared station continues\r\n");
+                return;
+            }
+            run.station_phase=0;
             text("[run station] waiting for fresh four-wheel status; job=");number(run.job);text("\r\n");
             arm_lock_begin();return;
         }
@@ -1732,6 +1883,58 @@ static int run_velocity_feedback_fresh(void)
     return run.ready == ALL_MOTORS_MASK;
 }
 
+/* 只登记已经进入最后低速几毫米的视觉/索引修正，不改变原到位/停车判据。 */
+int station_chassis_approach_begin(void)
+{
+    uint8_t i;
+    HeadingSample sample=heading_snapshot();
+    if(!run_active || !run.station_shift || run.vision_debug || run.station_approach_overlap
+        || stop_pending || can_rx_fault || run_rx_overflow || arm_lock.state!=2
+        || !arm_ready() || arm_busy() || run.encoder_ready!=ALL_MOTORS_MASK
+        || run.velocity_waiting || run.acks!=ALL_MOTORS_MASK
+        || (run.velocity_phase!=VELOCITY_FORWARD && run.velocity_phase!=VELOCITY_STOP_FORWARD)
+        || !heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)
+        || !run_velocity_feedback_fresh()
+        || abs(run.heading_control.error_cdeg)>STN_APPROACH_OVERLAP_YAW_CDEG
+        || abs(run.forward_cmd_rpm)>STN_APPROACH_OVERLAP_RPM
+        || abs(run.left_cmd_rpm)>STN_APPROACH_OVERLAP_RPM
+        || abs(run.turn_cmd_rpm)>STN_APPROACH_OVERLAP_RPM) return 0;
+    for(i=0;i<MOTOR_COUNT;i++)
+        if(!(motor_feedback[i].status_flags&MOTOR_FLAG_ENABLED)
+            || (motor_feedback[i].status_flags&(MOTOR_FLAG_STALLED|MOTOR_FLAG_PROTECTED)))return 0;
+    if(run.vector_move) {
+        for(i=0;i<2u;i++)
+            if(abs(run.vector_target_mm[i]-run.vector_progress_mm[i])>STN_APPROACH_OVERLAP_MM)return 0;
+    } else if(abs((int32_t)run.action_mm-run.progress_mm)>STN_APPROACH_OVERLAP_MM)return 0;
+    run.station_approach_overlap=1;
+    return 1;
+}
+
+/* 原料/粗加工/暂存只在进站最后朝向修正时提前准备；不提前推进节点或视觉请求。 */
+static void run_station_prepare_entry(void)
+{
+    uint8_t i;
+    HeadingSample sample=heading_snapshot();
+    if(!run_active || !run.station_enabled || run.station_shift || !run.station_align_pending
+        || run.station_entry_overlap || run.job<1u || run.job>6u
+        || run.velocity_phase!=VELOCITY_TURN || stop_pending || can_rx_fault || run_rx_overflow
+        || arm_lock.state!=2 || !arm_ready() || !arm_parked() || arm_busy()
+        || run.velocity_waiting || run.acks!=ALL_MOTORS_MASK
+        || !heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)
+        || !run_velocity_feedback_fresh()
+        || abs(run.heading_control.error_cdeg)>STN_APPROACH_OVERLAP_YAW_CDEG)return;
+    for(i=0;i<MOTOR_COUNT;i++)
+        if(abs(run.wheel_rpm[i])>STN_APPROACH_OVERLAP_RPM
+            || !(motor_feedback[i].status_flags&MOTOR_FLAG_ENABLED)
+            || (motor_feedback[i].status_flags&(MOTOR_FLAG_STALLED|MOTOR_FLAG_PROTECTED)))return;
+    if(station_start(full_route_nodes[run.plan][run.edge],run.job,clock_ms)<0) {
+        run_fault("station action refused");return;
+    }
+    run.station_entry_overlap=run.station_phase=1;
+    text("[station entry overlap] job=");number(run.job);
+    text("; final heading correction; preparation started; vision/grip wait for chassis\r\n");
+}
+
 /* 每批四轮速度先收到ACK，才提交下一批；同步启动前检查急停和发送错误。 */
 static int run_velocity_send(int16_t forward, int16_t left, int16_t turn)
 {
@@ -1756,6 +1959,12 @@ static int run_velocity_send(int16_t forward, int16_t left, int16_t turn)
         delay_ms(1);
     }
     if (!motor_sync(0)) return 0;
+    if(run.vector_move)for(i=0;i<MOTOR_COUNT;i++) {
+        int8_t sign=run.wheel_rpm[i]>0 ? 1 : run.wheel_rpm[i]<0 ? -1 : 0;
+        if(sign && run.vector_last_wheel_sign[i] && sign!=run.vector_last_wheel_sign[i]
+            && run.vector_wheel_reversals[i]<65535u)run.vector_wheel_reversals[i]++;
+        if(sign)run.vector_last_wheel_sign[i]=sign;
+    }
     run.velocity_sent = 1;
     if (!all_zero) {run.zero_ms = 0;run.stopped_ms = 0;}
     else if (!run.zero_ms) {run.zero_ms = clock_ms;run.stopped_ms = 0;}
@@ -1902,7 +2111,7 @@ static int16_t run_vector_target(uint8_t axis)
     braking=sqrtf(delay*delay+2.0f*CAR_DRIVE_DECEL_RPM_PER_S
         *(remaining-CAR_DISTANCE_TOLERANCE_MM)*60.0f*ppm/CAR_POSITION_PULSES_PER_REV)-delay;
     if(speed>(int32_t)braking)speed=(int32_t)braking;
-    if(speed<CAR_DISTANCE_MIN_RPM)speed=CAR_DISTANCE_MIN_RPM;
+    if(speed<CAR_MOVEXY_MIN_RPM)speed=CAR_MOVEXY_MIN_RPM;
     limit=(run.job==3u || run.job==6u) ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
     if(!run.encoder_ready && limit>CAR_ENCODER_LEARN_RPM)limit=CAR_ENCODER_LEARN_RPM;
     if(speed>limit)speed=limit;
@@ -1931,6 +2140,86 @@ static int16_t run_vector_slew(uint8_t axis,int16_t desired,uint8_t due)
         run.vector_profile_ms[axis]=clock_ms;
     }
     return (int16_t)(run.vector_mrpm[axis]/1000*run.vector_profile_sign[axis]);
+}
+
+static int run_straight_hold_enabled(void)
+{
+    return CAR_STRAIGHT_HOLD_ENABLED && run.travel_axis==BODY_FORWARD
+        && !run.vector_move && !run.station_shift && !run.obstacle_phase;
+}
+
+/* CAN轮询的四个CPOS不是同时取得；先在各轮前后两份采样间插值到共同时间，
+ * 避免把高速直行时的采样先后差误认为侧移。只插值，不用轮速读数外推位置。 */
+static void run_straight_observe(void)
+{
+    static const int8_t projection[4]={1,-1,1,-1};
+    uint32_t age=0,common_ms;
+    int64_t sum=0;
+    unsigned i;
+    if(!run_straight_hold_enabled())return;
+    for(i=0;i<MOTOR_COUNT;i++) {
+        MotorFeedback *f=&motor_feedback[i];
+        if(f->position_ms!=run.straight_hold.latest_ms[i]) {
+            run.straight_hold.previous[i]=run.straight_hold.latest[i];
+            run.straight_hold.previous_ms[i]=run.straight_hold.latest_ms[i];
+            run.straight_hold.latest[i]=f->position;
+            run.straight_hold.latest_ms[i]=f->position_ms;
+        }
+        if((uint32_t)(clock_ms-run.straight_hold.latest_ms[i])>age)
+            age=clock_ms-run.straight_hold.latest_ms[i];
+    }
+    if(run.encoder_ready!=ALL_MOTORS_MASK || age>CAR_VELOCITY_FEEDBACK_MS)return;
+    common_ms=clock_ms-age;
+    if((uint32_t)(common_ms-run.straight_hold.sample_ms)>0x7fffffffu)return;
+    for(i=0;i<MOTOR_COUNT;i++) {
+        uint32_t span=run.straight_hold.latest_ms[i]-run.straight_hold.previous_ms[i];
+        uint32_t offset=common_ms-run.straight_hold.previous_ms[i];
+        int64_t position;
+        if(!span || span>CAR_VELOCITY_FEEDBACK_MS || offset>span)return;
+        position=run.straight_hold.previous[i]
+            +(run.straight_hold.latest[i]-run.straight_hold.previous[i])*offset/span;
+        /* 单轴encoder_sign把本段前/后运动都归一为正；恢复车身左右符号要乘travel_sign。 */
+        sum+=(position-run.encoder_start[i])*run.encoder_sign[i]*projection[i]*run.travel_sign;
+    }
+    run.straight_hold.lateral_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
+        /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X));
+    run.straight_hold.sample_ms=common_ms;run.straight_hold.valid=1;
+}
+
+/* 只在主轴仍前进/后退时纠偏，不新增到站后的独立横移或改变距离完成条件。 */
+static int16_t run_straight_correction(int16_t forward,int16_t turn,uint8_t due)
+{
+    int32_t error=run.straight_hold.lateral_mm,target=0,limit,change;
+    if(!forward || !run_straight_hold_enabled() || !run.straight_hold.valid
+        || (uint32_t)(clock_ms-run.straight_hold.sample_ms)>CAR_VELOCITY_FEEDBACK_MS) {
+        run.straight_hold.command_mrpm=run.straight_hold.command_rpm=0;return 0;
+    }
+    limit=abs(forward)-abs(turn)-1;
+    if(limit<0)limit=0;
+    if(limit>CAR_STRAIGHT_HOLD_MAX_RPM)limit=CAR_STRAIGHT_HOLD_MAX_RPM;
+    if(abs(error)>CAR_STRAIGHT_HOLD_DEADBAND_MM) {
+        target=(abs(error)-CAR_STRAIGHT_HOLD_DEADBAND_MM)*CAR_STRAIGHT_HOLD_KP_X100/100;
+        if(target<1)target=1;
+        if(target>limit)target=limit;
+        if(error>0)target=-target; /* 左偏为正，补向右；后退沿用同一车身符号。 */
+    }
+    if(due) {
+        uint32_t elapsed=clock_ms-run.control_ms;
+        if(elapsed>CAR_DRIVE_SLEW_MAX_DT_MS)elapsed=CAR_DRIVE_SLEW_MAX_DT_MS;
+        change=(int32_t)(CAR_DRIVE_ACCEL_RPM_PER_S*elapsed);
+        target*=1000;
+        if(target>run.straight_hold.command_mrpm) {
+            run.straight_hold.command_mrpm+=change;
+            if(run.straight_hold.command_mrpm>target)run.straight_hold.command_mrpm=target;
+        } else {
+            run.straight_hold.command_mrpm-=change;
+            if(run.straight_hold.command_mrpm<target)run.straight_hold.command_mrpm=target;
+        }
+    }
+    if(run.straight_hold.command_mrpm>limit*1000)run.straight_hold.command_mrpm=limit*1000;
+    if(run.straight_hold.command_mrpm< -limit*1000)run.straight_hold.command_mrpm=-limit*1000;
+    run.straight_hold.command_rpm=(int16_t)(run.straight_hold.command_mrpm/1000);
+    return run.straight_hold.command_rpm;
 }
 
 static int run_velocity_distance(void)
@@ -1971,6 +2260,7 @@ static int run_velocity_distance(void)
         }
         sum += delta * run.encoder_sign[i];
     }
+    run_straight_observe();
     if (run.encoder_ready != 15u) {
         if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_ENCODER_LEARN_TIMEOUT_MS) {
             text("[encoder directions unconfirmed] mask=");number(run.encoder_ready);text("\r\n");
@@ -2086,15 +2376,28 @@ static void run_velocity_log(void)
     text(" ack="); number(run.acks);
     text(" fresh_mask="); number(run.ready);
     if (run.continuation_mm) {text(" continue_mm=");number(run.continuation_mm);}
-    if (run.travel_axis == BODY_FORWARD && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD)) {
+    if (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD) {
         text(" t_ms="); number(clock_ms);
         text(" v_ref="); signed_number(run.forward_ref_rpm);
         text(" v_cmd="); signed_number(run.forward_cmd_rpm);
+        if(run.travel_axis == BODY_LEFT || run.vector_move) {
+            text(" left_ref="); signed_number(run.left_ref_rpm);
+            text(" left_cmd="); signed_number(run.left_cmd_rpm);
+        }
         text(" turn_ref="); signed_number(run.turn_ref_rpm);
         text(" turn_cmd="); signed_number(run.turn_cmd_rpm);
+        if(run_straight_hold_enabled()) {
+            text(" cross_mm=");signed_number(run.straight_hold.lateral_mm);
+            text(" cross_rpm=");signed_number(run.straight_hold.command_rpm);
+            text(" cross_valid=");number(run.straight_hold.valid);
+        }
         text(" control_dt_ms="); number(run.control_dt_ms);
         text(" wheel_cmd_rpm=");
         for (i = 0; i < MOTOR_COUNT; i++) {if (i) text(",");signed_number(run.wheel_rpm[i]);}
+        if(run.vector_move) {
+            text(" wheel_rev=");
+            for(i=0;i<MOTOR_COUNT;i++){if(i)text(",");number(run.vector_wheel_reversals[i]);}
+        }
         text(" wheel_rpm_raw=");
         for (i = 0; i < MOTOR_COUNT; i++) {
             uint32_t elapsed = clock_ms - motor_feedback[i].speed_ms;
@@ -2177,6 +2480,7 @@ static void run_wait_feedback(const char *reason)
 {
     run_warning(reason);
     run.forward_mrpm=0;run.forward_profile_ms=clock_ms;run.phase_ms=clock_ms;
+    run.straight_hold.command_mrpm=run.straight_hold.command_rpm=0;
     if(run.vector_move) {
         run.vector_mrpm[0]=run.vector_mrpm[1]=0;
         run.vector_profile_ms[0]=run.vector_profile_ms[1]=clock_ms;
@@ -2285,14 +2589,23 @@ static void run_velocity_update(void)
         memset(run.encoder_previous_delta, 0, sizeof(run.encoder_previous_delta));
         for (i = 0; i < MOTOR_COUNT; i++) run.encoder_sample_ms[i] = motor_feedback[i].position_ms;
         run.encoder_ready = 0;
+        memset(&run.straight_hold,0,sizeof(run.straight_hold));
+        for(i=0;i<MOTOR_COUNT;i++) {
+            run.straight_hold.previous[i]=run.straight_hold.latest[i]=run.encoder_start[i];
+            run.straight_hold.previous_ms[i]=run.straight_hold.latest_ms[i]=motor_feedback[i].position_ms;
+        }
+        run.straight_hold.sample_ms=clock_ms;
         memset(run.vector_progress_mm,0,sizeof(run.vector_progress_mm));
         memset(run.vector_mrpm,0,sizeof(run.vector_mrpm));
         memset(run.vector_profile_sign,0,sizeof(run.vector_profile_sign));
         memset(run.vector_wheel_sign,0,sizeof(run.vector_wheel_sign));
+        memset(run.vector_last_wheel_sign,0,sizeof(run.vector_last_wheel_sign));
+        memset(run.vector_wheel_reversals,0,sizeof(run.vector_wheel_reversals));
         run.vector_profile_ms[0]=run.vector_profile_ms[1]=clock_ms;
         run.progress_mm = 0;run.action_mm = run.remaining_mm;run.encoder_offset_mm = 0;
         run.forward_mrpm = 0;run.forward_profile_ms = clock_ms;
         run.forward_ref_rpm = run.forward_cmd_rpm = run.turn_ref_rpm = run.turn_cmd_rpm = 0;
+        run.left_ref_rpm = run.left_cmd_rpm = 0;
         run.control_dt_ms = 0;
         memset(&run.heading_window, 0, sizeof(run.heading_window));
         run.velocity_phase = VELOCITY_FORWARD;run.state = RUN_MOVING;
@@ -2333,6 +2646,7 @@ static void run_velocity_update(void)
     drive_heading = run.travel_axis == BODY_FORWARD
         && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD);
     control_due = (uint32_t)(clock_ms - run.control_ms) >= CAR_VELOCITY_CONTROL_MS && !run.velocity_waiting;
+    run.left_ref_rpm = left;
     if(run.vector_move && (run.velocity_phase==VELOCITY_FORWARD || run.velocity_phase==VELOCITY_STOP_FORWARD)) {
         run.forward_ref_rpm=forward;
         forward=run_vector_slew(0,forward,control_due);left=run_vector_slew(1,left,control_due);
@@ -2348,8 +2662,20 @@ static void run_velocity_update(void)
         /* 行驶时连续阻尼；前进指令归零后，沿用已验证的停车对齐/停稳判据。 */
         turn = (forward || (run.vector_move && left)) ? heading_control_drive_rpm(&run.heading_control, CAR_HEADING_DRIVE_TRIM_RPM)
                        : heading_control_rpm(&run.heading_control, run.turn_rpm);
+    } else if (run.travel_axis == BODY_LEFT && left
+        && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD)) {
+        /* 横移仍在运动时保留角速度阻尼；归零后沿用原停车对齐逻辑。 */
+        turn = heading_control_drive_rpm(&run.heading_control, CAR_HEADING_DRIVE_TRIM_RPM);
     } else turn = heading_control_rpm(&run.heading_control, run.turn_rpm);
     run.turn_ref_rpm = turn;
+    if(run.station_shift && run.vector_move && (forward || left)
+        && abs(forward)<=CAR_MOVEXY_FINE_MAX_RPM && abs(left)<=CAR_MOVEXY_FINE_MAX_RPM) {
+        int32_t effort=run.heading_control.error_cdeg*CAR_DRIVE_HEADING_KP_X100
+            -run.heading_control.rate_cdeg_s*CAR_DRIVE_HEADING_KD_X100;
+        /* 两轴抵消的轮子会被最小±1RPM反复换向；微调时不足1RPM的PD量保留为零。
+         * 有效阻尼仍按原PD输出，平移归零后继续使用原停车对齐函数。 */
+        if(effort>-10000 && effort<10000)turn=0;
+    }
     if (forward || left) {
         int16_t primary = run.vector_move ? (abs(left)>abs(forward) ? left : forward) : left ? left : forward;
         int16_t limit = (int16_t)((primary < 0 ? -primary : primary) - 1);
@@ -2357,18 +2683,26 @@ static void run_velocity_update(void)
         if (turn > limit) turn = limit;
         if (turn < -limit) turn = -limit;
     }
-    if (left && !run.vector_move) {
+    if(run_straight_hold_enabled() && drive_heading) {
+        int16_t available;
+        left=run_straight_correction(forward,turn,control_due);
+        /* 有横向修正时优先保留横移/航向余量，避免300RPM同比限幅稀释纠偏。 */
+        available=(int16_t)(CAR_WHEEL_MAX_RPM-abs(left)-abs(turn));
+        if(left && abs(forward)>available)forward=forward>0 ? available : -available;
+    }
+    if (left && !run.vector_move && run.travel_axis==BODY_LEFT) {
         int16_t per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
         /* 沿用前移mm/米的经验补偿，换算为轮速；此项不是位置观测。 */
         float trim = (float)(left > 0 ? left : -left) * per_m * CALIBRATED_PPM_Y
                      / (1000.0f * CALIBRATED_PPM_X);
         forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
     }
+    if (run.travel_axis == BODY_LEFT) run.forward_ref_rpm = forward;
     if (control_due) {
         run.control_dt_ms = clock_ms - run.control_ms;
         run.control_ms = clock_ms;
         if (!run_velocity_send(forward, left, turn)) {run_fault("velocity batch submit failed");return;}
-        run.forward_cmd_rpm = forward;run.turn_cmd_rpm = turn;
+        run.forward_cmd_rpm = forward;run.left_cmd_rpm = left;run.turn_cmd_rpm = turn;
     }
     if (!forward && !left && !turn && run_velocity_stopped() && run.heading_control.stable_samples >= CAR_HEADING_STABLE_SAMPLES
         && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS) {
@@ -2909,7 +3243,7 @@ static void firmware_step(void)
             arm_stop();
             arm_lock.state = 3;
         }
-        station_abort();vision_cancel_pick();run.departure_overlap=0;
+        station_abort();vision_cancel_pick();run.departure_overlap=run.station_entry_overlap=0;
         if (run.state != RUN_IDLE)
         {
             run_active = 0;
@@ -2972,12 +3306,20 @@ static void firmware_step(void)
         }
         if (run_active && run.station_enabled
             && !(run.station_shift ? station_chassis_pose_safe()
-                 : ((arm_ready() && arm_parked()) || (run.departure_overlap && arm_departure_rotation_active())))) {
+                 : ((arm_ready() && arm_parked()) || (run.departure_overlap && arm_departure_rotation_active())
+                    || (run.station_entry_overlap && arm_enabled() && arm_pose_known() && !arm_failed())))) {
             run_fault("arm left parked pose during route");return;
         }
         if ((arm_lock.state || arm_enabled()) && !run_active) return;
-        if (run_active)
+        if (run_active) {
             run_update();
+            if(run_active && !stop_pending)run_station_prepare_entry();
+            /* 底盘先处理反馈/故障；工位只推进末段准备，不消费四轮CAN队列。 */
+            if(run_active && (run.station_shift || run.station_entry_overlap) && !stop_pending) {
+                station_update(clock_ms);
+                if(station_failed() || arm_failed())run_fault("station work failed");
+            }
+        }
         else if (test_mode)
         {
             MotionState previous = drive.state;
@@ -3056,7 +3398,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261022-merge2-r63; return cup preselection parallel with ground approach\r\n");
+    text("[drive] version=20261023-merge2-r71; station entry and index terminal arm overlap\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

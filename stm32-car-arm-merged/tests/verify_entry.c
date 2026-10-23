@@ -37,11 +37,12 @@ static uint32_t uart_fraction_us;
 static uint8_t status_auto_reply,position_ack_enabled,bus_off;
 static uint8_t simulated_start_button;
 uint8_t entry_host_start_button_pressed(void) {return simulated_start_button;}
-static uint8_t scanner_sent[256], scanner_can_tx;
+static uint8_t scanner_sent[256], scanner_can_tx, scanner_can_complete;
 static unsigned scanner_sent_count;
 static uint32_t scanner_initialized_baud,scanner_init_calls;
 void entry_host_scanner_init(uint32_t baud) {scanner_initialized_baud=baud;scanner_init_calls++;}
 int entry_host_scanner_tx_ready(void) {return scanner_can_tx;}
+int entry_host_scanner_tx_complete(void) {return scanner_can_complete;}
 void entry_host_scanner_send_byte(uint8_t value)
 {CHECK(scanner_sent_count<sizeof(scanner_sent));scanner_sent[scanner_sent_count++]=value;}
 static uint8_t vision_tx_bytes[4096], vision_tx_ready=1;
@@ -220,7 +221,7 @@ static void reset_fixture(void)
     clock_ms=0;rx_head=rx_tail=stop_pending=rx_overflow=0;
     simulated_start_button=0;start_button_init();
     memset(&scanner,0,sizeof(scanner));scanner_head=scanner_tail=scanner_rx_error=scanner_rx_overflow=0;
-    scanner_sent_count=0;scanner_can_tx=1;scanner_initialized_baud=scanner_init_calls=0;
+    scanner_sent_count=0;scanner_can_tx=scanner_can_complete=1;scanner_initialized_baud=scanner_init_calls=0;
     line_length=pose_set=test_mode=0;speed_rpm=0;test_distance=1000;test_rpm=60;
     turn_rpm=CAR_TURN_RPM;
     reported_nav=NAV_FAULT;reported_motion=MOTION_FAULT;

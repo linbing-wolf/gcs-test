@@ -69,6 +69,7 @@ static void sensor_tests(void)
 static double actual_rpm[4], encoder_value[4], physical_yaw, yaw_gain;
 static int encoder_polarity[4];
 static double wheel_acceleration[4]; /* RPM/ms；默认相同，直行专项另测试轮间响应差异。 */
+static double wheel_speed_scale[4], translation_yaw_disturbance;
 static uint32_t plant_ms, imu_ms;
 static uint32_t imu_period_ms;
 static int frozen_imu, frozen_encoder, inject_heading, injected_heading;
@@ -100,6 +101,8 @@ static void reset_plant(int16_t yaw,double gain)
     for(i=0;i<4;i++) {encoder_value[i]=(i&1) ? -1000000.0 : 1000000.0;encoder_polarity[i]=1;}
     for(i=0;i<4;i++)simulated_encoder[i]=(int64_t)encoder_value[i];
     for(i=0;i<4;i++)wheel_acceleration[i]=0.18;
+    for(i=0;i<4;i++)wheel_speed_scale[i]=1.0;
+    translation_yaw_disturbance=0.04;
     memset(motor_flags,1,sizeof(motor_flags)); /* Healthy wheels with position-arrived unset. */
     physical_yaw=yaw;yaw_gain=gain;plant_ms=imu_ms=clock_ms;
     imu_period_ms=10;
@@ -123,7 +126,7 @@ static void plant_step(void)
     clock_ms++;
     elapsed=clock_ms-plant_ms;plant_ms=clock_ms;
     for(i=0;i<4;i++) {
-        double difference=simulated_wheel_rpm[i]-actual_rpm[i], change=wheel_acceleration[i]*elapsed;
+        double difference=simulated_wheel_rpm[i]*wheel_speed_scale[i]-actual_rpm[i], change=wheel_acceleration[i]*elapsed;
         if(difference>change)difference=change;
         if(difference< -change)difference=-change;
         actual_rpm[i]+=difference;
@@ -143,7 +146,7 @@ static void plant_step(void)
         field_x+=cos(angle)*lateral_mm;field_y+=sin(angle)*lateral_mm;
     }
     physical_yaw+=turn*yaw_gain*0.1*elapsed;
-    if(fabs(forward)>1 || fabs(left)>1)physical_yaw+=0.04*elapsed; /* Independent yaw disturbance on either translation axis. */
+    if(fabs(forward)>1 || fabs(left)>1)physical_yaw+=translation_yaw_disturbance*elapsed;
     if(inject_heading && !injected_heading && run.velocity_phase==VELOCITY_FORWARD && run.progress_mm>100
         && (inject_heading==1 || run.travel_sign<0)) {
         physical_yaw+=400;injected_heading=1;disturbance_step=run.steps;
@@ -305,6 +308,50 @@ static void continuous_route_tests(void)
             (double)motion_delay_sum/moving_transitions,(unsigned long)motion_delay_max);
         printf("ROUTE_TIME %c simulated_ms=%lu; excludes physical UART cost and vehicle calibration\n",plan?'C':'A',(unsigned long)clock_ms);
     }
+}
+
+static void lateral_heading_damping_tests(void)
+{
+    /* 现场角差/角速度及其镜像：经过目标方向时仍须施加阻尼，覆盖左右横移。 */
+    static const int samples[][3]={{-39,-2650,7},{42,-610,2},{81,0,1},{-81,0,-1},{0,0,0}};
+    unsigned direction,mirror,index;
+    for(direction=0;direction<2;direction++)for(mirror=0;mirror<2;mirror++)
+        for(index=0;index<sizeof(samples)/sizeof(samples[0]);index++) {
+            int sign=mirror ? -1 : 1;
+            int expected=sign*samples[index][2];
+            uint32_t deadline;
+            reset_plant(17900,1.15);
+            CHECK(start_heading_shift(direction ? -1670 : 1670,60));
+            deadline=clock_ms+10000;
+            while(run_active && run.progress_mm<100 && clock_ms<deadline)plant_step();
+            CHECK(run_active && run.velocity_phase==VELOCITY_FORWARD && clock_ms<deadline);
+            run.heading_control.error_cdeg=sign*samples[index][0];
+            run.heading_control.rate_cdeg_s=sign*samples[index][1];
+            run.control_ms=clock_ms-CAR_VELOCITY_CONTROL_MS;
+            run_velocity_update();
+            CHECK(run_active && run.velocity_phase==VELOCITY_FORWARD);
+            CHECK(run.turn_cmd_rpm==expected);
+            CHECK((run.wheel_rpm[0]+run.wheel_rpm[1]+run.wheel_rpm[2]+run.wheel_rpm[3])/4==expected);
+            CHECK(direction ? run.left_cmd_rpm<0 : run.left_cmd_rpm>0);
+            output_size=0;output[0]=0;
+            run.log_ms=clock_ms-CAR_CONTROL_LOG_MS;
+            run_velocity_log();
+            CHECK(strstr(output," left_ref=") && strstr(output," left_cmd=")
+                && strstr(output," turn_ref=") && strstr(output," turn_cmd=")
+                && strstr(output," wheel_cmd_rpm=") && strstr(output," wheel_rpm_raw=")
+                && strstr(output," control_dt_ms=") && strstr(output," speed_age_max_ms="));
+            /* 速度归零后仍选用原停车对齐函数，不把行驶PD带入完成判据。 */
+            run.velocity_phase=VELOCITY_STOP_FORWARD;
+            run.action_mm=(uint16_t)run.progress_mm;run.continuation_mm=0;
+            run.forward_mrpm=0;run.forward_profile_ms=clock_ms;
+            run.heading_control.stable_samples=0;
+            expected=heading_control_rpm(&run.heading_control,run.turn_rpm);
+            run.control_ms=clock_ms-CAR_VELOCITY_CONTROL_MS;
+            run_velocity_update();
+            CHECK(run_active && run.velocity_phase==VELOCITY_STOP_FORWARD);
+            CHECK(!run.left_cmd_rpm && run.turn_cmd_rpm==expected);
+        }
+    puts("PASS lateral yaw damping: 20 left/right and mirrored field-sample cases; damping through target, no 5RPM jump during travel, unchanged zero-speed alignment and diagnostic fields; host replay only");
 }
 
 static void continuous_lateral_tests(void)
@@ -884,7 +931,7 @@ int HEADING_TEST_MAIN(void)
 {
     CHECK(entry_test_main()==0);
     sensor_tests();core_and_parser_tests();encoder_learning_tests();
-    continuous_turn_tests();continuous_lateral_tests();continuous_route_tests();station_gating_tests();continuous_failure_tests();adapter_tests();map_reverse_and_postcheck_tests();return_lateral_policy_tests();transition_reuse_tests();query_gap_recovery_tests();completed_road_history_tests();
+    continuous_turn_tests();lateral_heading_damping_tests();continuous_lateral_tests();continuous_route_tests();station_gating_tests();continuous_failure_tests();adapter_tests();map_reverse_and_postcheck_tests();return_lateral_policy_tests();transition_reuse_tests();query_gap_recovery_tests();completed_road_history_tests();
     printf("PASS heading/feedback: %lu assertions; selected IMU turn/drive/four-wheel feedback regressions\n",(unsigned long)assertions);
     return 0;
 }

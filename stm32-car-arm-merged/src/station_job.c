@@ -34,7 +34,8 @@ static struct {
     uint8_t phase, job, batch, cursor, count, issued, debug;
     uint32_t step_ms;
     uint32_t align_ms;
-    uint8_t align_moving, stack_moving;
+    uint8_t align_moving, stack_moving, approach_preissued;
+    uint32_t approach_ms;
     uint32_t align_travel, warning_ms;
     uint8_t warning_seen;
     char reason[192]; /* 中文UTF-8故障原因。 */
@@ -583,7 +584,26 @@ static void step_finished(void)
         stn_text("[station done] all programmed actions finished\r\n");
         return;
     }
-    stn.issued = 0;
+    /* 下一靠近动作可以已开始，但当前底盘步骤必须真正完成才切换游标。 */
+    stn.issued = stn.approach_preissued;
+    if(stn.approach_preissued)stn.step_ms=stn.approach_ms;
+    stn.approach_preissued=0;
+}
+
+/* 视觉终包排空或固定索引末段，且紧接着就是靠近才启动；不跳过中间步骤。 */
+static void station_approach_overlap(uint32_t now,int terminal_ready)
+{
+    const StationStep *next;
+    if(!terminal_ready || stn.debug || stn.approach_preissued || stn.cursor+1u>=stn.count
+        || vision_motion_peek_xy(NULL,NULL,0))return;
+    next=&program[stn.cursor+1u];
+    if(next->kind!=SS_APPROACH || !station_chassis_approach_begin())return;
+    if(!arm_high_approach(next->slide_mm,next->lift_mm,next->value/10.0f,
+                         next->platform_slot,next->open_claw,now)) {
+        stn_fault("arm rejected a station step; check pose/platform declaration");return;
+    }
+    stn.approach_preissued=1;stn.approach_ms=now;
+    stn_text("[station approach overlap] final station move within " CAR_STRING_VALUE(STN_APPROACH_OVERLAP_MM) "mm/" CAR_STRING_VALUE(STN_APPROACH_OVERLAP_RPM) "RPM; approach started; grip waits for chassis completion\r\n");
 }
 
 /* D/E只执行上位机给出的离散位移；按收包顺序逐条完成后接受终包。 */
@@ -601,7 +621,7 @@ static void station_align_update(uint8_t ring, uint32_t now)
     }
     if (stn.align_moving) {
         if (station_chassis_failed()) {stn_fault("station alignment motion failed");return;}
-        if (station_chassis_busy()) return;
+        if (station_chassis_busy()) {station_approach_overlap(now,state==VISION_PICK_READY);return;}
         stn.align_moving=0;
     }
     if (!vision_motion_peek_xy(&px,&py,0)) {
@@ -645,7 +665,7 @@ static void station_stack_update(const StationStep *s,uint32_t now)
     char line[176];
     if(stn.stack_moving) {
         if(station_chassis_failed()){stn_fault("stack alignment motion failed");return;}
-        if(station_chassis_busy())return;
+        if(station_chassis_busy()) {station_approach_overlap(now,vision_stack_state()==VISION_PICK_READY);return;}
         stn.stack_moving=0;
     }
     if(vision_motion_peek_xy(&px,&py,0)) {
@@ -693,6 +713,12 @@ void station_update(uint32_t now)
         return;
     }
     s = &program[stn.cursor];
+    /* 进站末段只提前转向/张空爪和保持高位收回；视觉请求与抓取等底盘原判据完成。 */
+    if(station_chassis_entry_busy()
+        && s->kind!=SS_YAW
+        && !(s->kind==SS_CLAW && s->value==(int)(ARM_CLAW_OPEN_DEG*10.0f))
+        && !(s->kind==SS_LIFT && s->value==ARM_LIFT_HOME_MM)
+        && !(s->kind==SS_SLIDE && s->value==ARM_SLIDE_HOME_MM))return;
     if (!stn.issued) {
         stn.issued = 1;
         if (!issue_step(now)) return;
@@ -727,9 +753,10 @@ void station_update(uint32_t now)
         return;
     }
     if (s->kind == SS_CHASSIS) {
-        if (station_chassis_failed()) stn_fault("station chassis index failed; vehicle held");
-        else if (!station_chassis_busy() && !arm_busy()) step_finished();
-        else if ((uint32_t)(now - stn.step_ms) > STN_STEP_TIMEOUT_MS)
+        if (station_chassis_failed()) {stn_fault("station chassis index failed; vehicle held");return;}
+        if(station_chassis_busy())station_approach_overlap(now,1);
+        else if(!arm_busy() || stn.approach_preissued) {step_finished();return;}
+        if ((uint32_t)(now - stn.step_ms) > STN_STEP_TIMEOUT_MS)
             {stn_warning("index duration exceeds estimate",now);stn.step_ms=now;}
         return;
     }

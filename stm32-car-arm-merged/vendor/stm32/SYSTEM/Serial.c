@@ -157,7 +157,9 @@ void set_Rxstate(uint8_t i)
 void USART1_IRQHandler(void)
 {
 	extern int route_test_scanner_rx(uint8_t byte, uint8_t uart_error);
+	extern void route_test_scanner_tx_irq(void);
 	static uint8_t pRxPacket = 0;	//定义表示当前接收数据位置的静态变量
+	route_test_scanner_tx_irq(); /* TXE/TC先服务；RX路径提前返回也不阻塞配置发送。 */
 	if (USART1->SR & (USART_SR_ORE | USART_SR_FE | USART_SR_NE | USART_SR_PE)) {
 		(void)USART_ReceiveData(USART1);
 		(void)route_test_scanner_rx(0, 1);

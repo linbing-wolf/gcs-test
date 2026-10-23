@@ -2,7 +2,7 @@
 #define STATION_JOB_H
 #include <stdint.h>
 
-/* 工位作业：到站停车后按任务码自动完成抓放，做完才允许继续开。
+/* 工位作业：进站末段可提前准备，定位完成后按任务码抓放，做完才继续开。
  *
  * 原料区：圆盘每把一块物料转到固定取料口，上位机识别到目标颜色后回 PICK，
  *         才执行一次已标定的单块装车动作（arm load1）。
@@ -30,13 +30,17 @@ void station_abort(void);
 /* 一轮含两批作业；仅整轮结束/取消时清除，普通工位交接不得调用。 */
 void station_clear_task(void);
 void station_status(void);
-/* 粗加工/暂存使用：高位收回、云台0或粗加工作业角、四轮严格零速。
- * 支持150mm索引及上位机指定毫米距离；完成后重新取得工位互锁。 */
+/* 粗加工/暂存：高位收回、云台0或作业角时启动索引/视觉位移；
+ * 最后低速几毫米可与下一靠近并行，完成后维持机构会话或重新取得工位互锁。 */
 int station_chassis_start(int32_t delta_mm);
 /* 工位横移：正值向左、负值向右；沿用同一编码器/IMU子动作及互锁。 */
 int station_chassis_lateral_start(int32_t delta_mm);
 /* 两轴同时纠偏：正forward向前、正left向左；任一轴0时沿用单轴执行器。 */
 int station_chassis_xy_start(int32_t forward_mm,int32_t left_mm);
+/* 视觉/固定索引末段：满足剩余距离、速度和新鲜反馈时登记靠近并行。 */
+int station_chassis_approach_begin(void);
+/* 进站朝向末段仍在修正：只允许准备姿态，不能请求视觉或抓取。 */
+int station_chassis_entry_busy(void);
 int station_chassis_busy(void);
 int station_chassis_failed(void);
 

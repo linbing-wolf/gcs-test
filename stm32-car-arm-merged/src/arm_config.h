@@ -41,7 +41,7 @@
 #define ARM_SLIDE_DIR_INVERT           1 /* 平推方向位反转开关，0/1；只随电机安装方向标定修改。 */
 #define ARM_LIFT_RPM                 4000u /* 升降位置模式目标转速，RPM；增大更快，实际速度受负载/驱动限制。 */
 #define ARM_SLIDE_RPM                4000u /* 平推位置模式目标转速，RPM；增大更快，实际到位仍看反馈。 */
-#define ARM_AXIS_ACCEL               230u /* 升降/平推驱动器加速度档位，0~255；非RPM/s，不改底盘档位200。 */
+#define ARM_AXIS_ACCEL               240u /* 升降/平推驱动器加速度档位，0~255；非RPM/s，不改底盘档位200。 */
 #define ARM_ENCODER_COUNTS_PER_REV 65536u /* 编码器计数/圈；须匹配驱动器CPOS协议，不能用来调速度。 */
 #define ARM_PULSES_PER_REV          3200u /* 位置指令脉冲/圈；对应16细分，须与驱动器设置一致。 */
 #define ARM_POSITION_TOLERANCE_MM      0.5f /* 到位误差窗口，不能把1mm指令的零位移算完成。 */
