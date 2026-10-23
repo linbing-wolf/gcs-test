@@ -1,7 +1,7 @@
 id: maix_toolbox
 name: Maix Toolbox
 name[zh]: Maix 工具集
-version: 1.0.0
+version: 1.0.2
 icon: assets/icon.png
 author: YYB Team
 desc: "On-device toolbox: checkerboard calibration capture, dataset capture, disable Maix comm protocol (free UART4), and device diagnostics."

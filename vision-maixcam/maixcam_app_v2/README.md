@@ -1,7 +1,8 @@
 # YYB Mover —— MaixCAM2 智能搬运视觉端（标准 MaixCAM APP）
 
-> id: `yyb_mover` · version: `3.9.1` · 入口：`main.py`
-> 配套：STM32 智能搬运车（UART5 / 115200），协议见 `protocol.py`
+> id: `yyb_mover` · version: `3.9.45` · 入口：`main.py`  
+> 配套：STM32 智能搬运车（UART5 / 115200），协议见 `protocol.py`  
+> 最新交接说明：`HANDOVER_20261023.md`
 
 ## 这是什么
 

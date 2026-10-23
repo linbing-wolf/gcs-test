@@ -417,6 +417,11 @@ void Vision_SessionStart(VisionSession *s, const char *payload, uint32_t now_ms,
     s->timeouts    = 0u;
     s->resends     = 0u;
 
+    /* 关键：开新会话必须丢弃上一条命令的残留回复，
+     * 否则超时/中止后迟到的那帧会被算成下一条命令的结果。
+     * （main_vision 只在开机时清过一次信箱，不能只靠它）*/
+    Vision_ResetMailbox();
+
     Vision_TxPayload(s->payload);
 }
 

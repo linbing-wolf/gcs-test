@@ -33,8 +33,10 @@ payload 文本约定：
 视觉端→下位机的主动指令（仅圆盘对齐时使用）：
   MOVE,<dx>          水平微调：dx = 水平偏差像素（符号见 ALIGN_INVERT_D/E）；
   MOVEY,<dy>         垂直微调：dy = 垂直偏差像素（符号见 ALIGN_INVERT_DY_D/E）；
+  MOVEXY,<dx>,<dy>   双轴并行微调（ALIGN_MODE="movexy" 时替代上面两条）；
                      单片机执行后不用回帧，视觉端等 ALIGN_SETTLE_MS 再重新测量。
-                     两轴同时超差时，视觉端会连发 MOVE 和 MOVEY。
+                     ALIGN_MODE="movexy" 时用一条 MOVEXY 同时带两轴；
+                     ALIGN_MODE="split" 时才连发 MOVE 和 MOVEY。
 
 一问一答模型（重要）：
   视觉端是**阻塞单线程**：跑一个任务期间不主动读命令（最长 TASK_TIMEOUT_MS）。
@@ -370,6 +372,15 @@ def pack_movey(dy):
     方向反了就把 config.ALIGN_INVERT_DY_D/E 置 True。
     """
     return "MOVEY,%d" % int(dy)
+
+
+def pack_movexy(dx, dy):
+    """【视觉端 → 下位机】请求双轴并行微调：MOVEXY,dx,dy
+
+    dx/dy 都是像素偏差，下位机同时执行两轴；某一轴为 0 表示该轴不动。
+    方向由各自的 ALIGN_INVERT_* 配置决定，本函数只负责组包。
+    """
+    return "MOVEXY,%d,%d" % (int(dx), int(dy))
 
 
 def pack_stack(x, y, dx=0, ok=1):

@@ -34,7 +34,8 @@ class DiscDebug:
         self.base_dir = base_dir
         self.max_frames = max(1, int(max_frames))
         self.quality = max(1, min(100, int(quality)))
-        self.keep_tasks = max(1, int(keep_tasks))
+        # <=0 表示不自动清理，保留全部任务目录
+        self.keep_tasks = int(keep_tasks)
         self.min_interval_ms = max(0, int(min_interval_ms))
         self.enabled = bool(enabled)
         self.dir = None
@@ -92,6 +93,13 @@ class DiscDebug:
         except Exception:
             pass
         self.meta_fp = None
+
+    def __del__(self):
+        try:
+            if getattr(self, "meta_fp", None) is not None:
+                self.close("")
+        except Exception:
+            pass
 
     # ---------------- 记录 ----------------
     def data(self, fields, phase="frame"):
@@ -153,6 +161,8 @@ class DiscDebug:
             pass
 
     def _prune(self):
+        if self.keep_tasks <= 0:
+            return
         try:
             entries = []
             for name in os.listdir(self.base_dir):

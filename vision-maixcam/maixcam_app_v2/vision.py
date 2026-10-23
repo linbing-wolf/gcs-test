@@ -768,15 +768,248 @@ def find_ring_center(img, roi=None,
     return c.x(), c.y(), c.r()
 
 
+def find_stack_color_center_ai(ai, img, roi, color_code,
+                               tile=None, stride=None,
+                               min_prob=None, min_tiles=None):
+    """用 AI 分类器在 ROI 内分块扫描，找指定颜色的中心（CV 找不到底座时兜底）
+
+    为什么需要：F,<颜色> 原来先用 LAB 阈值找色块，再用 AI 判色。
+    如果现场色差/反光导致阈值一个候选都没有，AI 根本没机会介入，最后退到空环中心。
+    这里直接让 AI 在画面上滑动分类，命中的块取加权中心，作为颜色中心。
+
+    返回 dict（cx/cy/x/y/w/h/src="ai"/code/ai_prob/ai_tiles），找不到返回 None。
+    """
+    if ai is None or not roi or not color_code:
+        return None
+    try:
+        if not ai.ready():
+            return None
+    except Exception:
+        return None
+
+    try:
+        iw, ih = img.width(), img.height()
+    except Exception:
+        return None
+    x0, y0, rw, rh = [int(v) for v in roi]
+    x0 = max(0, min(x0, iw - 1))
+    y0 = max(0, min(y0, ih - 1))
+    rw = max(1, min(rw, iw - x0))
+    rh = max(1, min(rh, ih - y0))
+
+    tile = int(tile if tile is not None else getattr(config, "STACK_AI_TILE", 96))
+    tile = max(24, min(tile, rw, rh))
+    stride = int(stride if stride is not None else getattr(config, "STACK_AI_STRIDE", tile // 2))
+    stride = max(8, min(stride, tile))
+    min_prob = float(min_prob if min_prob is not None
+                     else getattr(config, "STACK_AI_MIN_PROB", 0.70))
+    min_tiles = max(1, int(min_tiles if min_tiles is not None
+                           else getattr(config, "STACK_AI_MIN_TILES", 1)))
+
+    code_map = getattr(config, "AI_CLASS_TO_COLOR", {})
+    target = str(color_code)
+    # 蓝色最容易把浅蓝/白底/反光误判进来，单独提高置信度门槛
+    if target == COLOR_BLUE:
+        min_prob = max(min_prob, float(getattr(config, "STACK_AI_BLUE_MIN_PROB", 0.90)))
+    hits = []
+    best = (0.0, None)
+    xs = list(range(x0, x0 + rw - tile + 1, stride))
+    ys = list(range(y0, y0 + rh - tile + 1, stride))
+    if not xs or xs[-1] != x0 + rw - tile:
+        xs.append(max(x0, x0 + rw - tile))
+    if not ys or ys[-1] != y0 + rh - tile:
+        ys.append(max(y0, y0 + rh - tile))
+
+    for ty in ys:
+        for tx in xs:
+            box = [tx, ty, tile, tile]
+            try:
+                label, prob, idx = ai.classify_label(img, box)
+            except Exception:
+                continue
+            if idx is None:
+                continue
+            code = code_map.get(label)
+            if prob > best[0]:
+                best = (prob, (label, code, tx + tile // 2, ty + tile // 2))
+            if code == target and prob >= min_prob:
+                hits.append((tx + tile / 2.0, ty + tile / 2.0, float(prob),
+                             tx, ty))
+
+    if len(hits) < min_tiles:
+        if getattr(config, "STACK_AI_DEBUG", False):
+            print("[AI][F] 未命中 color=%s hits=%d best=%s" %
+                  (target, len(hits), best[1]))
+        return None
+
+    # 相邻命中块聚成一簇；优先块数多的簇，再优先离 ROI 中心近的
+    groups = []
+    link = max(stride * 1.6, 12.0)
+    for h in hits:
+        for g in groups:
+            if any((h[0] - q[0]) ** 2 + (h[1] - q[1]) ** 2 <= link * link for q in g):
+                g.append(h)
+                break
+        else:
+            groups.append([h])
+    cx0, cy0 = x0 + rw / 2.0, y0 + rh / 2.0
+    groups.sort(key=lambda g: (-len(g),
+                               min((q[0] - cx0) ** 2 + (q[1] - cy0) ** 2 for q in g)))
+    g = groups[0]
+    if len(g) < min_tiles:
+        return None
+    # 蓝色电控板/电池常占一大片，命中块数明显多；蓝色单独限制最大块数
+    if target == COLOR_BLUE:
+        max_tiles = max(1, int(getattr(config, "STACK_AI_BLUE_MAX_TILES", 6)))
+        if len(g) > max_tiles:
+            if getattr(config, "STACK_AI_DEBUG", False):
+                print("[AI][F] 拒绝蓝色大块 hits=%d > %d center=(%d,%d)"
+                      % (len(g), max_tiles, int(g[0][0]), int(g[0][1])))
+            return None
+
+    wsum = sum(q[2] for q in g)
+    cx = sum(q[0] * q[2] for q in g) / wsum
+    cy = sum(q[1] * q[2] for q in g) / wsum
+    gx0 = min(q[3] for q in g)
+    gy0 = min(q[4] for q in g)
+    gx1 = max(q[3] + tile for q in g)
+    gy1 = max(q[4] + tile for q in g)
+    out = {
+        "cx": int(round(cx)), "cy": int(round(cy)),
+        "x": int(max(0, gx0)), "y": int(max(0, gy0)),
+        "w": int(max(1, gx1 - gx0)), "h": int(max(1, gy1 - gy0)),
+        "src": "ai", "code": target,
+        "ai_prob": round(max(q[2] for q in g), 3), "ai_tiles": len(g),
+    }
+    if target == COLOR_BLUE:
+        max_cy = int(getattr(config, "STACK_AI_BLUE_MAX_CY", 240))
+        if out["cy"] > max_cy:
+            if getattr(config, "STACK_AI_DEBUG", False):
+                print("[AI][F] 拒绝蓝色下半区 center=(%d,%d) > y=%d"
+                      % (out["cx"], out["cy"], max_cy))
+            return None
+    if getattr(config, "STACK_AI_DEBUG", False):
+        print("[AI][F] 命中 color=%s center=(%d,%d) tiles=%d prob=%.3f" %
+              (target, out["cx"], out["cy"], len(g), out["ai_prob"]))
+    return out
+
+
+def refine_stack_top_center(img, item, margin=None,
+                            r_min=None, r_max=None, threshold=None):
+    """AI 粗定颜色框内精修物料颜色中心。
+
+    默认 color 模式：在 AI 框内按目标颜色取最大色块，使用色块质心；
+    比旧霍夫圆稳，不会轻易锁到旁边的黑环。
+    circle 模式保留旧行为，便于现场对比。
+    """
+    if not item:
+        return item
+    if not getattr(config, "STACK_CV_FINE", True):
+        return item
+    margin = int(margin if margin is not None
+                 else getattr(config, "STACK_CV_SEARCH_MARGIN", 24))
+    try:
+        iw, ih = img.width(), img.height()
+    except Exception:
+        return item
+    x = max(0, int(item.get("x", item["cx"] - 20)) - margin)
+    y = max(0, int(item.get("y", item["cy"] - 20)) - margin)
+    x2 = min(iw, int(item.get("x", item["cx"] - 20)) + int(item.get("w", 40)) + margin)
+    y2 = min(ih, int(item.get("y", item["cy"] - 20)) + int(item.get("h", 40)) + margin)
+    roi = [x, y, max(1, x2 - x), max(1, y2 - y)]
+    ax, ay = int(item["cx"]), int(item["cy"])
+
+    mode = str(getattr(config, "STACK_CV_FINE_MODE", "color")).lower()
+    if mode == "circle":
+        r_min = int(r_min if r_min is not None else getattr(config, "STACK_TOP_R_MIN", 18))
+        r_max = int(r_max if r_max is not None else getattr(config, "STACK_TOP_R_MAX", 90))
+        threshold = int(threshold if threshold is not None
+                        else getattr(config, "STACK_TOP_THRESHOLD", 1500))
+        c = find_ring_center(img, roi, r_min=r_min, r_max=r_max, threshold=threshold)
+        if not c:
+            return item
+        cx, cy, r = int(c[0]), int(c[1]), int(c[2])
+        max_jump = float(getattr(config, "STACK_CV_MAX_JUMP", 55))
+        if (cx - ax) ** 2 + (cy - ay) ** 2 > max_jump * max_jump:
+            return item
+        out = dict(item)
+        out.update({"cx": cx, "cy": cy, "r": r, "src": "ai+cv",
+                    "ai_cx": ax, "ai_cy": ay})
+        if getattr(config, "STACK_AI_DEBUG", False):
+            print("[AI][F] CV圆精修 (%d,%d) r=%d -> (%d,%d)"
+                  % (ax, ay, r, cx, cy))
+        return out
+
+    # color 模式：目标颜色的最大色块质心
+    code = str(item.get("code") or "")
+    try:
+        idx = [config.COLOR_CODES[n] for n in config.COLOR_NAMES].index(code)
+        th = config.THRESHOLDS[idx]
+    except Exception:
+        return item
+    min_px = max(1, int(getattr(config, "STACK_COLOR_MIN_PIXELS", 100)))
+    max_jump = float(getattr(config, "STACK_COLOR_MAX_JUMP", 25))
+    try:
+        blobs = img.find_blobs(
+            [th], roi=roi, x_stride=2, y_stride=2,
+            area_threshold=min_px, pixels_threshold=min_px,
+            merge=True, margin=4)
+    except Exception:
+        return item
+    best = None
+    for b in blobs or []:
+        try:
+            area = int(b.pixels())
+        except Exception:
+            continue
+        if area < min_px:
+            continue
+        try:
+            bx, by = float(b.cx()), float(b.cy())
+        except Exception:
+            bx, by = float(b.cxf()), float(b.cyf())
+        d2 = (bx - ax) ** 2 + (by - ay) ** 2
+        # 优先离 AI 粗中心近的，面积作为次条件
+        key = (d2, -area)
+        if best is None or key < best[0]:
+            best = (key, bx, by, area, b)
+    if best is None:
+        return item
+    _, bx, by, area, b = best
+    if (bx - ax) ** 2 + (by - ay) ** 2 > max_jump * max_jump:
+        return item
+    cx, cy = int(round(bx)), int(round(by))
+    r = int(round(math.sqrt(max(1.0, area / math.pi))))
+    out = dict(item)
+    out.update({"cx": cx, "cy": cy,
+                "x": int(b.x()), "y": int(b.y()),
+                "w": int(b.w()), "h": int(b.h()),
+                "r": r, "src": "ai+color",
+                "ai_cx": ax, "ai_cy": ay,
+                "color_area": area})
+    if getattr(config, "STACK_AI_DEBUG", False):
+        print("[AI][F] 颜色质心 (%d,%d) -> (%d,%d) area=%d"
+              % (ax, ay, cx, cy, area))
+    return out
+
+
 def find_stack_base(clf, img, roi=None, color_code=None, ai=None):
     """码垛底座：按颜色找物料；同色多个取离 ROI 中心最近的；没有就回空环中心
 
     返回 dict：{"cx","cy","src","code"}
-        src = "base"（找到同色物料）/ "ring"（空环）/ "roi"（兜底 ROI 中心）
+        src = "base"（找到同色物料）/ "ai"（AI 分块找到颜色中心）/
+              "ring"（空环）/ "roi"（兜底 ROI 中心）
     返回 None 只在"没有底座、也没找到环、且不允许兜底"时出现。
     """
     roi = roi if roi else config.ROI_STACK
     cx0, cy0 = (roi[0] + roi[2] / 2.0, roi[1] + roi[3] / 2.0) if roi else (0, 0)
+
+    if color_code and getattr(config, "STACK_AI_ONLY", False):
+        # 码垛颜色中心只信 AI：先粗扫颜色，再用经典 CV 在 AI 框内精修顶部圆心
+        it = find_stack_color_center_ai(ai, img, roi, color_code)
+        if it is not None and getattr(config, "STACK_CV_FINE", True):
+            it = refine_stack_top_center(img, it)
+        return it
 
     if color_code:
         best = None
@@ -791,6 +1024,12 @@ def find_stack_base(clf, img, roi=None, color_code=None, ai=None):
             it = best[1]
             return {"cx": it["cx"], "cy": it["cy"], "x": it["x"], "y": it["y"],
                     "w": it["w"], "h": it["h"], "src": "base", "code": color_code}
+
+        # CV 阈值一个同色候选都没找到：让 AI 在 ROI 内分块找颜色中心
+        if getattr(config, "STACK_AI_LOCATE", True):
+            it = find_stack_color_center_ai(ai, img, roi, color_code)
+            if it is not None:
+                return it
 
     c = find_ring_center(img, roi)
     if c:

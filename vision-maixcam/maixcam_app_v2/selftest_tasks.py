@@ -238,7 +238,7 @@ class _FlipCam(FakeCam):
 
 
 class _AlignLink(_Link):
-    """假下位机：收到 MOVE/MOVEY 后把圆往反方向挪，模拟机构真的动了"""
+    """假下位机：收到 MOVE/MOVEY/MOVEXY 后把目标往反方向挪，模拟机构真的动了"""
 
     def __init__(self, cam):
         super().__init__([])
@@ -246,7 +246,17 @@ class _AlignLink(_Link):
 
     def send_payload(self, p):
         self.sent.append(p)
-        if p.startswith('MOVE,'):
+        if p.startswith('MOVEXY,'):
+            try:
+                _, sx, sy = p.split(',')
+                dx, dy = int(sx), int(sy)
+            except Exception:
+                return
+            self.cam.circle_x = max(0, min(self.cam.circle_x - dx, 1280))
+            self.cam.blob_x = max(0, min(self.cam.blob_x - dx, 1280))
+            self.cam.circle_y = max(0, min(self.cam.circle_y - dy, 960))
+            self.cam.blob_y = max(0, min(self.cam.blob_y - dy, 960))
+        elif p.startswith('MOVE,'):
             try:
                 dx = int(p.split(',')[1])
             except Exception:
@@ -332,6 +342,10 @@ def main():
     check('颜色每帧跳变也能完成', out.startswith('STACK,'), out)
 
     print('\n== F 码垛：按颜色选底座 ==')
+    old_stack_ai_only = config.STACK_AI_ONLY
+    old_stack_dx_offset = config.STACK_ALIGN_DX_OFFSET
+    config.STACK_AI_ONLY = False   # 本组测试没有 AI 模型，走 CV 路径
+    config.STACK_ALIGN_DX_OFFSET = 0  # 坐标断言不带参考中心偏置
     clf0 = vision.ColorClassifier(ai=None)
     out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID, color_code='1'))
     check('F,1 命中同色底座', out == 'STACK,650,440,330,1', out)
@@ -356,9 +370,11 @@ def main():
         'dx_off': config.STACK_ALIGN_DX_OFFSET,
         'dy_off': config.STACK_ALIGN_DY_OFFSET,
         'delay': config.STACK_START_DELAY_MS,
+        'oneshot': config.ALIGN_ONE_SHOT,
     }
     try:
         config.ALIGN_SETTLE_MS = 0
+        config.ALIGN_ONE_SHOT = False
         config.MOVE_ECHO_HOLD_MS = 0
         config.ALIGN_MAX_ITER = 12
         config.ALIGN_GAIN = 0.8
@@ -371,8 +387,10 @@ def main():
         out_f = frame_str(tasks.task_stack(cam_f, clf0, None, p=P_ID,
                                            ctl=tasks.TaskCtl(lk_f),
                                            color_code='1'))
-        check('F 发过 MOVE', any(x.startswith('MOVE,') for x in lk_f.sent), lk_f.sent)
-        check('F 发过 MOVEY', any(x.startswith('MOVEY,') for x in lk_f.sent), lk_f.sent)
+        check('F 发过 MOVEXY', any(x.startswith('MOVEXY,') for x in lk_f.sent), lk_f.sent)
+        check('MOVEXY 同时带两轴',
+              any(len(x.split(',')) == 3 and x.split(',')[1] != '0'
+                  and x.split(',')[2] != '0' for x in lk_f.sent), lk_f.sent)
         check('F 回复带 dx/ok', len(out_f.split(',')) == 5, out_f)
     finally:
         config.ALIGN_SETTLE_MS = old_f['settle']
@@ -383,6 +401,9 @@ def main():
         config.STACK_ALIGN_DX_OFFSET = old_f['dx_off']
         config.STACK_ALIGN_DY_OFFSET = old_f['dy_off']
         config.STACK_START_DELAY_MS = old_f['delay']
+        config.ALIGN_ONE_SHOT = old_f['oneshot']
+        config.STACK_AI_ONLY = old_stack_ai_only
+        config.STACK_ALIGN_DX_OFFSET = old_stack_dx_offset
         tasks.reset_guard()
 
     print('\n== 原料区：停止才回复（转盘）==')
@@ -426,6 +447,8 @@ def main():
     old_dy_on = config.ALIGN_DY_ON
     old_dy_tol = config.ALIGN_DY_TOL
     old_dy_offset = config.ALIGN_DY_OFFSET
+    old_dy_offset_d = config.ALIGN_DY_OFFSET_D
+    old_dy_offset_e = config.ALIGN_DY_OFFSET_E
     old_movey_scale = config.MOVEY_SCALE
     try:
         config.ALIGN_SETTLE_MS = 0
@@ -436,6 +459,9 @@ def main():
         config.ALIGN_DX_OFFSET = 0       # 控制逻辑测试不带偏置
         config.ALIGN_DX_OFFSET_D = 0
         config.ALIGN_DX_OFFSET_E = 0
+        config.ALIGN_DY_OFFSET = 0
+        config.ALIGN_DY_OFFSET_D = 0
+        config.ALIGN_DY_OFFSET_E = None
         config.DISC_START_DELAY_MS = 0   # 测试不等启动延时
         config.ALIGN_MAX_ITER = 12       # 容差 5px 时从 320px 收敛需要更多次
         config.MOVE_SCALE = 1.0          # 控制逻辑测试先用 1x
@@ -448,7 +474,7 @@ def main():
                                         p=P_ID, ctl=tasks.TaskCtl(lk))).split(',')
         check('对齐成功 ok=1', out[0] == 'DISC' and out[-1] == '1', out)
         check('最终 |dx|<=ALIGN_TOL', abs(int(out[3])) <= config.ALIGN_TOL, out)
-        check('确实发过 MOVE', any(x.startswith('MOVE,') for x in lk.sent),
+        check('确实发过 MOVEXY', any(x.startswith('MOVEXY,') for x in lk.sent),
               lk.sent[:3])
         check('收敛到中心', abs(cam.circle_x - 640) > 0, 'circle_x=%d' % cam.circle_x)
 
@@ -459,8 +485,8 @@ def main():
         out2 = frame_str(tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk2))).split(',')
         check('超次数 → 仍回 ok=1', out2[0] == 'DISC' and out2[-1] == '1', out2)
-        check('超次数仍发了 3 条 MOVE',
-              sum(1 for x in lk2.sent if x.startswith('MOVE,')) == 3, lk2.sent)
+        check('超次数仍发了 3 条 MOVEXY',
+              sum(1 for x in lk2.sent if x.startswith('MOVEXY,')) == 3, lk2.sent)
 
         # 一次性模式：只发 1 条 MOVE，立即回 DISC
         config.ALIGN_MAX_ITER = old_iter
@@ -470,8 +496,8 @@ def main():
         lk5 = _Link([])
         out5 = frame_str(tasks.task_disc(cam5, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk5))).split(',')
-        check('一次性模式：只发 1 条 MOVE',
-              sum(1 for x in lk5.sent if x.startswith('MOVE,')) == 1, lk5.sent)
+        check('一次性模式：只发 1 条 MOVEXY',
+              sum(1 for x in lk5.sent if x.startswith('MOVEXY,')) == 1, lk5.sent)
         check('一次性模式：立即回 DISC ok=1',
               out5[0] == 'DISC' and out5[-1] == '1', out5)
 
@@ -483,7 +509,8 @@ def main():
         lk6 = _Link([])
         out6 = frame_str(tasks.task_disc(cam6, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
-        check('MOVE 100x 系数（无上限）', any(x == 'MOVE,25600' for x in lk6.sent), lk6.sent)
+        check('MOVE 100x 系数（无上限）',
+              any(x == 'MOVEXY,25600,0' for x in lk6.sent), lk6.sent)
         check('MOVE 100x 仍回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
         config.MOVE_SCALE = 1.0
 
@@ -494,7 +521,7 @@ def main():
         lk8 = _Link([])
         frame_str(tasks.task_disc(cam8, None, config.ROI_DISC_ROUGH, 'D',
                                   p=P_ID, ctl=tasks.TaskCtl(lk8)))
-        check('MOVE 单轴限幅 20', 'MOVE,20' in lk8.sent, lk8.sent)
+        check('MOVE 单轴限幅 20', 'MOVEXY,20,0' in lk8.sent, lk8.sent)
 
         # MOVEY 垂直闭环：dy=+60px → 发 MOVEY 并收敛
         config.ALIGN_STEP_MAX = 0
@@ -510,8 +537,9 @@ def main():
         lk7 = _AlignLink(cam7)
         out7 = frame_str(tasks.task_disc(cam7, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk7))).split(',')
-        check('DY 超差发过 MOVEY',
-              any(x.startswith('MOVEY,') for x in lk7.sent), lk7.sent)
+        check('DY 超差发过 MOVEXY 且只动 Y',
+              any(x.startswith('MOVEXY,') and x.split(',')[1] == '0'
+                  for x in lk7.sent), lk7.sent)
         check('DY 收敛到中心', abs(cam7.circle_y - 240) <= 5, 'y=%d' % cam7.circle_y)
         check('DY 对齐仍回 ok=1', out7[0] == 'DISC' and out7[-1] == '1', out7)
 
@@ -542,6 +570,8 @@ def main():
         config.ALIGN_DY_ON = old_dy_on
         config.ALIGN_DY_TOL = old_dy_tol
         config.ALIGN_DY_OFFSET = old_dy_offset
+        config.ALIGN_DY_OFFSET_D = old_dy_offset_d
+        config.ALIGN_DY_OFFSET_E = old_dy_offset_e
         config.MOVEY_SCALE = old_movey_scale
         tasks.reset_guard()
 

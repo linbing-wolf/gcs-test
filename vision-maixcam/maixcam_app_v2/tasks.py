@@ -18,7 +18,7 @@ import screen_echo
 from protocol import (pack_start, pack_task, pack_pick, pack_disc, pack_stack,
                       pack_none, parse_task_code, pack_obstacle, pack_clear,
                       pack_ready, pack_busy, pack_move, pack_movey,
-                      parse_command, CMD_RESET)
+                      pack_movexy, parse_command, CMD_RESET)
 
 
 def log(*a):
@@ -103,6 +103,98 @@ def _axis_step(err, gain, step_min, step_max, scale, invert):
     if abs(scale - 1.0) > 1e-9:
         s = int(round(s * scale))
     return s
+
+
+def _align_movexy_mode():
+    """True = 用一条 MOVEXY,dx,dy 并行发两轴；False = 老的分发 MOVE/MOVEY。"""
+    return str(getattr(config, "ALIGN_MODE", "movexy")).strip().lower() in (
+        "movexy", "xy", "combined")
+
+
+def _make_align_actions(x_out, y_out, sx_step, sy_step):
+    """按当前模式组装指令；返回 (name, step, payload) 列表。"""
+    if _align_movexy_mode():
+        if not x_out and not y_out:
+            return []
+        return [("MOVEXY", (sx_step, sy_step), pack_movexy(sx_step, sy_step))]
+    actions = []
+    if x_out:
+        actions.append(("MOVE", sx_step, pack_move(sx_step)))
+    if y_out:
+        actions.append(("MOVEY", sy_step, pack_movey(sy_step)))
+    return actions
+
+
+def _actions_sent_axis(actions, axis):
+    """这次实际发出的指令里，指定轴是否有非零步长。"""
+    idx = 0 if axis == "x" else 1
+    for name, step, _ in actions:
+        if name == "MOVEXY" and abs(step[idx]) > 0:
+            return True
+        if name == ("MOVE" if axis == "x" else "MOVEY") and abs(step) > 0:
+            return True
+    return False
+
+
+def _actions_sent_x(actions):
+    return _actions_sent_axis(actions, "x")
+
+
+def _actions_sent_y(actions):
+    return _actions_sent_axis(actions, "y")
+
+
+def _wait_stable_post(cam, ctl, detect, initial_ms, max_ms, tol, need,
+                      baseline=None, require_x=False, require_y=False):
+    """one-shot 后只读等待：先等 initial_ms，再等到目标连续 need 帧基本不动。
+
+    baseline=(x,y) 是动作前中心；require_x/require_y=True 时，对应轴必须
+    相对 baseline 真的移动过，不能把“还没开始动”误判成“已经停稳”。
+    detect(img) → (cx, cy, meta) 或 None；本函数绝不发 MOVE/MOVEY。
+    """
+    t_start = ticks_ms()
+    while ticks_ms() - t_start < max(0, int(initial_ms)):
+        if app.need_exit() or (ctl is not None and not ctl.tick()):
+            return None
+        sleep_ms(20)
+
+    last = None
+    stable = 0
+    moved_x = moved_y = False
+    base_x = base_y = None
+    if baseline is not None:
+        base_x, base_y = float(baseline[0]), float(baseline[1])
+    deadline = ticks_ms() + max(0, int(max_ms))
+    while ticks_ms() < deadline:
+        if app.need_exit() or (ctl is not None and not ctl.tick()):
+            break
+        img = cam.read()
+        r = detect(img)
+        if r is None:
+            stable = 0
+            sleep_ms(50)
+            continue
+        cx, cy, meta = r
+        if base_x is None:
+            base_x, base_y = cx, cy
+        if abs(cx - base_x) > tol:
+            moved_x = True
+        if abs(cy - base_y) > tol:
+            moved_y = True
+        if last is not None and abs(cx - last["cx"]) <= tol and abs(cy - last["cy"]) <= tol:
+            stable += 1
+        else:
+            stable = 1
+        last = {"cx": cx, "cy": cy, "meta": meta, "img": img,
+                "stable": False, "elapsed_ms": ticks_ms() - t_start,
+                "moved_x": moved_x, "moved_y": moved_y}
+        if (stable >= max(1, int(need))
+                and (moved_x or not require_x)
+                and (moved_y or not require_y)):
+            last["stable"] = True
+            return last
+        sleep_ms(50)
+    return last
 
 
 def _confirm_road(ai, img, roi):
@@ -463,7 +555,15 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     if dx_offset is None:
         dx_offset = getattr(config, "ALIGN_DX_OFFSET", 0)
     dx_offset = int(dx_offset)
-    dy_offset = int(getattr(config, "ALIGN_DY_OFFSET", 0))
+    # D/E 可分别设置 dy 偏置；None 表示回退到全局 ALIGN_DY_OFFSET
+    dy_offset = None
+    if tag == "D":
+        dy_offset = getattr(config, "ALIGN_DY_OFFSET_D", None)
+    elif tag == "E":
+        dy_offset = getattr(config, "ALIGN_DY_OFFSET_E", None)
+    if dy_offset is None:
+        dy_offset = getattr(config, "ALIGN_DY_OFFSET", 0)
+    dy_offset = int(dy_offset)
     settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 200)))
     max_iter = max(1, int(getattr(config, "ALIGN_MAX_ITER", 8)))
     lost_limit = max(1, int(getattr(config, "DISC_LOST_FRAMES", 2)))
@@ -516,8 +616,9 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     log("[%s] 圆盘中心定位（对齐容差 dx±%dpx / dy%s，MOVE %s，超时 %dms）"
         % (tag, tol, ("±%dpx" % dy_tol) if dy_on else "关",
            "开" if align_on else "关", timeout_ms))
-    log("[%s] MOVE 系数=%.1fx, MOVEY 系数=%.1fx, dx 修正=%+dpx, dy 修正=%+dpx, 步长上限=%s"
-        % (tag, float(getattr(config, "MOVE_SCALE", 1.0)),
+    log("[%s] 指令模式=%s, MOVE 系数=%.1fx, MOVEY 系数=%.1fx, dx 修正=%+dpx, dy 修正=%+dpx, 步长上限=%s"
+        % (tag, "MOVEXY" if _align_movexy_mode() else "MOVE+MOVEY",
+           float(getattr(config, "MOVE_SCALE", 1.0)),
            float(getattr(config, "MOVEY_SCALE", 1.0)), dx_offset, dy_offset,
            "无" if step_max <= 0 else str(step_max)))
     # 收到 D/E 后先等一会，让车/机构停稳，再读第一帧
@@ -645,28 +746,29 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                 return finish(pack_disc(cx, cy, dx, 1))
             continue
 
-        # ---- 超差：发 MOVE / MOVEY 闭环微调 ----
+        # ---- 超差：发 MOVEXY（并行）或 MOVE / MOVEY（拆分）----
         stable = 0
         if align_on and iters < max_iter:
-            actions = []
             guard_hit = None
-            if abs(dx) > tol:
+            x_out = abs(dx) > tol
+            y_out = bool(dy_on and abs(dy) > dy_tol)
+            sx_step = 0
+            sy_step = 0
+            if x_out:
                 if _runaway_check(dx, "x"):
                     guard_hit = ("x", dx)
                 else:
                     sx_step = axis_step(dx, float(getattr(config, "MOVE_SCALE", 1.0)),
                                         invert)
-                    actions.append(("MOVE", sx_step, pack_move(sx_step)))
             else:
                 _runaway_check(dx, "x")     # 水平已收敛 → 清水平跑飞计数
             if dy_on:
-                if abs(dy) > dy_tol:
+                if y_out:
                     if _runaway_check(dy, "y"):
                         guard_hit = guard_hit or ("y", dy)
                     else:
                         sy_step = axis_step(dy, float(getattr(config, "MOVEY_SCALE", 1.0)),
                                             dy_invert)
-                        actions.append(("MOVEY", sy_step, pack_movey(sy_step)))
                 else:
                     _runaway_check(dy, "y")  # 垂直已收敛 → 清垂直跑飞计数
             if guard_hit:
@@ -682,23 +784,36 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                 if disp:
                     disp.show(img)
                 return finish(pack_disc(cx, cy, dx, 1))
+            actions = _make_align_actions(x_out, y_out, sx_step, sy_step)
             parts = []
-            for name, step, payload in actions:
-                if name == "MOVE":
-                    log("[%s] dx=%+d 超差(±%d) → MOVE,%d%s"
-                        % (tag, dx, tol, step,
-                           "（已反转）" if invert else ""))
-                else:
-                    log("[%s] dy=%+d 超差(±%d) → MOVEY,%d%s"
-                        % (tag, dy, dy_tol, step,
-                           "（已反转）" if dy_invert else ""))
-                if rec:
-                    rec.snap(img, dict(f, action="move_%s" % name.lower(),
-                                       step=step),
-                             "iter%d_before_%s" % (iters, name.lower()),
-                             force=True)
-                link.send_payload(payload)
-                parts.append(payload)
+            if _align_movexy_mode():
+                if actions:
+                    name, step, payload = actions[0]
+                    log("[%s] dx=%+d dy=%+d 超差(±%d/±%d) → MOVEXY,%d,%d"
+                        % (tag, dx, dy, tol, dy_tol, step[0], step[1]))
+                    if rec:
+                        rec.snap(img, dict(f, action="move_xy",
+                                           step_x=step[0], step_y=step[1]),
+                                 "iter%d_before_movexy" % iters, force=True)
+                    link.send_payload(payload)
+                    parts.append(payload)
+            else:
+                for name, step, payload in actions:
+                    if name == "MOVE":
+                        log("[%s] dx=%+d 超差(±%d) → MOVE,%d%s"
+                            % (tag, dx, tol, step,
+                               "（已反转）" if invert else ""))
+                    else:
+                        log("[%s] dy=%+d 超差(±%d) → MOVEY,%d%s"
+                            % (tag, dy, dy_tol, step,
+                               "（已反转）" if dy_invert else ""))
+                    if rec:
+                        rec.snap(img, dict(f, action="move_%s" % name.lower(),
+                                           step=step),
+                                 "iter%d_before_%s" % (iters, name.lower()),
+                                 force=True)
+                    link.send_payload(payload)
+                    parts.append(payload)
             iters += 1
             # 屏幕回显本轮所有指令，并停留 MOVE_ECHO_HOLD_MS，让现场看得到
             screen_echo.set_tx(" ".join(parts))
@@ -710,13 +825,66 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             if bool(getattr(config, "ALIGN_ONE_SHOT", False)):
                 sx_out, sy_out = P.smooth(tag, cx, cy)
                 ok = 1  # 回复 ok 固定为 1
-                log("[%s] 一次性模式：已发 %s，立即回 DISC,%d,%d,%+d,%d"
-                    % (tag, " ".join(parts), sx_out, sy_out, dx, ok))
+                reply_x, reply_y, reply_dx = sx_out, sy_out, dx
+                log("[%s] 一次性模式：已发 %s，回读调整后值再回 DISC"
+                    % (tag, " ".join(parts)))
                 if rec:
                     rec.snap(img, dict(f, action="move_oneshot",
                                        steps=[s for _, s, _ in actions]),
                              "final_oneshot", force=True)
-                return finish(pack_disc(sx_out, sy_out, dx, ok))
+
+                # 只读回读：先等 initial_ms，再等到目标连续几帧不再移动；
+                # 只记录/回传，绝不再发 MOVE/MOVEY。
+                if bool(getattr(config, "ONE_SHOT_VERIFY", True)):
+                    def detect_post(pimg):
+                        pmeta = {}
+                        pc = vision.find_disc_center(
+                            pimg, droi, r_min, r_max, refine=refine,
+                            ring_fallback=ring_fb, prefer=None, meta=pmeta)
+                        if pc is None:
+                            return None
+                        pcx, pcy = P.point(pc[0], pc[1])
+                        return pcx, pcy, {"c": pc, "meta": pmeta}
+
+                    expect_x = _actions_sent_x(actions)
+                    expect_y = _actions_sent_y(actions)
+                    post = _wait_stable_post(
+                        cam, ctl, detect_post,
+                        int(getattr(config, "ONE_SHOT_VERIFY_MS", 1200)),
+                        int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 4000)),
+                        int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
+                        int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
+                        baseline=(cx, cy),
+                        require_x=expect_x, require_y=expect_y)
+                    if post is not None:
+                        pc = post["meta"]["c"]
+                        pmeta = post["meta"]["meta"]
+                        pcx, pcy = post["cx"], post["cy"]
+                        pdx = pcx - center_x + dx_offset
+                        pdy = pcy - center_y + dy_offset
+                        reply_x, reply_y, reply_dx = pcx, pcy, pdx
+                        if post["stable"]:
+                            stop = "已停稳"
+                        elif expect_y and not post.get("moved_y"):
+                            stop = "未检测到垂直位移"
+                        else:
+                            stop = "未停稳(超时)"
+                        log("[%s] 调整后偏差 dx=%+d dy=%+d 中心=(%d,%d) %s（%dms，回传此值，不再发 MOVE）"
+                            % (tag, pdx, pdy, pcx, pcy, stop,
+                               int(post["elapsed_ms"])))
+                        if rec:
+                            pf = fields_of(
+                                pc, pcx, pcy, pdx, pdy, pmeta,
+                                {"action": "post_move",
+                                 "post_dx": int(pdx), "post_dy": int(pdy),
+                                 "post_src": pmeta.get("src", "?"),
+                                 "post_stable": bool(post["stable"]),
+                                 "post_moved_x": bool(post.get("moved_x")),
+                                 "post_moved_y": bool(post.get("moved_y"))})
+                            rec.snap(post["img"], pf, "final_post", force=True)
+                    else:
+                        log("[%s] 调整后偏差：未检测到目标，回传移动前值" % tag)
+                return finish(pack_disc(reply_x, reply_y, reply_dx, ok))
             if settle:
                 sleep_ms(settle)
             if ticks_ms() - t0 > timeout_ms:
@@ -877,8 +1045,25 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
     det_center_y = int(getattr(P, "det_h", config.H) // 2)
 
     log("[F] 码垛底座定位（颜色=%s）" % (color_code or "任意"))
-    log("[F] 对齐容差 dx±%dpx / dy±%dpx, MOVE/MOVEY %s, 最多 %d 轮"
-        % (tol, dy_tol, "开" if align_on else "关", max_iter))
+    log("[F] 对齐容差 dx±%dpx / dy±%dpx, 指令=%s, %s, 最多 %d 轮"
+        % (tol, dy_tol, "MOVEXY" if _align_movexy_mode() else "MOVE+MOVEY",
+           "开" if align_on else "关", max_iter))
+
+    rec = None
+    if bool(getattr(config, "STACK_DEBUG_SAVE", False)):
+        rec = disc_debug.DiscDebug(
+            "F%s" % (color_code or "any"),
+            getattr(config, "STACK_DEBUG_DIR", "/root/yyb_mover_data/stack_debug"),
+            max_frames=getattr(config, "STACK_DEBUG_MAX_FRAMES", 24),
+            quality=getattr(config, "STACK_DEBUG_QUALITY", 85),
+            keep_tasks=getattr(config, "STACK_DEBUG_KEEP_TASKS", 20),
+            min_interval_ms=getattr(config, "STACK_DEBUG_MIN_INTERVAL_MS", 100))
+        rec.start()
+
+    def finish(payload):
+        if rec is not None:
+            rec.close(payload)
+        return payload
 
     start_delay = max(0, int(getattr(config, "STACK_START_DELAY_MS", 0)))
     if start_delay > 0:
@@ -886,7 +1071,7 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
         t_delay = ticks_ms()
         while ticks_ms() - t_delay < start_delay:
             if ctl is not None and not ctl.tick():
-                return pack_ready()
+                return finish(pack_ready())
             sleep_ms(20)
 
     P.reset("F")
@@ -895,15 +1080,27 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
     t0 = ticks_ms()
     stable = 0
     iters = 0
+    ai_logged = False
+    first_frame = True
+    raw_start_saved = False
     while not app.need_exit():
         if ctl is not None and not ctl.tick():
-            return pack_ready()
+            return finish(pack_ready())
         img = cam.read()
         draw_roi(img, roi)
+        # 即使这一帧完全没识别到目标，也保留一张原始校准图
+        if rec is not None and not raw_start_saved:
+            rec.snap(img, {"action": "raw_start"}, "raw_start", force=True)
+            raw_start_saved = True
 
         if color_code:
             it = vision.find_stack_base(clf, img, roi, color_code, ai)
             src = it["src"] if it else None
+            if src in ("ai", "ai+cv") and not ai_logged:
+                log("[F] AI 颜色中心 color=%s (%d,%d) src=%s prob=%.3f tiles=%s"
+                    % (color_code, it["cx"], it["cy"], src,
+                       float(it.get("ai_prob", 0.0)), it.get("ai_tiles", "?")))
+                ai_logged = True
         else:
             it = vision.find_stack_top(clf, img, roi, P.area(config.MIN_PIXELS))
             src = "base" if it else None
@@ -916,7 +1113,7 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
                 disp.show(img)
             if ticks_ms() - t0 > timeout_ms:
                 log("[F] 超时（看不到底座/环）")
-                return pack_none("F")
+                return finish(pack_none("F"))
             continue
 
         vote = bool(getattr(config, "STACK_COLOR_VOTE", False))
@@ -934,6 +1131,16 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
                         % (dx, dy, "OK" if ok_xy else "MOVE", src or "?"),
                         image.COLOR_GREEN if ok_xy else image.COLOR_YELLOW, 2)
 
+        fields = {"cx": int(cx), "cy": int(cy), "dx": int(dx), "dy": int(dy),
+                  "src": src, "color": color_code, "code": it.get("code"),
+                  "r": it.get("r"), "ai_cx": it.get("ai_cx"),
+                  "ai_cy": it.get("ai_cy"), "ai_prob": it.get("ai_prob"),
+                  "ai_tiles": it.get("ai_tiles")}
+        if rec is not None:
+            rec.snap(img, dict(fields, action="detect"),
+                     "start" if first_frame else "frame", force=first_frame)
+            first_frame = False
+
         # ---- 只报告模式：保留原来的中心稳定判定 ----
         if not align_on:
             track_item = it if vote else {"cx": it["cx"], "cy": it["cy"]}
@@ -944,12 +1151,12 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
                     % (src or "?", sx_out, sy_out, dx, dy))
                 if disp:
                     disp.show(img)
-                return pack_stack(sx_out, sy_out, dx, 1)
+                return finish(pack_stack(sx_out, sy_out, dx, 1))
             if disp:
                 disp.show(img)
             if ticks_ms() - t0 > timeout_ms:
                 log("[F] 超时（等待稳定）")
-                return pack_stack(cx, cy, dx, 1)
+                return finish(pack_stack(cx, cy, dx, 1))
             continue
 
         # ---- 双轴容差内：连续 N 帧稳定才算完成 ----
@@ -962,37 +1169,38 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
                     % (src or "?", sx_out, sy_out, dx, dy, iters))
                 if disp:
                     disp.show(img)
-                return pack_stack(sx_out, sy_out, dx, 1)
+                return finish(pack_stack(sx_out, sy_out, dx, 1))
             if disp:
                 disp.show(img)
             if ticks_ms() - t0 > timeout_ms:
                 log("[F] 超时（等待稳定）")
-                return pack_stack(cx, cy, dx, 1)
+                return finish(pack_stack(cx, cy, dx, 1))
             continue
 
-        # ---- 超差：发 MOVE/MOVEY ----
+        # ---- 超差：发 MOVEXY（并行）或 MOVE/MOVEY（拆分）----
         stable = 0
         if iters < max_iter:
-            actions = []
             guard_hit = None
-            if abs(dx) > tol:
+            x_out = abs(dx) > tol
+            y_out = abs(dy) > dy_tol
+            sx_step = 0
+            sy_step = 0
+            if x_out:
                 if _runaway_check(dx, "x"):
                     guard_hit = ("x", dx)
                 else:
-                    step = _axis_step(dx, gain, step_min, step_max,
-                                      float(getattr(config, "MOVE_SCALE", 1.0)),
-                                      invert_x)
-                    actions.append(("MOVE", step, pack_move(step)))
+                    sx_step = _axis_step(dx, gain, step_min, step_max,
+                                         float(getattr(config, "MOVE_SCALE", 1.0)),
+                                         invert_x)
             else:
                 _runaway_check(dx, "x")
-            if abs(dy) > dy_tol:
+            if y_out:
                 if _runaway_check(dy, "y"):
                     guard_hit = guard_hit or ("y", dy)
                 else:
-                    step = _axis_step(dy, gain, step_min, step_max,
-                                      float(getattr(config, "MOVEY_SCALE", 1.0)),
-                                      invert_y)
-                    actions.append(("MOVEY", step, pack_movey(step)))
+                    sy_step = _axis_step(dy, gain, step_min, step_max,
+                                         float(getattr(config, "MOVEY_SCALE", 1.0)),
+                                         invert_y)
             else:
                 _runaway_check(dy, "y")
 
@@ -1004,36 +1212,141 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
                        "dx" if axis == "x" else "dy", val))
                 if disp:
                     disp.show(img)
-                return pack_stack(cx, cy, dx, 1)
+                return finish(pack_stack(cx, cy, dx, 1))
 
+            actions = _make_align_actions(x_out, y_out, sx_step, sy_step)
             parts = []
-            for name, step, payload in actions:
-                if name == "MOVE":
-                    log("[F] dx=%+d 超差(±%d) → MOVE,%d%s"
-                        % (dx, tol, step, "（已反转）" if invert_x else ""))
-                else:
-                    log("[F] dy=%+d 超差(±%d) → MOVEY,%d%s"
-                        % (dy, dy_tol, step, "（已反转）" if invert_y else ""))
-                link.send_payload(payload)
-                parts.append(payload)
+            if _align_movexy_mode():
+                if actions:
+                    name, step, payload = actions[0]
+                    log("[F] dx=%+d dy=%+d 超差(±%d/±%d) → MOVEXY,%d,%d"
+                        % (dx, dy, tol, dy_tol, step[0], step[1]))
+                    if rec is not None:
+                        rec.snap(img, dict(fields, action="move_xy",
+                                           step_x=step[0], step_y=step[1]),
+                                 "iter%d_before_movexy" % iters, force=True)
+                    link.send_payload(payload)
+                    parts.append(payload)
+            else:
+                for name, step, payload in actions:
+                    if name == "MOVE":
+                        log("[F] dx=%+d 超差(±%d) → MOVE,%d%s"
+                            % (dx, tol, step, "（已反转）" if invert_x else ""))
+                    else:
+                        log("[F] dy=%+d 超差(±%d) → MOVEY,%d%s"
+                            % (dy, dy_tol, step, "（已反转）" if invert_y else ""))
+                    if rec is not None:
+                        rec.snap(img, dict(fields, action="move_%s" % name.lower(),
+                                           step=step),
+                                 "iter%d_before_%s" % (iters, name.lower()),
+                                 force=True)
+                    link.send_payload(payload)
+                    parts.append(payload)
             iters += 1
             screen_echo.set_tx(" ".join(parts))
             if disp:
                 disp.show(img)
             if hold > 0:
                 sleep_ms(hold)
+            if bool(getattr(config, "ALIGN_ONE_SHOT", False)):
+                sx_out, sy_out = P.smooth("F", cx, cy)
+                reply_x, reply_y, reply_dx = sx_out, sy_out, dx
+                log("[F] 一次性模式：已发 %s，回读调整后值再回 STACK"
+                    % " ".join(parts))
+                if disp:
+                    disp.show(img)
+
+                # 只读回读：先等 initial_ms，再等到目标连续几帧不再移动；
+                # 只记录/回传，绝不再发 MOVE/MOVEY。
+                if bool(getattr(config, "ONE_SHOT_VERIFY", True)):
+                    def detect_post(pimg):
+                        if color_code:
+                            pit = vision.find_stack_base(clf, pimg, roi, color_code, ai)
+                            psrc = pit["src"] if pit else None
+                        else:
+                            pit = vision.find_stack_top(clf, pimg, roi,
+                                                       P.area(config.MIN_PIXELS))
+                            psrc = "base" if pit else None
+                        if pit is None:
+                            return None
+                        pcx, pcy = P.point(pit["cx"], pit["cy"])
+                        # 每次回读都留一张校准照片，便于复盘 F 的跳点/过冲
+                        if rec is not None:
+                            pdx = pcx - center_x + dx_offset
+                            pdy = pcy - center_y + dy_offset
+                            rec.snap(
+                                pimg,
+                                {"cx": int(pcx), "cy": int(pcy),
+                                 "dx": int(pdx), "dy": int(pdy),
+                                 "src": psrc, "color": color_code,
+                                 "code": pit.get("code"),
+                                 "r": pit.get("r"),
+                                 "ai_cx": pit.get("ai_cx"),
+                                 "ai_cy": pit.get("ai_cy"),
+                                 "ai_prob": pit.get("ai_prob"),
+                                 "ai_tiles": pit.get("ai_tiles"),
+                                 "action": "post_frame"},
+                                "post_frame")
+                        return pcx, pcy, {"it": pit, "src": psrc}
+
+                    expect_x = _actions_sent_x(actions)
+                    expect_y = _actions_sent_y(actions)
+                    post = _wait_stable_post(
+                        cam, ctl, detect_post,
+                        int(getattr(config, "ONE_SHOT_VERIFY_MS", 1200)),
+                        int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 4000)),
+                        int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
+                        int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
+                        baseline=(cx, cy),
+                        require_x=expect_x, require_y=expect_y)
+                    if post is not None:
+                        pit = post["meta"]["it"]
+                        psrc = post["meta"]["src"]
+                        pcx, pcy = post["cx"], post["cy"]
+                        pdx = pcx - center_x + dx_offset
+                        pdy = pcy - center_y + dy_offset
+                        reply_x, reply_y, reply_dx = pcx, pcy, pdx
+                        if post["stable"]:
+                            stop = "已停稳"
+                        elif expect_y and not post.get("moved_y"):
+                            stop = "未检测到垂直位移"
+                        else:
+                            stop = "未停稳(超时)"
+                        log("[F] 调整后偏差 dx=%+d dy=%+d 中心=(%d,%d) %s（%dms，回传此值，不再发 MOVE）"
+                            % (pdx, pdy, pcx, pcy, stop, int(post["elapsed_ms"])))
+                        if rec is not None:
+                            rec.snap(
+                                post["img"],
+                                {"cx": int(pcx), "cy": int(pcy),
+                                 "dx": int(pdx), "dy": int(pdy),
+                                 "src": psrc, "color": color_code,
+                                 "code": pit.get("code"),
+                                 "r": pit.get("r"),
+                                 "ai_cx": pit.get("ai_cx"),
+                                 "ai_cy": pit.get("ai_cy"),
+                                 "ai_prob": pit.get("ai_prob"),
+                                 "ai_tiles": pit.get("ai_tiles"),
+                                 "action": "post_move",
+                                 "post_dx": int(pdx), "post_dy": int(pdy),
+                                 "post_stable": bool(post["stable"]),
+                                 "post_moved_x": bool(post.get("moved_x")),
+                                 "post_moved_y": bool(post.get("moved_y"))},
+                                "final_post", force=True)
+                    else:
+                        log("[F] 调整后偏差：未检测到目标，回传移动前值")
+                return finish(pack_stack(reply_x, reply_y, reply_dx, 1))
             if settle:
                 sleep_ms(settle)
             if ticks_ms() - t0 > timeout_ms:
                 log("[F] 超时（微调中）")
-                return pack_stack(cx, cy, dx, 1)
+                return finish(pack_stack(cx, cy, dx, 1))
             continue
 
         log("[F] 微调 %d 轮仍未对齐（dx=%+d dy=%+d）" % (iters, dx, dy))
         if disp:
             disp.show(img)
-        return pack_stack(cx, cy, dx, 1)
-    return pack_none("F")
+        return finish(pack_stack(cx, cy, dx, 1))
+    return finish(pack_none("F"))
 
 
 # ======================================================================

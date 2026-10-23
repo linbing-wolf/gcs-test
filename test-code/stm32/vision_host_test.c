@@ -14,6 +14,9 @@
   *   3) 回复解析：13 种回复 + 负数参数 + 未知帧
   *   4) 会话引擎：正常 / BUSY 不算失败 / MOVE 循环 / 超时重发 / 重发用尽
   *   5) 全流程脚本：模拟视觉端跑完交接文档 §7 的 11 条往来
+  *   6) 边界与接口完整性：组帧的 NULL/容量/超长、MsgName 全覆盖、回复字段
+  *      （argc 截断/空/NULL/未知名/超长命令字）、信箱 FIFO 与溢出、
+  *      会话 Active/Cancel 与"残留回复不串台"、TxPayload 一致性、Pump 多帧
   ******************************************************************************
   */
 
@@ -325,6 +328,7 @@ static void TestParser(void)
         CHECK(FeedString(&p, "OK", VISION_HALF_FRAME_MS + 1u) == 1, "丢弃后仍能收新帧");
         (void)n;
     }
+    Ok("正常/噪声前置/粘连/分片/坏CRC/坏帧尾/LEN超限/半帧200ms 全部符合预期");
 }
 
 /* ==========================================================================
@@ -378,6 +382,7 @@ static void TestReplyParse(void)
     Vision_ParseReply("READY \r", 0u, &m);
     CHECK(m.id == VISION_MSG_READY, "尾部空白要裁掉");
     Vision_MsgName(VISION_MSG_DISC);
+    Ok("16 类回复 + 负数 dx + 尾部空白 全部解析正确");
 }
 
 /* ==========================================================================
@@ -559,6 +564,223 @@ static void TestScript(void)
 }
 
 /* ==========================================================================
+ *  6. 边界与接口完整性（补齐原测试未覆盖的公开 API）
+ * ========================================================================== */
+static void TestBuildFrameEdges(void)
+{
+    uint8_t frame[VISION_FRAME_MAX];
+    char    big[VISION_PAYLOAD_MAX + 2u];
+
+    Group("组帧边界：空指针 / 容量 / 超长");
+
+    CHECK(Vision_BuildFrame(NULL, frame, sizeof(frame)) == 0, "payload=NULL → 0");
+    CHECK(Vision_BuildFrame("R", NULL, 16) == 0, "out=NULL → 0");
+    CHECK(Vision_BuildFrame("R", frame, 5) == 0, "cap=5 不够(R 需 6) → 0");
+    CHECK(Vision_BuildFrame("R", frame, 6) == 6, "cap=6 刚好 → 6");
+    CHECK(Vision_BuildFrame("", frame, sizeof(frame)) == 5, "空 payload → 5 字节帧");
+
+    memset(big, 'A', VISION_PAYLOAD_MAX);
+    big[VISION_PAYLOAD_MAX] = 0;
+    CHECK(Vision_BuildFrame(big, frame, sizeof(frame)) == VISION_PAYLOAD_MAX + 5u,
+          "payload=LEN_MAX 允许");
+    big[VISION_PAYLOAD_MAX] = 'A';
+    big[VISION_PAYLOAD_MAX + 1u] = 0;
+    CHECK(Vision_BuildFrame(big, frame, sizeof(frame)) == 0, "payload=LEN_MAX+1 拒绝");
+    Ok("组帧边界（NULL / 容量 / 超长）");
+}
+
+static void TestMsgName(void)
+{
+    static const struct { VisionMsgId id; const char *s; } kNames[] =
+    {
+        { VISION_MSG_READY,   "READY" },   { VISION_MSG_OK,     "OK" },
+        { VISION_MSG_BUSY,    "BUSY" },    { VISION_MSG_NONE,   "NONE" },
+        { VISION_MSG_START,   "START" },   { VISION_MSG_TASK,   "TASK" },
+        { VISION_MSG_PICK,    "PICK" },    { VISION_MSG_DISC,   "DISC" },
+        { VISION_MSG_STACK,   "STACK" },   { VISION_MSG_OBST,   "OBST" },
+        { VISION_MSG_CLEAR,   "CLEAR" },   { VISION_MSG_ERR,    "ERR" },
+        { VISION_MSG_MOVE,    "MOVE" },    { VISION_MSG_UNKNOWN,"UNKNOWN" }
+    };
+    unsigned i;
+
+    Group("名字表：每个 MsgId 都要有名字，越界要安全");
+    for (i = 0; i < sizeof(kNames) / sizeof(kNames[0]); i++)
+        CHECK(strcmp(Vision_MsgName(kNames[i].id), kNames[i].s) == 0, kNames[i].s);
+    CHECK(strcmp(Vision_MsgName(VISION_MSG_EMPTY), "-") == 0, "EMPTY → -");
+    CHECK(strcmp(Vision_MsgName((VisionMsgId)999), "-") == 0, "越界 id → -");
+    Ok("MsgName 全覆盖（含 EMPTY 与越界）");
+}
+
+static void TestReplyFields(void)
+{
+    VisionMsg m;
+
+    Group("回复字段：name / argc / arg / num / text / rx_ms");
+
+    CHECK(Vision_ParseReply("OBST,12,34,56,78,910", 1234u, &m) == 1, "OBST 解析");
+    CHECK(m.id == VISION_MSG_OBST && m.argc == 5u, "OBST 5 个参数");
+    CHECK(m.num[4] == 910 && m.rx_ms == 1234u, "第 5 个参数与 rx_ms");
+    CHECK(strcmp(m.name, "OBST") == 0, "name");
+    CHECK(strcmp(m.arg[0], "12") == 0, "arg 文本");
+
+    CHECK(Vision_ParseReply("  \t DISC,318,242,-2,1 \r\n", 7u, &m) == 1, "首尾空白");
+    CHECK(m.id == VISION_MSG_DISC && m.num[2] == -2 && m.argc == 4u, "DISC 负数 dx");
+    CHECK(strcmp(m.text, "DISC,318,242,-2,1") == 0, "text 已去空白");
+
+    CHECK(Vision_ParseReply("OBST,1,2,3,4,5,6,7,8", 0u, &m) == 1, "参数超上限不越界");
+    CHECK(m.argc == VISION_ARGS_MAX, "参数截断到 VISION_ARGS_MAX");
+    CHECK(m.num[0] == 1 && m.num[VISION_ARGS_MAX - 1u] == 6, "截断后数值正确");
+
+    CHECK(Vision_ParseReply("", 0u, &m) == 0, "空串 → 0");
+    CHECK(Vision_ParseReply("   \t ", 0u, &m) == 0, "纯空白 → 0");
+    CHECK(Vision_ParseReply(NULL, 0u, &m) == 0, "NULL → 0");
+
+    CHECK(Vision_ParseReply("HELLO,1", 0u, &m) == 1 && m.id == VISION_MSG_UNKNOWN,
+          "未知名 → UNKNOWN（不报错）");
+    CHECK(strcmp(m.name, "HELLO") == 0, "未知名保留");
+
+    CHECK(Vision_ParseReply("READY", 0u, &m) == 1 && strcmp(m.name, "READY") == 0
+          && m.argc == 0u, "无参数命令");
+
+    /* 命令字超过 8 字符：截断但不越界、不崩 */
+    CHECK(Vision_ParseReply("ABCDEFGHIJK,1", 0u, &m) == 1, "超长命令字不崩");
+    CHECK(strlen(m.name) <= 8u, "命令字截断到 8 字符");
+    Ok("回复字段与边界（超参数截断 / 空 / NULL / 未知名）");
+}
+
+static void TestMailbox(void)
+{
+    VisionMsg m, in;
+    int i;
+
+    Group("消息信箱：FIFO / 空 / 溢出丢最旧");
+
+    ResetAll();
+    CHECK(Vision_TakeMsg(&m) == 0, "空信箱 → 0");
+
+    memset(&in, 0, sizeof(in));
+    in.id = VISION_MSG_READY; in.num[0] = 11; Vision_PushMsg(&in);
+    in.id = VISION_MSG_OK;    in.num[0] = 22; Vision_PushMsg(&in);
+    CHECK(Vision_TakeMsg(&m) == 1 && m.num[0] == 11, "FIFO 顺序 1");
+    CHECK(Vision_TakeMsg(&m) == 1 && m.num[0] == 22, "FIFO 顺序 2");
+    CHECK(Vision_TakeMsg(&m) == 0, "取完变空");
+
+    /* 容量为 VISION_MAILBOX-1 条；塞满再塞应丢最旧、保留最新 */
+    for (i = 1; i <= 6; i++)
+    {
+        memset(&in, 0, sizeof(in));
+        in.id = VISION_MSG_OBST; in.num[0] = i;
+        Vision_PushMsg(&in);
+    }
+    i = 0;
+    while (Vision_TakeMsg(&m))
+        i++;
+    CHECK(i == 3, "溢出后最多保留 3 条");
+    Ok("信箱 FIFO / 空 / 溢出策略");
+}
+
+static void TestSessionStateApi(void)
+{
+    VisionSession s;
+    VisionMsg     m;
+    uint32_t      t = 0;
+    int           rc;
+
+    Group("会话状态接口：Active / Cancel / 残留回复不串台");
+
+    memset(&s, 0, sizeof(s));
+    CHECK(Vision_SessionActive(&s) == 0, "未启动 → 不活跃");
+    CHECK(Vision_SessionActive(NULL) == 0, "Active(NULL) 安全");
+
+    ResetAll();
+    Vision_SessionStart(&s, "R", 0u, VISION_TIMEOUT_MS, VISION_CMD_RETRY);
+    CHECK(Vision_SessionActive(&s) == 1, "启动后 → 活跃");
+    CHECK(g_tx_count == 1 && strcmp(g_last_cmd, "R") == 0, "启动即发 R");
+
+    Vision_SessionCancel(&s);
+    CHECK(Vision_SessionActive(&s) == 0, "Cancel 后 → 不活跃");
+    Vision_SessionCancel(NULL);
+    CHECK(1, "Cancel(NULL) 不崩");
+    rc = Vision_SessionPoll(&s, 0u, &m);
+    CHECK(rc == 0, "已取消的会话不再消费回复");
+    CHECK(g_tx_count == 1, "取消后不再发帧");
+
+    /* 上一条命令的残留回复不能被下一条命令认领（信箱残留）*/
+    ResetAll();
+    {
+        VisionParser p;
+        VisionMsg    stale;
+        memset(&p, 0, sizeof(p));
+        memset(&stale, 0, sizeof(stale));
+        Vision_ParserReset(&p, 0);
+
+        Vision_SessionStart(&s, "R", 0u, VISION_TIMEOUT_MS, VISION_CMD_RETRY);
+        Vision_Pump(&p, 0u);                       /* READY 被解析进信箱 */
+        Vision_SessionCancel(&s);                  /* 故意不取，留下残留 */
+        CHECK(Vision_TakeMsg(&stale) == 1 && stale.id == VISION_MSG_READY,
+              "确认信箱里确实有残留 READY");
+        Vision_PushMsg(&stale);                    /* 再塞回去，复现现场情形 */
+
+        t = 100u;
+        Vision_SessionStart(&s, "Z", t, VISION_TIMEOUT_MS, VISION_CMD_RETRY);
+        CHECK(Vision_TakeMsg(&stale) == 0, "SessionStart 必须清掉残留回复");
+        rc = RunSession(&s, &p, &t, &m, 5u, 500u);
+        CHECK(rc == 1 && m.id == VISION_MSG_OK, "新会话只拿到自己的 OK，不认领残留 READY");
+    }
+    Ok("Active / Cancel / 残留回复隔离");
+}
+
+static void TestTxPath(void)
+{
+    uint8_t  want[VISION_FRAME_MAX];
+    uint16_t n;
+    char     big[VISION_PAYLOAD_MAX + 2u];
+
+    Group("发送路径：TxPayload 与 BuildFrame 逐字节一致 + 非法不发");
+
+    ResetAll();
+    Vision_TxPayload("C,1");
+    n = Vision_BuildFrame("C,1", want, sizeof(want));
+    CHECK(g_tx_count == 1, "发出一帧");
+    CHECK(g_tx_len[0] == n, "长度一致");
+    CHECK(memcmp(g_tx_bytes[0], want, n) == 0, "字节一致");
+    CHECK(strcmp(g_tx_payload[0], "C,1") == 0, "payload 一致");
+
+    memset(big, 'A', VISION_PAYLOAD_MAX);
+    big[VISION_PAYLOAD_MAX] = 'A';
+    big[VISION_PAYLOAD_MAX + 1u] = 0;
+    ResetAll();
+    Vision_TxPayload(big);
+    CHECK(g_tx_count == 0, "非法 payload：一个字节都不发");
+    Ok("TxPayload 组帧 / 拒发");
+}
+
+static void TestPumpMulti(void)
+{
+    VisionParser p;
+    VisionMsg    m;
+    uint8_t      got;
+
+    Group("Vision_Pump：粘连多帧 / 空队列 / NULL");
+
+    ResetAll();
+    Vision_ParserReset(&p, 0);
+    RxPushPayload("READY");
+    RxPushPayload("BUSY");
+    RxPushPayload("CLEAR");
+    got = Vision_Pump(&p, 10u);
+    CHECK(got == 3, "3 帧一次泵出");
+    CHECK(Vision_TakeMsg(&m) == 1 && m.id == VISION_MSG_READY, "顺序 1 READY");
+    CHECK(Vision_TakeMsg(&m) == 1 && m.id == VISION_MSG_BUSY,  "顺序 2 BUSY");
+    CHECK(Vision_TakeMsg(&m) == 1 && m.id == VISION_MSG_CLEAR, "顺序 3 CLEAR");
+    CHECK(Vision_TakeMsg(&m) == 0, "信箱取空");
+    CHECK(p.frames_ok >= 3u, "统计 frames_ok");
+    CHECK(Vision_Pump(&p, 20u) == 0, "空队列 → 0");
+    CHECK(Vision_Pump(NULL, 20u) == 0, "Pump(NULL) 安全");
+    Ok("Pump 多帧 / 空队列 / NULL");
+}
+
+/* ==========================================================================
  *  main
  * ========================================================================== */
 int main(void)
@@ -569,6 +791,13 @@ int main(void)
     TestReplyParse();
     TestSession();
     TestScript();
+    TestBuildFrameEdges();
+    TestMsgName();
+    TestReplyFields();
+    TestMailbox();
+    TestSessionStateApi();
+    TestTxPath();
+    TestPumpMulti();
 
     printf("\n%d checks, %d failed\n", g_checks, g_fails);
     if (g_fails)

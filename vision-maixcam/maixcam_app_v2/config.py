@@ -50,7 +50,7 @@ ROI_QRCODE     = []                      # 二维码：全画面
 ROI_MATERIAL   = [140, 100, 360, 300]    # 原料区转盘（放 3 个物料）
 ROI_DISC_ROUGH = [160, 20, 320, 340]     # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
 ROI_DISC_TEMP  = [160, 20, 320, 340]     # 暂存区圆盘（同上）
-ROI_STACK      = [160, 120, 320, 240]    # 码垛区（暂存区同一块）
+ROI_STACK      = [80, 0, 480, 480]       # 码垛区：纵向全屏（x 80..560，y 0..480）
 
 # ============================== 稳定性判定 ==============================
 STABLE_FRAMES    = 15     # 连续多少帧中心不动才确认
@@ -77,13 +77,40 @@ STACK_RING_FALLBACK = True  # 连环都没找到时，退回 ROI 中心（False=
 STACK_ALIGN_ON       = True    # False = 只报告，不发 MOVE/MOVEY
 STACK_ALIGN_TOL      = 5       # 水平容差(px)
 STACK_ALIGN_DY_TOL   = 5       # 垂直容差(px)
-STACK_ALIGN_DX_OFFSET = 0      # dx = cx - W/2 + 该值
-STACK_ALIGN_DY_OFFSET = 0      # dy = cy - H/2 + 该值
+STACK_ALIGN_DX_OFFSET = 5      # 参数本身=5；目标 x=320-5=315
+STACK_ALIGN_DY_OFFSET = 45     # 参数本身=45；目标 y=240-45=195
 STACK_INVERT_X       = False   # F 的 MOVE 方向反了置 True
 STACK_INVERT_Y       = False   # F 的 MOVEY 方向反了置 True
-STACK_START_DELAY_MS = 500     # 收到 F 后先等这么久再读第一帧
+STACK_START_DELAY_MS = 500     # F 识别前延迟；加大到 500ms 等机构和画面稳定
 STACK_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_stack_move"  # 调试：直接跑一次真实 F
-STACK_DEBUG_TRIGGER_COLOR = ""  # ""=F 不带颜色；"1"~"4"=按颜色找底座
+STACK_DEBUG_TRIGGER_COLOR = "3"  # ""=F 不带颜色；"1"~"4"=按颜色找底座
+# ---- F 颜色中心：CV 找不到同色底座时，用 AI 分类器分块扫描兜底 ----
+STACK_AI_LOCATE      = True    # True = 启用 AI 分块找颜色中心
+STACK_AI_ONLY        = True    # True = F,<颜色> 只用 AI，不再走 CV/空环兜底
+STACK_AI_TILE        = 96      # 扫描块边长(px，640x480 口径)
+STACK_AI_STRIDE      = 48      # 扫描步长(px)，块之间 50% 重叠
+STACK_AI_MIN_PROB    = 0.75    # AI 置信度下限
+STACK_AI_BLUE_MIN_PROB = 0.90   # 蓝色(3)单独提高阈值，压掉蓝色误判
+STACK_AI_BLUE_MAX_TILES = 12    # 蓝色命中块上限；新模型对物料边缘块也会命中，实测约 9~10 块
+STACK_AI_BLUE_MAX_CY    = 240   # 蓝色中心必须在画面上半部；下半部多为车体/电控
+STACK_AI_MIN_TILES   = 2       # 至少多少个相邻块命中才认可
+STACK_AI_DEBUG       = True    # True = 日志打印 AI 命中块/置信度/中心
+# ---- AI 粗定位后，用经典 CV 在 AI 框内找物料顶部圆心（精定位）----
+STACK_CV_FINE        = True    # True = AI 粗中心 + CV 精修
+STACK_CV_FINE_MODE   = "color" # color=目标颜色最大色块质心；circle=旧霍夫圆
+STACK_COLOR_MIN_PIXELS = 100   # 颜色质心最小色块面积(px)
+STACK_COLOR_MAX_JUMP   = 100   # 质心离 AI 中心超过该距离就丢弃(px)
+STACK_TOP_R_MIN      = 18      # circle 模式：物料顶部圆半径下限(px)
+STACK_TOP_R_MAX      = 55      # circle 模式：物料顶部圆半径上限(px)
+STACK_TOP_THRESHOLD  = 1500    # circle 模式：顶部圆霍夫阈值
+STACK_CV_SEARCH_MARGIN = 24    # AI 框外扩后再精修(px)
+# ---- F 码垛调试记录（JPEG + meta.jsonl，放在 APP 目录外）----
+STACK_DEBUG_SAVE        = True
+STACK_DEBUG_DIR         = "/root/yyb_mover_data/stack_debug"
+STACK_DEBUG_MAX_FRAMES  = 80   # 每次 F 最多存 80 张，覆盖完整的动作前/动作后
+STACK_DEBUG_QUALITY     = 85
+STACK_DEBUG_KEEP_TASKS  = 0    # 0 = 不自动删除，保留每次 F 的校准照片
+STACK_DEBUG_MIN_INTERVAL_MS = 100
 MIN_PIXELS_START = 5000     # 启停区是大面积蓝，用大阈值避免和蓝色物料混淆
 QR_REPEAT        = 3        # 二维码连续 N 次一致才确认
 QR_REGEX         = r"^\d{3}\+\d{3}\+\d{3}\+\d{3}$"   # 15 字符任务码
@@ -113,7 +140,7 @@ DISC_RING_R_MIN        = 20     # 圆环兜底半径范围（px）
 DISC_RING_R_MAX        = 140
 DISC_RING_THRESHOLD    = 1200   # 圆环霍夫累加阈值（环线细，比圆盘低）
 DISC_TIMEOUT_MS        = 8000   # D/E 专属兜底超时（比通用 TASK_TIMEOUT_MS 短）
-DISC_START_DELAY_MS    = 500    # 收到 D/E 后先等这么久再读第一次相机（已从 800 降到 500）
+DISC_START_DELAY_MS    = 200    # 收到 D/E 后先等这么久再读第一次相机（加速：500→200）
 DISC_LOST_FRAMES       = 2      # 连续 N 帧看不到圆 → 立即回 NONE（1=第一帧就回）
 DISC_TRACK_MAX_JUMP    = 50     # 优先选离上一次圆心 ≤N px 的候选（0=不启用）
 
@@ -167,27 +194,38 @@ DISC_DEBUG_TRIGGER_MS    = 2000   # 触发抓图持续时长(ms)
 # ============================== 圆盘对齐（P6：环2 到水平正中心）==============================
 # 视觉端主动发 MOVE,<dx> / MOVEY,<dy> 驱动下位机微调，直到 |x-W/2|<=ALIGN_TOL 且 |y-H/2|<=ALIGN_DY_TOL
 ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（中心稳定就带偏差回复）
-ALIGN_ONE_SHOT    = False   # False = 闭环调整（最多 ALIGN_MAX_ITER 轮 MOVE/MOVEY）
+ALIGN_MODE        = "movexy"  # movexy=MOVEXY,dx,dy 双轴并行；split=MOVE + MOVEY
+ALIGN_ONE_SHOT    = True    # True = 只发一轮 MOVEXY（或 MOVE/MOVEY）就回复
 ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定为 1
+# one-shot 后回读一次：回复改用调整后的 x/y/dx（dy 仅写日志），
+# 但绝不再发 MOVE/MOVEY。会增加 ONE_SHOT_VERIFY_MS 的回复延迟。
+ONE_SHOT_VERIFY      = True
+ONE_SHOT_VERIFY_MS   = 600    # 先等至少这么久，再开始判断是否停稳（加速：1200→600）
+ONE_SHOT_VERIFY_MAX_MS = 2500 # 停稳判断最多再等这么久（加速：4000→2500）
+ONE_SHOT_STOP_TOL    = 3      # 相邻两帧中心变化 <= 3px 视为在停止
+ONE_SHOT_STOP_FRAMES = 3      # 连续 3 帧满足才认定停稳
+ONE_SHOT_VERIFY_TRIES = 8     # 兼容旧配置；当前使用停稳判断
 ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 5px
 ALIGN_GAIN        = 0.65    # 比例系数：按实测 k≈1.48 取 1/k；先走大部分，第二轮只补残差
 ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 0
 ALIGN_STEP_MAX    = 0       # 单次 MOVE/MOVEY 最大步长（px）；0 = 不限制
 MOVE_SCALE        = 1.0     # MOVE 数值系数：最终 MOVE = step × MOVE_SCALE（先改回 1x）
-ALIGN_DX_OFFSET   = 5       # dx 修正值(px)：dx = cx - W/2 + ALIGN_DX_OFFSET；物料偏左就加大
-ALIGN_DX_OFFSET_D = -10     # D 专用：+5 基础上再右移 15px（实测 D 最终 dx≈+12~+15）
+ALIGN_DX_OFFSET   = 2       # E 目标 x=318（应用 D 的 21:55 实测修正）
+ALIGN_DX_OFFSET_D = 2       # D 专用：目标 x=318（按 21:55 实测 +3px 修正）
 ALIGN_DX_OFFSET_E = None    # E 专用；None = 用 ALIGN_DX_OFFSET
 # ---- 垂直方向（MOVEY）：与水平轴独立配置 ----
 ALIGN_DY_ON       = True    # False = 不校正垂直偏差，只发 MOVE
 ALIGN_DY_TOL      = 5       # 垂直对齐容差(px)
-ALIGN_DY_OFFSET   = 60      # dy 修正值(px)：目标 y=240-60=180
-MOVEY_SCALE       = 1.0     # MOVEY 数值系数：1:1，不做额外缩放
+ALIGN_DY_OFFSET   = 40      # E 目标 y=200（应用 D 的 21:55 实测修正）
+ALIGN_DY_OFFSET_D = 40      # D 专用：目标 y=200（按 21:55 实测 +10px 修正）
+ALIGN_DY_OFFSET_E = None    # E 专用；None = 用 ALIGN_DY_OFFSET
+MOVEY_SCALE       = 0.86    # E 实测过冲比 107/92 → 1/1.163 ≈ 0.86
 ALIGN_INVERT_DY_D = False   # D：MOVEY 方向（反了就置 True）
 ALIGN_INVERT_DY_E = False   # E：MOVEY 方向（反了就置 True）
 MOVE_ECHO_HOLD_MS = 100     # 发完 MOVE 后屏幕回显停留时间(ms)（已从 300 降到 100）
 ALIGN_STABLE_FRAMES = 3     # 进入容差后还要连续 N 帧稳定才回 ok=1
-ALIGN_SETTLE_MS   = 800     # 一次到位需要等机构停稳；600→800
-ALIGN_MAX_ITER    = 2       # 一次主修正 + 一次小补刀；超过就回 DISC,...,1
+ALIGN_SETTLE_MS   = 1200    # 等机构真正停稳再测第二次；800→1200
+ALIGN_MAX_ITER    = 3       # 主修正 + 小补刀 + 最后一次收残差；2→3
 ALIGN_INVERT_D    = False   # D：按要求先保持不反
 ALIGN_INVERT_E    = False   # E：MOVE 方向保持（当前 E 是正确的）
 
@@ -283,7 +321,7 @@ CENTER_FILTER_N = 9         # 坐标多帧平均窗口（σ 降为 1/sqrt(N)）�
 # AI 不可用/低置信度时自动退回阈值判色，所以开了不会比纯 CV 更差。
 USE_AI = True               # 最终版默认开；模型已实测 val 99.38%，失效会自动退回阈值判色
 AI_KIND = "classify"        # classify=分类(抗色差) | detect=检测(形状/码垛)
-AI_MODEL = "/root/models/cls11n.mud"   # yolo11n-cls 转换产物（见 maixcam-migration/_converted）
+AI_MODEL = "/root/models/cls11n_far.mud"     # 清洗+远景微调后的 yolo11n-cls（F 96px 分块）
 AI_CONF = 0.5
 AI_IOU = 0.45
 # 分类类别顺序（ultralytics 按文件夹字母序，必须与训练一致）+ 类别→颜色码
