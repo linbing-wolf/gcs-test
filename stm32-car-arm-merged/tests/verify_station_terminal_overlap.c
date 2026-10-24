@@ -4,12 +4,17 @@
 
 static void complete_flow_overlap_tests(void)
 {
-    unsigned plan;
-    for(plan=0;plan<2u;plan++) {
+    unsigned plan,phase,moving_coverage[2]={0,0};
+    /* H新增修正会改变后续控制周期相位。5mm末段允许提前准备，
+     * 但不保证每次PWM预检完成时车辆仍在动；跨相位保留各区真实运动重叠覆盖。 */
+    for(plan=0;plan<2u;plan++)for(phase=0;phase<3u;phase++) {
         unsigned offset=0,entry_started=0,entry_moving_pwm=0,index_motor_mask=0,ground_motor_mask=0;
         uint32_t deadline;unsigned entry_tx=0,positions=0,last_job=0;
         float hold_claw=0;
-        prepare_arm_auto(plan);send_line("task 134+123+314+231");send_line(plan ? "runimu C" : "runimu A");
+        prepare_arm_auto(plan);
+        peer_plate_dx=phase==1 ? 4 : phase==2 ? -4 : 0;
+        peer_plate_dy=phase==1 ? -3 : phase==2 ? 3 : 0;
+        send_line("task 134+123+314+231");send_line(plan ? "runimu C" : "runimu A");
         deadline=clock_ms+2000000;
         while(run.state!=RUN_DONE && run.state!=RUN_FAULT && clock_ms<deadline) {
             uint8_t entry_before=run.station_entry_overlap,approach_before=run.station_approach_overlap;
@@ -18,13 +23,18 @@ static void complete_flow_overlap_tests(void)
             if(run.station_entry_overlap && !entry_before) {
                 entry_started|=1u<<run.job;entry_tx=vision_tx_count;
                 CHECK(run.station_align_pending && abs(run.heading_control.error_cdeg)<=300);
+                if(run.corner.active) {
+                    CHECK(run.corner.arriving && fabs(run.corner.first_mm-run.corner.x_mm)<=STN_APPROACH_OVERLAP_MM);
+                    CHECK(fabs(run.corner.second_mm-run.corner.y_mm)<=STN_APPROACH_OVERLAP_MM);
+                }
             }
             if(run.station_entry_overlap) {
                 int slide,lift;
                 arm_pose_now(&slide,&lift,NULL,NULL);
                 CHECK(run_active && run.station_align_pending && slide==0 && lift==135);
                 CHECK(vision_tx_count==entry_tx); /* 准备完成也不能在底盘完成前请求C/D/E/F。 */
-                if(old_yaw!=arm_yaw_us && run.turn_cmd_rpm)entry_moving_pwm|=1u<<run.job;
+                if(old_yaw!=arm_yaw_us && (run.turn_cmd_rpm
+                    || (run.corner.active && (run.forward_cmd_rpm || run.left_cmd_rpm))))entry_moving_pwm|=1u<<run.job;
             }
             if(run.station_approach_overlap && !approach_before) {
                 positions=old_positions;arm_pose_now(NULL,NULL,NULL,&hold_claw);
@@ -45,13 +55,18 @@ static void complete_flow_overlap_tests(void)
         printf("OVERLAP_FLOW plan=%u entry=%02x moving_pwm=%02x index_axes=%02x ground_axes=%02x\n",
                plan,entry_started,entry_moving_pwm,index_motor_mask,ground_motor_mask);
         CHECK(clock_ms<deadline && run.state==RUN_DONE && run.job==8);
-        CHECK(entry_started==0x7eu && entry_moving_pwm==(CAR_RUN_OMNI_ENABLED ? 0x7cu : 0x7eu));
+        CHECK(entry_started==0x7eu);
+        moving_coverage[plan]|=entry_moving_pwm;
         CHECK((index_motor_mask&0x2cu)==0x2cu); /* 粗加工两批2/5、首次暂存3。 */
         CHECK((ground_motor_mask&0x24u)==0x24u); /* 两次粗加工地面抓回：下降也确实提前。 */
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && arm_ready() && arm_parked());
         stop_request();
     }
-    puts("PASS all areas: both complete A/C routes, entry PWM overlaps every required station turn; first raw visit retains already-correct scanner heading in omni mode; rough pickup/ground retrieval and storage index have axis commands with nonzero translation; original eight jobs and13960mm retained");
+    for(plan=0;plan<2u;plan++) {
+        CHECK(moving_coverage[plan]==(CAR_RUN_OMNI_ENABLED ? 0x7cu : 0x7eu));
+        printf("OVERLAP_COVERAGE plan=%u moving_pwm=%02x raw_scenarios=3\n",plan,moving_coverage[plan]);
+    }
+    puts("PASS all areas: complete A/C routes for zero and both signed H corrections; preparation precedes chassis completion at all six visits, actual PWM/motion overlap covers required areas across scenarios; original index/grip gates, eight jobs and13960mm retained");
 }
 
 static void index_overlap_delay_and_cancel_tests(void)
@@ -102,8 +117,9 @@ static void entry_delay_and_cancel_tests(void)
             CHECK(run_active && station_chassis_entry_busy() && !arm_busy() && yaw==ARM_PICK_YAW_DEG);
             CHECK(slide==0 && lift==135 && claw==ARM_CLAW_OPEN_DEG && vision_tx_count==tx);
             missing_feedback_motor=0;
-            while(vision_tx_count==tx && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
-            CHECK(clock_ms<deadline && run.state==RUN_STATION && vision_pick_state()==VISION_PICK_WAITING);
+            while(vision_tx_count<tx+6u && run.state!=RUN_FAULT && clock_ms<deadline)plant_step();
+            CHECK(clock_ms<deadline && run.state==RUN_STATION && vision_align_state()==VISION_PICK_WAITING);
+            CHECK(vision_tx_count==tx+6u && vision_tx_bytes[tx+3u]=='H' && vision_pick_state()==VISION_PICK_IDLE);
             stop_request();continue;
         }
         if(variant==1)send_line("!");

@@ -30,7 +30,7 @@ void vision_request_stack(uint8_t color,uint32_t now);
 int vision_stack_state(void);
 void vision_stack_result(int16_t *x,int16_t *y);
 void vision_cancel_pick(void);
-/* 粗加工D、首次暂存E各一次：MOVE,dx前后，MOVEY,dy横移，MOVEXY,dx,dy两轴并行（像素，支持+/-）。
+/* 每批原料H、粗加工D、首次暂存E各一次：MOVE,dx前后，MOVEY,dy横移，MOVEXY,dx,dy两轴并行（像素，支持+/-）。
  * 每条位移按接收顺序入队，0不覆盖旧指令；DISC,x,y,dx,1结束接收，不清除已接收指令。
  * 不重算dx，不设偏差门槛；不发R、不等READY；ring只用于本地环位编排。 */
 void vision_request_align(char command, uint8_t ring, uint32_t now);
@@ -39,7 +39,7 @@ int16_t vision_align_offset_px(void);
 /* axis=0前后、1横移、2双轴；旧轴查询只读取单轴元素，不拆开MOVEXY。
  * WAITING/READY均可读取。peek不消费，启动成功后take。
  * 兼容轴查询读取本轴最早未执行项；取消/新请求清空指令队列。 */
-/* D/E/F共用离散指令FIFO；启动成功后才消费，终包不清除未执行项。 */
+/* H/D/E/F共用离散指令FIFO；启动成功后才消费，终包不清除未执行项。 */
 int vision_motion_peek(uint8_t *axis,int16_t *offset,uint32_t *received_ms);
 /* 工位统一使用本接口，MOVE/MOVEY缺省的另一轴为0；MOVEXY一次返回完整两轴。 */
 int vision_motion_peek_xy(int16_t *dx,int16_t *dy,uint32_t *received_ms);

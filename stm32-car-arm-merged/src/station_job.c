@@ -47,7 +47,8 @@ static uint8_t task_ready;
 static uint8_t automatic = 1;
 
 static int storage_job(void) {return stn.job==3u || stn.job==6u;}
-static float station_align_yaw(void) {return storage_job() ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;}
+static int raw_job(void) {return stn.job==1u || stn.job==4u;}
+static float station_align_yaw(void) {return raw_job() ? ARM_PICK_YAW_DEG : storage_job() ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;}
 
 /* 像素→毫米的控制比例由操作者指定，整数四舍五入；保留正负和完整幅值。 */
 static int32_t vision_pixel_mm(int16_t pixels)
@@ -209,6 +210,8 @@ static int build_raw(void)
      * 后续load1结束也会等云台回抓取角、载物台换位完成，才请求下一块。 */
     push(SS_YAW, (int)(ARM_PICK_YAW_DEG * 10.0f));
     if (claw != ARM_CLAW_OPEN_DEG) push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+    /* 每批只对齐物料盘一次；H终包及已接收位移全部完成后才请求首块C。 */
+    push(SS_ALIGN, 2);
     for (i = 0; i < 3u; i++) {
         if (!task_colors[stn.batch][i]) {
             stn_fault("task colors incomplete; send task 123 or task 134123314231");
@@ -492,7 +495,7 @@ static int issue_step(uint32_t now)
     switch (s->kind) {
     case SS_ALIGN: {
         int slide,lift;float yaw;
-        char command=storage_job() ? 'E' : 'D';
+        char command=raw_job() ? 'H' : storage_job() ? 'E' : 'D';
         arm_pose_now(&slide,&lift,&yaw,NULL);
         if (!arm_ready() || slide!=ARM_SLIDE_HOME_MM || lift!=ARM_LIFT_HOME_MM || yaw!=station_align_yaw()) {
             stn_fault("vision alignment requires high/retracted arm at station angle");return 0;
@@ -502,7 +505,9 @@ static int issue_step(uint32_t now)
         vision_request_align(command,(uint8_t)s->value,now);
         {
             char message[112];
-            snprintf(message,sizeof(message),"[station align] job=%u ring=%u yaw_deg=%.1f; request %c once; wait for MOVE stream / final DISC\r\n",
+            if(raw_job())snprintf(message,sizeof(message),"[station raw align] job=%u yaw_deg=%.1f; request H once; wait for MOVE stream / final DISC\r\n",
+                (unsigned)stn.job,(double)station_align_yaw());
+            else snprintf(message,sizeof(message),"[station align] job=%u ring=%u yaw_deg=%.1f; request %c once; wait for MOVE stream / final DISC\r\n",
                 (unsigned)stn.job,(unsigned)s->value,(double)station_align_yaw(),command);
             stn_text(message);
         }
@@ -606,7 +611,7 @@ static void station_approach_overlap(uint32_t now,int terminal_ready)
     stn_text("[station approach overlap] final station move within " CAR_STRING_VALUE(STN_APPROACH_OVERLAP_MM) "mm/" CAR_STRING_VALUE(STN_APPROACH_OVERLAP_RPM) "RPM; approach started; grip waits for chassis completion\r\n");
 }
 
-/* D/E只执行上位机给出的离散位移；按收包顺序逐条完成后接受终包。 */
+/* H/D/E只执行上位机给出的离散位移；终包先到也要等全部位移执行完成。 */
 static void station_align_update(uint8_t ring, uint32_t now)
 {
     int state, distance;
@@ -628,7 +633,8 @@ static void station_align_update(uint8_t ring, uint32_t now)
         if (state==VISION_PICK_READY) {
             char line[80];
             vision_cancel_pick();
-            snprintf(line,sizeof(line),"[station aligned] job=%u ring=%u DISC confirmed\r\n",(unsigned)stn.job,(unsigned)ring);
+            if(raw_job())snprintf(line,sizeof(line),"[station raw aligned] job=%u H moves complete; start C/PICK\r\n",(unsigned)stn.job);
+            else snprintf(line,sizeof(line),"[station aligned] job=%u ring=%u DISC confirmed\r\n",(unsigned)stn.job,(unsigned)ring);
             stn_text(line);step_finished();
         }
         return;

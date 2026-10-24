@@ -22,11 +22,13 @@ static void tick(unsigned ms)
 static unsigned peer_geometry, peer_disc_count, peer_move_count;
 static unsigned peer_session_active, peer_area_count[7];
 static unsigned peer_stack_count, peer_stack_hold;
+static int peer_plate_dx,peer_plate_dy;
 static uint32_t peer_next_ms;
 static void prepare_arm_auto(unsigned plan)
 {
     RoadPoint start;
     peer_session_active=0;peer_next_ms=0;peer_stack_count=peer_stack_hold=0;memset(peer_area_count,0,sizeof(peer_area_count));
+    peer_plate_dx=peer_plate_dy=0;
     reset_plant(0,1.15);CHECK(road_point(plan?NODE_C:NODE_A,&start));
     planned_x=start.x;planned_y=start.y;field_x=start.x;field_y=start.y;initial_field_heading=plan?2:0;
     send_line("arm on");tick(500);CHECK(arm_enabled() && arm_lock.state==2);
@@ -169,6 +171,18 @@ static unsigned serve_peer(unsigned *offset)
             CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
             CHECK(yaw==ARM_PICK_YAW_DEG && claw==ARM_CLAW_OPEN_DEG);
             snprintf(message,sizeof(message),"PICK,%c,0,0",vision_tx_bytes[*offset+5u]);peer_reply(message,0);served++;
+        } else if(n==1 && vision_tx_bytes[*offset+3u]=='H') {
+            int slide,lift;float yaw;
+            CHECK(run.state==RUN_STATION && (run.job==1 || run.job==4) && !run_active);
+            arm_pose_now(&slide,&lift,&yaw,NULL);
+            CHECK(arm_ready() && !arm_busy() && arm_lock.state==2);
+            CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM && yaw==ARM_PICK_YAW_DEG);
+            CHECK(++peer_area_count[run.job]==1);
+            if(peer_plate_dx || peer_plate_dy) {
+                snprintf(message,sizeof(message),"MOVEXY,%d,%d",peer_plate_dx,peer_plate_dy);
+                peer_reply(message,0);
+            }
+            peer_reply("DISC,311,267,0,1",0);
         } else if(n==3 && vision_tx_bytes[*offset+3u]=='F') {
             int32_t first,second;unsigned colors,divisor;
             CHECK(run.job==6 && run.state==RUN_STATION && !run_active && !peer_session_active);
@@ -187,7 +201,7 @@ static unsigned serve_peer(unsigned *offset)
             CHECK(vision_tx_bytes[*offset+3u]==((run.job==3 || run.job==6) ? 'E' : 'D'));
             CHECK(++peer_area_count[run.job]==1); /* 同次进站不得再次请求。 */
             peer_disc_count++;peer_session_active=1;peer_next_ms=clock_ms;
-        } else CHECK(0); /* 自动流程仅C/D/E及第二批F，禁止新增R停止帧。 */
+        } else CHECK(0); /* 自动流程仅H/C/D/E及第二批F，禁止新增R停止帧。 */
         *offset+=total;
     }
     /* 一个D启动持续反馈；与当前相机1200ms settle间隔一致，无下位机回复。 */
@@ -368,14 +382,14 @@ static void raw_preparation_timing_tests(void)
         if(changed)send_line("arm pose 10 110 0 0");
         send_line("task 134+123+314+231");home_pwm=arm_yaw_us;start=clock_ms;
         CHECK(station_start(NODE_F,1,clock_ms)==1);deadline=clock_ms+(changed?12000:3000);
-        while(!station_failed() && vision_tx_count<8 && clock_ms<deadline) {
+        while(!station_failed() && vision_tx_count<6 && clock_ms<deadline) {
             station_update(clock_ms);plant_step();
             if(!first_yaw && arm_yaw_us!=home_pwm) {
                 first_yaw=clock_ms;arm_pose_now(&slide,&lift,&yaw,&claw);
                 CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
             }
         }
-        CHECK(!station_failed() && clock_ms<deadline && vision_tx_count==8 && first_yaw);
+        CHECK(!station_failed() && clock_ms<deadline && vision_tx_count==6 && vision_tx_bytes[3]=='H' && first_yaw);
         CHECK(clock_ms-start>=ARM_YAW_TIME_MS);
         arm_pose_now(&slide,&lift,&yaw,&claw);
         CHECK(!arm_busy() && yaw==ARM_PICK_YAW_DEG && claw==ARM_CLAW_OPEN_DEG);
@@ -397,7 +411,7 @@ static void raw_last_return_tests(void)
 {
     unsigned batch;
     for(batch=0;batch<2;batch++) {
-        unsigned offset=0,replies=0,final_released=0;
+        unsigned offset=0,replies=0,final_released=0,plate=0;
         uint32_t deadline;float prior_claw=ARM_CLAW_OPEN_DEG;
         const char *colors=batch ? "314" : "134";
         prepare_arm_auto(0);send_line("task 134+123+314+231");
@@ -406,6 +420,10 @@ static void raw_last_return_tests(void)
         while(station_active() && clock_ms<deadline) {
             int slide,lift;float yaw,claw;
             station_update(clock_ms);plant_step();
+            if(!plate && vision_tx_count>=6) {
+                CHECK(vision_tx_bytes[2]==1 && vision_tx_bytes[3]=='H');
+                peer_reply("DISC,311,267,0,1",0);offset=6;plate=1;
+            }
             if(vision_tx_count>=offset+8) {
                 char message[32];
                 CHECK(replies<3 && vision_tx_bytes[offset+2]==3 && vision_tx_bytes[offset+3]=='C');
@@ -424,7 +442,7 @@ static void raw_last_return_tests(void)
             if(final_released)CHECK(yaw!=ARM_PICK_YAW_DEG);
             prior_claw=claw;
         }
-        CHECK(clock_ms<deadline && !station_failed() && replies==3 && final_released);
+        CHECK(clock_ms<deadline && !station_failed() && plate==1 && replies==3 && final_released);
         CHECK(arm_parked() && arm_platform_slot()==1);
         stop_request();
     }
@@ -489,6 +507,7 @@ static void automatic_route_tests(void)
         if(run.distance_mm!=EXPECTED_FULL_ROUTE_MM)fprintf(stderr,"ROUTE distance=%lu expected=%u reused=%u\n",(unsigned long)run.distance_mm,EXPECTED_FULL_ROUTE_MM,heading_reuses);
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && heading_reuses>0 && (!CAR_ARM_TRANSLATION_OVERLAP_ENABLED || station_heading_reuses>0) && arm_ready() && arm_parked());
         CHECK(peer_area_count[3]==1 && peer_area_count[6]==0 && peer_stack_count==3);
+        CHECK(peer_area_count[1]==1 && peer_area_count[4]==1);
         /* 同一上电会话再跑一轮：不得继承上一轮码；首个B必须等新码。 */
         send_line("station");CHECK(strstr(output,"task_ready=0") && strstr(output,"colors=000 rings=000"));
         send_line(plan?"runimu C":"runimu A");deadline=clock_ms+30000;
@@ -536,6 +555,8 @@ static void raw_wheel_log_only_tests(void)
         for(wheel=0;wheel<4;wheel++)wheel_feedback_bias[wheel]=(int16_t)(wheel&1u ? -40 : 40);
         tick(6000); /* 超过旧3000ms门槛；不能取消仍在等待中的C/PICK。 */
         CHECK(run.state==RUN_STATION && arm_lock.state==2 && station_active());
+        CHECK(vision_align_state()==VISION_PICK_WAITING && vision_tx_count==6 && vision_tx_bytes[3]=='H');
+        peer_reply("DISC,311,267,0,1",0);tick(50);
         CHECK(vision_pick_state()==VISION_PICK_WAITING && !arm_positions);
         positions=arm_positions;
         if(mode==0) {
@@ -704,7 +725,8 @@ static void translation_overlap_tests(void)
         deadline=clock_ms+2000;
         while(run.departure_overlap && run.state!=RUN_FAULT && clock_ms<deadline) {
             plant_step();
-            if(run.departure_overlap && run.velocity_phase==VELOCITY_FORWARD && (run.forward_cmd_rpm || run.forward_mrpm)) {
+            if(run.departure_overlap && run.velocity_phase==VELOCITY_FORWARD
+                && (run.forward_cmd_rpm || run.forward_mrpm || run.left_cmd_rpm)) {
                 CHECK(arm_busy() && arm_departure_rotation_active());
                 CHECK(run.travel_axis==axis && run.travel_sign==sign);moving=1;
                 if(cancel) {
@@ -882,7 +904,7 @@ static void rough_index_tests(void)
         if(variant==2)motor_feedback[3].status_flags=0;
         if(variant==3)motor_feedback[3].speed_ms=clock_ms-ARM_FEEDBACK_TIMEOUT_MS-1u;
         if(variant==4)arm_lock.state=1;
-        if(variant==5)run.job=1;
+        if(variant==5)run.job=7; /* 原料1/4现可执行H修正；启停区仍拒绝工位移车。 */
         CHECK(!station_chassis_start(variant==6 ? 0 : STN_ROUGH_INDEX_MM));
         CHECK(!run_active && !run.station_shift && !velocity_batches);
     }

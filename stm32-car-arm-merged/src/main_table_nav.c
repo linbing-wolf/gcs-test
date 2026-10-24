@@ -156,6 +156,19 @@ typedef struct
     uint8_t transition_ready; /* 已完成道路或工位持续确认的航向/停车状态，只向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
     uint16_t lateral_rpm;
+    struct {
+        uint8_t active, passed, arriving, polarity_ready, start_edge, reversing;
+        float first_mm, second_mm, arc_mm, total_mm, x_mm, y_mm, s_mm, speed_mm_s;
+        float command[3], integrated_yaw_cdeg; /* 同一比例限制四轮变化率；上次里程对应的IMU角度。 */
+        int32_t heading_target;
+        int16_t origin_yaw_cdeg;
+        int8_t polarity[4];
+        int64_t previous[4], latest[4], integrated[4];
+        uint32_t previous_ms[4], latest_ms[4], integrated_ms, command_ms, projection_ms;
+        int16_t yaw[48];
+        uint32_t yaw_ms[48];
+        uint8_t yaw_head, yaw_count;
+    } corner; /* 仅D→E→H；旋转时积分同一时刻的四轮增量，不能沿用固定车身轴总里程。 */
     uint8_t vector_move;      /* 仅MOVEXY工位子动作：前后/横移目标独立闭环，同一批四轮速度。 */
     int8_t vector_last_wheel_sign[4];
     uint16_t vector_wheel_reversals[4]; /* 本段成功提交的非零轮速命令换向次数，零速不清除上一方向。 */
@@ -949,14 +962,15 @@ static void run_status(void)
     text(" pending=");
     number(run.pending);
     text(" heading_est="); number((uint32_t)run.heading);
-    text(run.turning ? " action=turn" : run.travel_axis == BODY_LEFT ? " action=lateral" : " action=forward");
+    text(run.corner.active ? " action=corner" : run.turning ? " action=turn" : run.travel_axis == BODY_LEFT ? " action=lateral" : " action=forward");
     text(" physical_pose=unconfirmed");
     if (run.imu_mode) {
         text(" heading_control=IMU control=continuous_velocity");
         text(" target_yaw_cdeg="); signed_number(heading_wrap_cdeg((int32_t)run.heading_control.last_yaw_cdeg + run.heading_control.error_cdeg));
         text(" yaw_cdeg="); signed_number(run.heading_control.last_yaw_cdeg);
         text(" error_cdeg="); signed_number(run.heading_control.error_cdeg);
-        text(" distance_mm="); signed_number(run.progress_mm);
+        text(run.corner.active ? " path_s_mm=" : " distance_mm=");signed_number(run.progress_mm);
+        if(run.corner.active){text(" path_target_mm=");number((uint32_t)lroundf(run.corner.total_mm));}
         text(" station_align_pending="); number(run.station_align_pending);
         text(" completed_roads_mask="); number(run.completed_roads);
         text(" returning="); number(run.obstacle_phase == 2);
@@ -1368,7 +1382,8 @@ static int start_heading_shift(int32_t mm, uint16_t rpm)
 static int station_chassis_pose_safe(void)
 {
     int slide,lift;float yaw;
-    float work_yaw=(run.job==3u || run.job==6u) ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;
+    float work_yaw=(run.job==1u || run.job==4u) ? ARM_PICK_YAW_DEG
+        : (run.job==3u || run.job==6u) ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;
     arm_pose_now(&slide,&lift,&yaw,NULL);
     if(run_active && run.station_shift && run.station_approach_overlap)
         return arm_enabled() && arm_pose_known() && !arm_failed();
@@ -1392,7 +1407,7 @@ static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
     int storage = run.job == 3u || run.job == 6u;
     int index_rpm = storage ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
     if (run_active || stop_pending || run.state != RUN_STATION || !run.station_phase
-        || (run.job != 2u && run.job != 5u && !storage) || arm_lock.state != 2
+        || (run.job != 1u && run.job != 2u && run.job != 4u && run.job != 5u && !storage) || arm_lock.state != 2
         || !station_chassis_pose_safe() || !mm) return 0;
     for (i = 0; i < MOTOR_COUNT; i++) {
         MotorFeedback *f = &motor_feedback[i];
@@ -2375,8 +2390,9 @@ static void run_velocity_log(void)
     text(" yaw_cdeg="); signed_number(run.heading_control.last_yaw_cdeg);
     text(" error_cdeg="); signed_number(run.heading_control.error_cdeg);
     text(" rate_cdeg_s="); signed_number(run.heading_control.rate_cdeg_s);
-    text(" distance_mm="); signed_number(run.progress_mm);
-    text(" target_mm="); number(run.action_mm);
+    text(run.corner.active ? " path_s_mm=" : " distance_mm=");signed_number(run.progress_mm);
+    text(run.corner.active ? " path_target_mm=" : " target_mm=");
+    number(run.corner.active ? (uint32_t)lroundf(run.corner.total_mm) : run.action_mm);
     if(run.vector_move) {
         text(" vector_target_mm=");signed_number(run.vector_target_mm[0]);text(",");signed_number(run.vector_target_mm[1]);
         text(" vector_progress_mm=");signed_number(run.vector_progress_mm[0]);text(",");signed_number(run.vector_progress_mm[1]);
@@ -2459,11 +2475,286 @@ static void run_return_next(void)
     run_begin_alignment();
 }
 
+typedef struct {float x,y,dx,dy,yaw_cdeg,yaw_per_mm;} CornerPoint;
+
+static float corner_clip(float value,float low,float high)
+{
+    return value<low ? low : value>high ? high : value;
+}
+
+/* 地图D→E朝上、E→H朝左；局部x朝E，y朝H。车头+X到+Y对应IMU右转90度。 */
+static CornerPoint run_corner_point(float s)
+{
+    CornerPoint p;
+    float r=CAR_CORNER_RADIUS_MM,pre=run.corner.first_mm-r;
+    memset(&p,0,sizeof(p));
+    if(s<=pre) {p.x=corner_clip(s,0,pre);p.dx=1;}
+    else if(s<pre+run.corner.arc_mm) {
+        float u=(s-pre)/run.corner.arc_mm,a=u*1.570796327f,u2=u*u,u3=u2*u;
+        p.x=pre+r*sinf(a);p.y=r-r*cosf(a);p.dx=cosf(a);p.dy=sinf(a);
+        p.yaw_cdeg=-9000*(10*u3-15*u3*u+6*u3*u2);
+        p.yaw_per_mm=-9000*(30*u2-60*u3+30*u3*u)/run.corner.arc_mm;
+    } else {p.x=run.corner.first_mm;p.y=r+s-pre-run.corner.arc_mm;p.dy=1;p.yaw_cdeg=-9000;}
+    return p;
+}
+
+static void run_corner_yaw_record(HeadingSample sample)
+{
+    unsigned last=(run.corner.yaw_head+47u)%48u,index=run.corner.yaw_head;
+    if(!sample.valid || (run.corner.yaw_count
+        && (uint32_t)(sample.received_ms-run.corner.yaw_ms[last])<10u))return;
+    run.corner.yaw[index]=sample.yaw_cdeg;run.corner.yaw_ms[index]=sample.received_ms;
+    run.corner.yaw_head=(uint8_t)((index+1u)%48u);
+    if(run.corner.yaw_count<48u)run.corner.yaw_count++;
+}
+
+static int run_corner_yaw_at(uint32_t when,float *yaw)
+{
+    unsigned i,oldest=(run.corner.yaw_head+48u-run.corner.yaw_count)%48u;
+    for(i=0;i+1u<run.corner.yaw_count;i++) {
+        unsigned a=(oldest+i)%48u,b=(a+1u)%48u;
+        uint32_t span=run.corner.yaw_ms[b]-run.corner.yaw_ms[a],offset=when-run.corner.yaw_ms[a];
+        if(span && offset<=span) {
+            *yaw=run.corner.yaw[a]+heading_wrap_cdeg((int32_t)run.corner.yaw[b]-run.corner.yaw[a])*(float)offset/span;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void run_corner_begin(void)
+{
+    RoadPoint d,e,h;RoadPlan next;
+    unsigned i;uint32_t age=0;
+    HeadingSample sample=heading_snapshot();
+    if(!CAR_RUN_CORNER_ENABLED || !CAR_RUN_OMNI_ENABLED || !run.station_enabled
+        || run.station_shift || run.turn_only || run.translation_only || run.obstacle_phase
+        || run.road.from!=NODE_D || run.road.to!=NODE_E || run.road.count!=1u
+        || run.heading!=HEAD_X_POS || CAR_STATION_STORAGE_HEADING!=HEAD_Y_POS
+        || full_route_jobs[run.plan][run.job]!=NODE_H || run.edge+2u>=FULL_ROUTE_NODES
+        || full_route_nodes[run.plan][run.edge+2u]!=NODE_H
+        || !road_plan(NODE_E,NODE_H,&next) || next.count!=1u
+        || (run.blocked_roads&((1u<<run.road.road)|(1u<<next.road))))return;
+    if(!road_point(NODE_D,&d) || !road_point(NODE_E,&e) || !road_point(NODE_H,&h)
+        || d.x!=e.x || e.y!=h.y || d.y-e.y<=CAR_CORNER_RADIUS_MM
+        || e.x-h.x<=CAR_CORNER_RADIUS_MM)return;
+    memset(&run.corner,0,sizeof(run.corner));
+    run.corner.active=1;run.corner.start_edge=run.edge;
+    run.corner.first_mm=d.y-e.y;run.corner.second_mm=e.x-h.x;
+    run.corner.arc_mm=1.570796327f*CAR_CORNER_RADIUS_MM;
+    run.corner.total_mm=run.corner.first_mm+run.corner.second_mm-2*CAR_CORNER_RADIUS_MM+run.corner.arc_mm;
+    run.corner.origin_yaw_cdeg=heading_wrap_cdeg(run.yaw_zero_cdeg+CAR_MAP_YAW_SIGN*(int32_t)HEAD_X_POS*9000);
+    run.corner.heading_target=run.heading_control.target_cdeg;
+    run.corner.command_ms=clock_ms;run.corner.integrated_yaw_cdeg=sample.yaw_cdeg;
+    for(i=0;i<4u;i++) {
+        run.corner.previous[i]=run.corner.latest[i]=run.corner.integrated[i]=run.encoder_start[i];
+        run.corner.previous_ms[i]=run.corner.latest_ms[i]=motor_feedback[i].position_ms;
+        if((uint32_t)(clock_ms-motor_feedback[i].position_ms)>age)age=clock_ms-motor_feedback[i].position_ms;
+    }
+    run.corner.integrated_ms=clock_ms-age;
+    run.corner.projection_ms=run.corner.integrated_ms;
+    run.corner.yaw[0]=sample.yaw_cdeg;run.corner.yaw_ms[0]=run.corner.integrated_ms;
+    run.corner.yaw_head=run.corner.yaw_count=1;
+    run.continuation_mm=0;
+    text("[route corner begin] D>E>H radius_mm=" CAR_STRING_VALUE(CAR_CORNER_RADIUS_MM)
+         " arc_speed_mm_s=" CAR_STRING_VALUE(CAR_CORNER_SPEED_MM_S) "; encoder/IMU path and yaw; physical_path=unconfirmed\r\n");
+}
+
+/* 串行轮询先插值四轮CPOS到共同时间，再旋转增量；纯转动的轮增量在逆混控中抵消。
+ * 沿用起步两份实际位移的极性学习，之后轮子换向不能重学极性或取绝对值。 */
+static int run_corner_observe(void)
+{
+    static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
+    unsigned i;uint32_t age=0,common;
+    int64_t position[4];float yaw,forward=0,left=0,angle,delta;
+    if(!run.corner.polarity_ready) {
+        if(!run_velocity_distance())return 0;
+        if(run.encoder_ready==ALL_MOTORS_MASK) {
+            for(i=0;i<4u;i++)run.corner.polarity[i]=(int8_t)(run.encoder_sign[i]*ls[i]);
+            run.corner.polarity_ready=1;
+        }
+    }
+    for(i=0;i<4u;i++) {
+        MotorFeedback *f=&motor_feedback[i];
+        if(f->position_ms!=run.corner.latest_ms[i]) {
+            run.corner.previous[i]=run.corner.latest[i];run.corner.previous_ms[i]=run.corner.latest_ms[i];
+            run.corner.latest[i]=f->position;run.corner.latest_ms[i]=f->position_ms;
+        }
+        if((uint32_t)(clock_ms-run.corner.latest_ms[i])>age)age=clock_ms-run.corner.latest_ms[i];
+    }
+    common=clock_ms-age;
+    if(!run.corner.polarity_ready || !common || common==run.corner.integrated_ms
+        || (uint32_t)(common-run.corner.integrated_ms)>0x7fffffffu
+        || !run_corner_yaw_at(common,&yaw))return 1;
+    for(i=0;i<4u;i++) {
+        uint32_t span=run.corner.latest_ms[i]-run.corner.previous_ms[i],offset=common-run.corner.previous_ms[i];
+        float counts;
+        if(!span || offset>span || span>CAR_VELOCITY_FEEDBACK_MS)return 1;
+        position[i]=run.corner.previous[i]+(run.corner.latest[i]-run.corner.previous[i])*offset/span;
+        counts=(float)(position[i]-run.corner.integrated[i])*run.corner.polarity[i];
+        forward+=counts*fs[i];left+=counts*ls[i];
+    }
+    forward*=CAR_POSITION_PULSES_PER_REV/(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_Y);
+    left*=CAR_POSITION_PULSES_PER_REV/(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X);
+    delta=heading_wrap_cdeg((int32_t)lroundf(yaw-run.corner.integrated_yaw_cdeg));
+    angle=heading_wrap_cdeg((int32_t)lroundf(run.corner.integrated_yaw_cdeg+delta*0.5f)-run.corner.origin_yaw_cdeg)*0.0001745329252f;
+    run.corner.x_mm+=sinf(angle)*forward+cosf(angle)*left;
+    run.corner.y_mm+=-cosf(angle)*forward+sinf(angle)*left;
+    memcpy(run.corner.integrated,position,sizeof(position));run.corner.integrated_ms=common;run.corner.integrated_yaw_cdeg=yaw;
+    return 1; /* 圆角位置超出原500mm边界仍继续路径闭环，不按估计值中止任务。 */
+}
+
+static float run_corner_project(void)
+{
+    float pre=run.corner.first_mm-CAR_CORNER_RADIUS_MM,r=CAR_CORNER_RADIUS_MM;
+    float a=corner_clip(atan2f(run.corner.x_mm-pre,r-run.corner.y_mm),0,1.570796327f);
+    float candidates[3],best=0,error=1e30f;
+    unsigned i;
+    candidates[0]=corner_clip(run.corner.x_mm,0,pre);
+    candidates[1]=pre+a*r;
+    candidates[2]=pre+run.corner.arc_mm+corner_clip(run.corner.y_mm-r,0,run.corner.second_mm-r);
+    for(i=0;i<3u;i++) {
+        CornerPoint p=run_corner_point(candidates[i]);
+        float dx=p.x-run.corner.x_mm,dy=p.y-run.corner.y_mm,d=dx*dx+dy*dy;
+        if(d<error){error=d;best=candidates[i];}
+    }
+    return best;
+}
+
+/* 保留三轴比例，以共同缩放限制单轮速度及变化率；不会让高速平移挤掉转向分量。 */
+static void run_corner_slew(float desired[3],int16_t output[3])
+{
+    static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
+    uint32_t elapsed=clock_ms-run.corner.command_ms;
+    float maximum=0,scale=1,limit=CAR_WHEEL_MAX_RPM,step;
+    unsigned i;
+    if(elapsed>CAR_DRIVE_SLEW_MAX_DT_MS)elapsed=CAR_DRIVE_SLEW_MAX_DT_MS;
+    if(run.corner.reversing && limit>CAR_OBSTACLE_RETURN_RPM)limit=CAR_OBSTACLE_RETURN_RPM;
+    for(i=0;i<4u;i++) {
+        float value=fabsf(fs[i]*desired[0]+ls[i]*desired[1]+desired[2]);
+        if(value>maximum)maximum=value;
+    }
+    if(maximum>limit)for(i=0;i<3u;i++)desired[i]*=limit/maximum;
+    step=CAR_DRIVE_DECEL_RPM_PER_S*(elapsed/1000.0f);
+    for(i=0;i<4u;i++) {
+        float change=fabsf(fs[i]*(desired[0]-run.corner.command[0])+ls[i]*(desired[1]-run.corner.command[1])+desired[2]-run.corner.command[2]);
+        if(change>step && step/change<scale)scale=step/change;
+    }
+    for(i=0;i<3u;i++) {
+        run.corner.command[i]+=(desired[i]-run.corner.command[i])*scale;
+        output[i]=(int16_t)lroundf(run.corner.command[i]);
+    }
+    run.corner.command_ms=clock_ms;
+}
+
+static void run_corner_update(void)
+{
+    CornerPoint point;
+    float s,remaining,speed,pre=run.corner.first_mm-CAR_CORNER_RADIUS_MM;
+    float coefficient=60.0f*CALIBRATED_PPM_X/CAR_POSITION_PULSES_PER_REV;
+    float decel=CAR_DRIVE_DECEL_RPM_PER_S/coefficient,delay=decel*CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0f;
+    float ex,ey,vx,vy,angle,desired[3],rate,effort;
+    int16_t command[3];int32_t target;
+    unsigned i;uint8_t due;
+    if(!run_corner_observe()){run_fault("encoder corner direction learning failed");return;}
+    if(run.corner.polarity_ready && (uint32_t)(clock_ms-run.corner.integrated_ms)>CAR_VELOCITY_FEEDBACK_MS) {
+        /* 单轮恢复的第一份CPOS尚不能形成共同时间；先沿用原反馈等待，不能拿旧位置配新航向。 */
+        run_wait_feedback("four-wheel position timestamps incomplete; awaiting coherent feedback");return;
+    }
+    s=run_corner_project();point=run_corner_point(s);
+    if(run.corner.integrated_ms!=run.corner.projection_ms) {
+        run.corner.speed_mm_s=(s-run.corner.s_mm)*1000.0f/(run.corner.integrated_ms-run.corner.projection_ms);
+        run.corner.projection_ms=run.corner.integrated_ms;
+    }
+    run.corner.s_mm=s;
+    target=run.corner.heading_target+(int32_t)lroundf(point.yaw_cdeg);
+    if(target!=run.heading_control.target_cdeg)run.heading_control.stable_samples=0;
+    run.heading_control.target_cdeg=target;run.heading_control.error_cdeg=target-run.heading_control.progress_cdeg;
+    if(!run.corner.reversing && !run.corner.passed && s>=pre+run.corner.arc_mm) {
+        run.completed_roads|=(uint16_t)(1u<<run.road.road);run.edge++;run.segment=0;
+        if(!road_plan(NODE_E,NODE_H,&run.road)){run_fault("corner exit road missing");return;}
+        run.corner.passed=1;run.travel_axis=BODY_LEFT;run.travel_sign=-1;run.target_heading=HEAD_Y_POS;
+        run.remaining_mm=run.action_mm=(uint16_t)run.corner.second_mm;run.steps++;run.distance_mm+=run.action_mm;
+        text("[route corner pass] E bypassed; moving and yaw continuous; H checkpoint pending\r\n");
+    }
+    remaining=run.corner.reversing ? s : run.corner.total_mm-s;
+    speed=sqrtf(delay*delay+2*decel*corner_clip(remaining-CAR_DISTANCE_TOLERANCE_MM,0,100000))-delay;
+    speed=corner_clip(speed,0,CAR_WHEEL_MAX_RPM/coefficient);
+    if(speed>remaining*CAR_CORNER_TRACK_GAIN_X100/100.0f)speed=remaining*CAR_CORNER_TRACK_GAIN_X100/100.0f;
+    if(remaining>CAR_DISTANCE_TOLERANCE_MM && speed<CAR_CORNER_MIN_MM_S)speed=CAR_CORNER_MIN_MM_S;
+    if(remaining<=CAR_DISTANCE_TOLERANCE_MM)speed=0;
+    if(s<=pre) {
+        float entry=sqrtf(delay*delay+CAR_CORNER_SPEED_MM_S*CAR_CORNER_SPEED_MM_S+2*decel*corner_clip(pre-s,0,100000))-delay;
+        if(entry<CAR_CORNER_SPEED_MM_S)entry=CAR_CORNER_SPEED_MM_S;
+        if(speed>entry)speed=entry;
+    } else if(s<pre+run.corner.arc_mm && speed>CAR_CORNER_SPEED_MM_S)speed=CAR_CORNER_SPEED_MM_S;
+    if(!run.corner.polarity_ready && speed>CAR_ENCODER_LEARN_RPM/coefficient)speed=CAR_ENCODER_LEARN_RPM/coefficient;
+    if(abs(run.heading_control.error_cdeg)>CAR_CORNER_SLOW_YAW_CDEG)
+        speed*=CAR_CORNER_SLOW_YAW_CDEG/(float)abs(run.heading_control.error_cdeg);
+    if(run.corner.reversing)speed=-corner_clip(speed,0,CAR_CORNER_RETURN_MM_S);
+    ex=point.x-run.corner.x_mm;ey=point.y-run.corner.y_mm;
+    if(remaining<=CAR_DISTANCE_TOLERANCE_MM) {
+        point=run_corner_point(run.corner.reversing ? 0 : run.corner.total_mm);
+        ex=point.x-run.corner.x_mm;ey=point.y-run.corner.y_mm;
+    }
+    vx=fabsf(ex)<=CAR_DISTANCE_TOLERANCE_MM ? 0 : corner_clip(ex*CAR_CORNER_TRACK_GAIN_X100/100.0f,-CAR_CORNER_TRACK_MAX_MM_S,CAR_CORNER_TRACK_MAX_MM_S);
+    vy=fabsf(ey)<=CAR_DISTANCE_TOLERANCE_MM ? 0 : corner_clip(ey*CAR_CORNER_TRACK_GAIN_X100/100.0f,-CAR_CORNER_TRACK_MAX_MM_S,CAR_CORNER_TRACK_MAX_MM_S);
+    if(vx && fabsf(vx)<CAR_CORNER_MIN_MM_S)vx=vx>0 ? CAR_CORNER_MIN_MM_S : -CAR_CORNER_MIN_MM_S;
+    if(vy && fabsf(vy)<CAR_CORNER_MIN_MM_S)vy=vy>0 ? CAR_CORNER_MIN_MM_S : -CAR_CORNER_MIN_MM_S;
+    vx+=point.dx*speed;vy+=point.dy*speed;
+    angle=heading_wrap_cdeg((int32_t)run.heading_control.last_yaw_cdeg-run.corner.origin_yaw_cdeg)*0.0001745329252f;
+    desired[0]=(sinf(angle)*vx-cosf(angle)*vy)*60.0f*CALIBRATED_PPM_Y/CAR_POSITION_PULSES_PER_REV;
+    desired[1]=(cosf(angle)*vx+sinf(angle)*vy)*coefficient;
+    /* 航向目标由实测路径进度决定，其前馈导数也须用实测进度速度；
+     * 减速时用较小的期望速度代替实际速度，会造成入弯转向滞后。 */
+    rate=point.yaw_per_mm*run.corner.speed_mm_s;
+    effort=(run.heading_control.error_cdeg*CAR_DRIVE_HEADING_KP_X100
+        -(run.heading_control.rate_cdeg_s-rate)*CAR_DRIVE_HEADING_KD_X100)/10000.0f;
+    desired[2]=corner_clip(rate/CAR_CORNER_YAW_GAIN_X100+effort,-CAR_CORNER_YAW_MAX_RPM,CAR_CORNER_YAW_MAX_RPM);
+    if(!vx && !vy)desired[2]=heading_control_rpm(&run.heading_control,run.turn_rpm);
+    if(!run.corner.reversing && run.corner.passed && !run.corner.arriving
+        && fabsf(run.corner.first_mm-run.corner.x_mm)<=STN_APPROACH_OVERLAP_MM
+        && fabsf(run.corner.second_mm-run.corner.y_mm)<=STN_APPROACH_OVERLAP_MM) {
+        uint8_t low=1;
+        for(i=0;i<4u;i++)if(abs(run.wheel_rpm[i])>STN_APPROACH_OVERLAP_RPM)low=0;
+        if(low) {
+            run.completed_roads|=(uint16_t)(1u<<run.road.road);run.edge++;run.segment=run.road.count;
+            run.corner.arriving=1;run.station_align_pending=1;run.turning=1;run.velocity_phase=VELOCITY_TURN;
+            text("[station alignment] node=H right_side=WORK_AREA target_heading_dec=0; curved arrival checkpoint pending\r\n");
+        }
+    }
+    due=(uint32_t)(clock_ms-run.control_ms)>=CAR_VELOCITY_CONTROL_MS && !run.velocity_waiting;
+    if(due) {
+        run_corner_slew(desired,command);run.control_dt_ms=clock_ms-run.control_ms;run.control_ms=clock_ms;
+        if(!run_velocity_send(command[0],command[1],command[2])){run_fault("velocity batch submit failed");return;}
+        run.forward_ref_rpm=(int16_t)lroundf(desired[0]);run.left_ref_rpm=(int16_t)lroundf(desired[1]);run.turn_ref_rpm=(int16_t)lroundf(desired[2]);
+        run.forward_cmd_rpm=command[0];run.left_cmd_rpm=command[1];run.turn_cmd_rpm=command[2];
+    }
+    if(!vx && !vy && !run.wheel_rpm[0] && !run.wheel_rpm[1] && !run.wheel_rpm[2] && !run.wheel_rpm[3]
+        && run_velocity_stopped() && run.heading_control.stable_samples>=CAR_HEADING_STABLE_SAMPLES
+        && (uint32_t)(run.heading_control.sample_ms-run.heading_control.stable_ms)>=CAR_HEADING_STABLE_MS) {
+        run.corner.active=0;run.remaining_mm=0;run.turning=0;run.transition_ready=1;
+        run.heading=run.target_heading=run.corner.reversing ? HEAD_X_POS : HEAD_Y_POS;
+        if(run.corner.reversing){run_return_wait();return;}
+        run.station_align_pending=0;
+        text("[station right-side ready] node=H heading_dec=0; encoder/IMU curved path complete; physical_pose=unconfirmed\r\n");
+        run_finish_node();return;
+    }
+    run.progress_mm=(int32_t)s;run_heading_window_sample();
+    if((uint32_t)(clock_ms-run.log_ms)>=CAR_CONTROL_LOG_MS) {
+        text("[route corner] s_mm=");signed_number((int32_t)s);
+        text(" xy_mm=");signed_number((int32_t)run.corner.x_mm);text(",");signed_number((int32_t)run.corner.y_mm);
+        text(" returning=");number(run.corner.reversing);text("\r\n");
+    }
+    run_velocity_log();run_velocity_query();
+}
+
 /* obstacle是外部触发入口；此工程没有自动检测障碍物的传感器。 */
 static int run_obstacle_request(void)
 {
     if (!run_active || !run.imu_mode || run.turn_only || run.translation_only) return 0;
     if (run.obstacle_phase) {run_fault("obstacle repeated during stop/return; hold position");return 1;}
+    if(run.corner.active && run.station_entry_overlap) {run_fault("obstacle during station work; no automatic reverse");return 1;}
     run.obstacle_preflight = run.state == RUN_PREFLIGHT;
     run.obstacle_leg_active = !run.turning
         && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD);
@@ -2472,6 +2763,13 @@ static int run_obstacle_request(void)
         && run.edge + 1u < FULL_ROUTE_NODES) {
         run.blocked_roads |= (uint16_t)(1u << run.road.road);
         run.completed_roads &= (uint16_t)~(1u << run.road.road);
+    }
+    if(run.corner.active) {
+        RoadPlan first,second;
+        run.obstacle_node=NODE_D;run.obstacle_leg_active=0;
+        if(road_plan(NODE_D,NODE_E,&first) && road_plan(NODE_E,NODE_H,&second))
+            run.completed_roads&=(uint16_t)~((1u<<first.road)|(1u<<second.road));
+        memset(run.corner.command,0,sizeof(run.corner.command));run.corner.command_ms=clock_ms;
     }
     run.obstacle_phase = 1;run.alignment_waiting=0;run.state = RUN_OBSTACLE_STOP;run.phase_ms = clock_ms;
     /* 障碍停车绕过正常斜坡和尚未收齐的速度ACK；之后以停车后的新反馈确认。 */
@@ -2491,6 +2789,7 @@ static void run_wait_feedback(const char *reason)
     run_warning(reason);
     run.forward_mrpm=0;run.forward_profile_ms=clock_ms;run.phase_ms=clock_ms;
     run.straight_hold.command_mrpm=run.straight_hold.command_rpm=0;
+    if(run.corner.active) {memset(run.corner.command,0,sizeof(run.corner.command));run.corner.command_ms=clock_ms;}
     if(run.vector_move) {
         run.vector_mrpm[0]=run.vector_mrpm[1]=0;
         run.vector_profile_ms[0]=run.vector_profile_ms[1]=clock_ms;
@@ -2540,6 +2839,7 @@ static void run_velocity_update(void)
         run.velocity_waiting=0;run.velocity_sent=0;
     }
     if (imu_uart_fault) {run_warning("IMU UART error; await a fresh valid sample");imu_uart_fault=0;}
+    if(run.corner.active)run_corner_yaw_record(sample);
     if (!heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)) {
         run_wait_feedback("IMU sample stale/invalid; awaiting feedback");return;
     }
@@ -2551,10 +2851,20 @@ static void run_velocity_update(void)
         if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_HEADING_TIMEOUT_MS) {
             run_warning("obstacle stop delayed; waiting for feedback");run.phase_ms=clock_ms;
         }
+        if(run.corner.active && !run_corner_observe()){run_fault("obstacle stop encoder invalid");return;}
         if (run.obstacle_leg_active && !run_velocity_distance()) {run_fault("obstacle stop encoder invalid");return;}
         if (!run_velocity_stopped()) {run_velocity_query();return;}
         for (i = 0;i < MOTOR_COUNT;i++)
             if ((uint32_t)(motor_feedback[i].position_ms - run.stopped_ms) > 0x7fffffffu) {run_velocity_query();return;}
+        if(run.corner.active) {
+            run.corner.reversing=1;run.corner.arriving=0;run.corner.command_ms=clock_ms;
+            run.obstacle_phase=2;run.state=RUN_MOVING;run.turning=0;
+            run.station_align_pending=0;run.velocity_phase=VELOCITY_FORWARD;run.phase_ms=clock_ms;
+            run.edge=run.corner.start_edge;run.segment=0;
+            if(!road_plan(NODE_D,NODE_E,&run.road)){run_fault("corner return road missing");return;}
+            text("[obstacle returning] curved path to D; encoder/IMU; original speed limit retained\r\n");
+            return;
+        }
         if (run.obstacle_leg_active) {
             if (!run_velocity_distance() || run.progress_mm < 0 || run.progress_mm > 65535
                 || !run_save_leg((uint16_t)run.progress_mm)) {run_fault("obstacle return path invalid");return;}
@@ -2620,8 +2930,10 @@ static void run_velocity_update(void)
         memset(&run.heading_window, 0, sizeof(run.heading_window));
         run.velocity_phase = VELOCITY_FORWARD;run.state = RUN_MOVING;
         run.phase_ms = clock_ms;run.steps++;run.distance_mm += run.action_mm;
+        run_corner_begin();
         run_status();
     }
+    if(run.corner.active){run_corner_update();return;}
     if (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD) {
         if (!run_velocity_distance()) {run_fault("encoder distance overrun/reversed");return;}
         run_heading_window_sample();
@@ -3408,7 +3720,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261023-merge2-r72; obstacle-free omni route keeps heading\r\n");
+    text("[drive] version=20261024-merge2-r75; raw plate H once per batch\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

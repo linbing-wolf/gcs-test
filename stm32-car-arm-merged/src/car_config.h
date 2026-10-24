@@ -17,6 +17,18 @@
 #ifndef CAR_RUN_OMNI_ENABLED
 #define CAR_RUN_OMNI_ENABLED          1       /* 无障碍路线：所有道路保持当前车头，直接前后/横移；工位和扫码朝向另行对准。 */
 #endif
+#ifndef CAR_RUN_CORNER_ENABLED
+#define CAR_RUN_CORNER_ENABLED        1       /* 自动作业两次D→E→H采用圆角并同步转向；0恢复r72分段走法。 */
+#endif
+#define CAR_CORNER_RADIUS_MM        150       /* 圆角半径，mm；允许切入E内侧，须无障碍。 */
+#define CAR_CORNER_SPEED_MM_S       100       /* 首次试车弧段速度上限，mm/s；入弯前按既有减速度减速。 */
+#define CAR_CORNER_YAW_GAIN_X100    115       /* 转向前馈(度/秒)/RPM×100，来自主机模型，尚待实测。 */
+#define CAR_CORNER_YAW_MAX_RPM      100       /* 圆角转向分量上限，RPM；仍受单轮300RPM及变化率约束。 */
+#define CAR_CORNER_TRACK_GAIN_X100  250       /* 路径横向/终点位置反馈，(mm/s)/mm×100。 */
+#define CAR_CORNER_TRACK_MAX_MM_S    80       /* 路径位置修正速度上限，mm/s。 */
+#define CAR_CORNER_MIN_MM_S        5.2f       /* 末端非零修正约1RPM；避免整数RPM量化后停在距离窗外。 */
+#define CAR_CORNER_SLOW_YAW_CDEG    300       /* 跟踪误差超过3度时按比例降低平移速度；不是停机门槛。 */
+#define CAR_CORNER_RETURN_MM_S       50       /* 外部obstacle请求后的曲线退回速度，mm/s；单轮仍不超过既有返回RPM上限。 */
 /* 以下四项仅在CAR_RUN_OMNI_ENABLED=0时控制旧的首次/已走道路策略。 */
 #define CAR_RUN_REVERSE_ENABLED      1       /* runimu仅在本轮完整走过的道路上允许正后方直接后退。 */
 #define CAR_RUN_REVISIT_LATERAL_ENABLED 1    /* 本轮完整走过的道路保持当前车头，以左右横移代替90度转向。 */
@@ -152,6 +164,14 @@
     CAR_STATION_ROUGH_HEADING < 0 || CAR_STATION_ROUGH_HEADING > 3 || \
     CAR_STATION_STORAGE_HEADING < 0 || CAR_STATION_STORAGE_HEADING > 3
 #error Invalid_station_heading
+#endif
+#if CAR_RUN_CORNER_ENABLED < 0 || CAR_RUN_CORNER_ENABLED > 1 || \
+    CAR_CORNER_RADIUS_MM < 50 || CAR_CORNER_RADIUS_MM > 300 || \
+    CAR_CORNER_SPEED_MM_S < 30 || CAR_CORNER_SPEED_MM_S > 150 || \
+    CAR_CORNER_YAW_GAIN_X100 < 1 || CAR_CORNER_YAW_MAX_RPM < 1 || \
+    CAR_CORNER_YAW_MAX_RPM > CAR_WHEEL_MAX_RPM || CAR_CORNER_TRACK_GAIN_X100 < 1 || \
+    CAR_CORNER_TRACK_MAX_MM_S < 1
+#error Invalid_corner_configuration
 #endif
 
 /* 4. 通信与等待参数。通常先看故障回传，不靠加大超时掩盖通信问题。 */

@@ -445,7 +445,7 @@ void vision_request_align(char command, uint8_t ring, uint32_t now)
 {
     char payload[2];
     vision_cancel_pick();
-    if ((command!='D' && command!='E') || ring < 1 || ring > 3) {
+    if ((command!='D' && command!='E' && command!='H') || ring < 1 || ring > 3) {
         vision.align_state=VISION_PICK_FAULT;return;
     }
     vision.align_stage=ALIGN_MEASURE;vision.align_ms=vision.align_warning_ms=now;
