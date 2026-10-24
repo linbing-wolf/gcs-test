@@ -220,7 +220,7 @@ class _SettleCam(FakeArcCam):
 
 
 config.SCENE_SETTLE_ON = True
-config.SCENE_SETTLE_FRAMES = 3
+config.SCENE_SETTLE_FRAMES = 2
 config.SCENE_SETTLE_DIFF = 2.0
 config.SCENE_SETTLE_MIN_MS = 0
 cam = _SettleCam(move_frames=5, cx=300.0)

@@ -86,7 +86,9 @@ touch /tmp/run_stack_move
 
 - 机构（机械臂/转盘/车体）还在动 → 画面变化大 → 继续等；停下来 → 立即开始
 - `DISC_/STACK_/PLATE_START_DELAY_MS` 变成**最长等待上限**（判稳会提前返回，通常 100~300ms 就开始了）
-- 参数：`SCENE_SETTLE_ON`(True) / `SCENE_SETTLE_FRAMES`(3) / `SCENE_SETTLE_DIFF`(3.0) / `SCENE_SETTLE_MIN_MS`(100)
+- 参数：`SCENE_SETTLE_ON`(True) / `SCENE_SETTLE_FRAMES`(2) / `SCENE_SETTLE_DIFF`(3.0) / `SCENE_SETTLE_MIN_MS`(40)
+- 空闲轮询间隔 `IDLE_POLL_MS`(2)：主循环每轮只 sleep 2ms；且**刷预览前会先查一次命令**，
+  命令不会被屏幕刷新（`SCREEN_ECHO_IDLE_MS` 那次 `cam.read+show`）挡住
 - 判定用画面的 32×24 降采样灰度签名，纯 `get_pixel`，无 cv2 依赖
 - 想回到旧行为（固定等待）：`SCENE_SETTLE_ON = False`
 

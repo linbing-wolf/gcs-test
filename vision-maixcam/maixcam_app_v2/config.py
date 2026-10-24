@@ -294,6 +294,8 @@ TOUCH_UI_SEND_UART = False  # 触屏触发的任务是否也发给 STM32（默�
 # 注意：SHOW_PREVIEW=False 时没有屏幕，这一项自动无效。
 SCREEN_ECHO = True          # False = 关掉回显条（屏幕与之前完全一样）
 SCREEN_ECHO_IDLE_MS = 100   # 空闲等待命令时多久刷一次预览(ms)；0=空闲不刷(屏幕会冻住)
+# 空闲主循环的轮询间隔(ms)：越小则命令响应越快（每轮只 sleep 这么久再 poll）。
+IDLE_POLL_MS        = 2
 SCREEN_ECHO_LINES = 3       # 显示行数 1..3（1=只显示 RX，2=+TX，3=+状态计数）
 
 # ============================== 精度：总开关 ==============================
@@ -386,6 +388,6 @@ PLATE_DEBUG_SAVE    = False    # True=每次 H 存关键帧到 PLATE_DEBUG_DIR
 # 各任务原来的 DISC_/STACK_/PLATE_START_DELAY_MS 现在作为「最长等待上限」。
 # SCENE_SETTLE_ON=False 时退回旧的固定等待（行为与 3.9.46 一致）。
 SCENE_SETTLE_ON     = True
-SCENE_SETTLE_FRAMES = 3        # 连续 N 帧画面变化 < 阈值 → 判定已稳定
+SCENE_SETTLE_FRAMES = 2        # 连续 N 帧画面变化 < 阈值 → 判定已稳定（3→2，提速）
 SCENE_SETTLE_DIFF   = 3.0      # 降采样(32x24)灰度均差阈值；越小越严、越大越松
-SCENE_SETTLE_MIN_MS = 100      # 至少等这么久，防止刚收到命令就误判稳定
+SCENE_SETTLE_MIN_MS = 40       # 至少等这么久，防止刚收到命令就误判稳定（100→40，提速）

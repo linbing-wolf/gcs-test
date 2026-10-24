@@ -279,6 +279,7 @@ def main():
         # 空闲时定期刷一帧预览 + 回显条：屏幕不再"冻住"，并显示 rx/tx/坏帧计数
         # SCREEN_ECHO=False 时完全退回旧行为（空闲不刷屏）
         idle_ms = max(0, int(getattr(config, "SCREEN_ECHO_IDLE_MS", 100)))
+        idle_poll = max(1, int(getattr(config, "IDLE_POLL_MS", 2)))
         show_idle = (disp is not None and idle_ms > 0
                      and getattr(config, "SCREEN_ECHO", False))
         last_echo = 0
@@ -337,15 +338,19 @@ def main():
                     now = ticks_ms()
                     if (now - last_echo) >= idle_ms:
                         last_echo = now
-                        echo_bad_frames()
-                        screen_echo.set_state("IDLE")
-                        try:
-                            disp.show(cam.read())
-                        except Exception as e:
-                            log("[回显] 空闲预览失败，已关闭: %s" % e)
-                            show_idle = False
-                sleep_ms(5)
-                continue
+                        # 刷预览前再看一眼命令：有命令就先处理，不让屏幕刷新挡住响应
+                        raw = link.poll_command()
+                        if raw is None:
+                            echo_bad_frames()
+                            screen_echo.set_state("IDLE")
+                            try:
+                                disp.show(cam.read())
+                            except Exception as e:
+                                log("[回显] 空闲预览失败，已关闭: %s" % e)
+                                show_idle = False
+                if raw is None:
+                    sleep_ms(idle_poll)
+                    continue
             cmd, arg = parse_command(raw)
             screen_echo.set_rx(raw)
             echo_bad_frames()
