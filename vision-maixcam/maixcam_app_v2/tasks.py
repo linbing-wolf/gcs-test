@@ -1148,8 +1148,9 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
             f.update(extra)
         return f
 
-    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f | 容差 ±%d/±%d | %s | 模型 %s | 超时 %dms）"
-        % (init_cx, init_cy, init_r, tx, ty, tol_x, tol_y,
+    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f → 有效 %.0f,%.0f | 容差 ±%d/±%d | %s | 模型 %s | 超时 %dms）"
+        % (init_cx, init_cy, init_r, tx, ty, tx - dx_offset, ty - dy_offset,
+           tol_x, tol_y,
            "MOVEXY 双轴" if _align_movexy_mode() else "MOVE+MOVEY",
            getattr(config, "PLATE_ARC_MODEL", "ellipse"), timeout_ms))
 

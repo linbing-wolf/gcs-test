@@ -225,7 +225,7 @@ check("verify：回调整后的值（≈325）",
 # ---------------- 4) task_plate 闭环收敛 ----------------
 print("\n== task_plate：闭环（多轮，带透视椭圆）==")
 config.ALIGN_ONE_SHOT = False
-config.PLATE_MAX_ITER = 8
+config.PLATE_MAX_ITER = 12
 cam = FakeArcCam(cx=352.0, cy=-58.0, r=330.0, kb=0.92)
 link = ArcLink(cam)
 out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))

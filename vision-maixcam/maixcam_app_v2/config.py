@@ -385,15 +385,18 @@ PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围�
 PLATE_ELLIPSE_K_MAX = 1.05
 PLATE_ELLIPSE_K_STEP = 0.01
 PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定）
-# 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点会往上移 ~3.5px，
-# 故下调同步修正（实测 12 张图 圆low−椭low 平均 3.5px、最大 5px）。
+# 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点整体上移，
+# 故下调同步修正（实测 12 张真实图 圆low−椭low 平均 4.2px，范围 0.3~7.4px）。
 # 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
-PLATE_TARGET_Y      = 263.5
-# 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款，先套 D/E 的值）
+PLATE_TARGET_Y      = 263.0
+# 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款）
 #   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
 #   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
+# ★ 有效目标 = (TARGET_X − DX_OFFSET, TARGET_Y − DY_OFFSET)：dy=0 时最低点就落在这里。
+#   DY_OFFSET=40 是把「对齐后落点」整体抬高 40px；现场反馈希望落点更靠下，
+#   故 40→0：有效目标 y 由 223 变成 263，净下移 40px（想只下移 35px 就填 5）。
 PLATE_DX_OFFSET     = 2
-PLATE_DY_OFFSET     = 40
+PLATE_DY_OFFSET     = 0
 PLATE_TOL_X         = 6        # 水平容差(px)
 PLATE_TOL_Y         = 6        # 垂直容差(px)
 PLATE_STABLE_FRAMES = 3        # 进入容差后连续 N 帧稳定才回 ok=1
