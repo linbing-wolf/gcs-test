@@ -1110,9 +1110,48 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
         lx, ly = P.point(cx, cy + r)        # 检测域最低点 → 对外口径（含去畸变）
         return lx, ly, {"c": c, "meta": meta}
 
-    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f | 容差 ±%d/±%d | %s | 超时 %dms）"
+    def _detect_plain(img):
+        """给 _wait_stable_post 用的版本：返回 (最低点x, 最低点y, 原始 meta)。"""
+        r = _detect(img)
+        if r is None:
+            return None
+        return r[0], r[1], r[2]["meta"]
+
+    # ---- 调试抓图：每次 H 在 PLATE_DEBUG_DIR 下建一个任务目录 ----
+    rec = None
+    if bool(getattr(config, "PLATE_DEBUG_SAVE", False)):
+        rec = disc_debug.DiscDebug(
+            "H",
+            getattr(config, "PLATE_DEBUG_DIR", "/root/yyb_mover_data/plate_debug"),
+            max_frames=getattr(config, "PLATE_DEBUG_MAX_FRAMES", 16),
+            quality=getattr(config, "PLATE_DEBUG_QUALITY", 85),
+            keep_tasks=getattr(config, "PLATE_DEBUG_KEEP_TASKS", 10),
+            min_interval_ms=getattr(config, "PLATE_DEBUG_MIN_INTERVAL_MS", 100))
+        rec.start()
+
+    def finish(payload):
+        if rec is not None:
+            rec.close(payload)
+        return payload
+
+    def dbg_fields(c, fflx, ffly, dx, dy, meta, extra=None):
+        f = {"iter": iters, "lost": lost, "stable": stable,
+             "low_x": int(round(fflx)), "low_y": int(round(ffly)),
+             "dx": int(dx), "dy": int(dy)}
+        if c is not None:
+            f["cx"], f["cy"], f["r"] = int(c[0]), int(c[1]), int(c[2])
+        if meta:
+            for k in ("model", "a", "b", "k", "rms", "npts", "reason"):
+                if k in meta:
+                    f[k] = meta[k]
+        if extra:
+            f.update(extra)
+        return f
+
+    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f | 容差 ±%d/±%d | %s | 模型 %s | 超时 %dms）"
         % (init_cx, init_cy, init_r, tx, ty, tol_x, tol_y,
-           "MOVEXY 双轴" if _align_movexy_mode() else "MOVE+MOVEY", timeout_ms))
+           "MOVEXY 双轴" if _align_movexy_mode() else "MOVE+MOVEY",
+           getattr(config, "PLATE_ARC_MODEL", "ellipse"), timeout_ms))
 
     # 收到 H 后等画面稳定（上限 PLATE_START_DELAY_MS）再读第一帧
     start_delay = max(0, int(getattr(config, "PLATE_START_DELAY_MS", 0)))
@@ -1138,14 +1177,21 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
             stable = 0
             img.draw_string(2, 2, "H: no arc %d/%d" % (lost, lost_limit),
                             image.COLOR_RED, 2)
+            if rec is not None:
+                rec.data({"iter": iters, "lost": lost,
+                          "model": getattr(config, "PLATE_ARC_MODEL", "ellipse")},
+                         "no_arc")
             if disp:
                 disp.show(img)
             if lost >= lost_limit:
                 log("[H] 连续 %d 帧看不到下弧 → NONE" % lost)
-                return pack_none("H")
+                if rec is not None:
+                    rec.snap(img, {"action": "final_none", "lost": lost},
+                             "final_none", force=True)
+                return finish(pack_none("H"))
             if ticks_ms() - t0 > timeout_ms:
                 log("[H] 超时（看不到下弧）")
-                return pack_none("H")
+                return finish(pack_none("H"))
             continue
 
         lost = 0
@@ -1156,37 +1202,59 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
         dy = int(round(fly - ty + dy_offset))
         ok_xy = abs(dx) <= tol_x and abs(dy) <= tol_y
 
-        # 画出拟合圆 + 最低点 + 目标十字（调试抓图/预览都看得到）
+        # 画出拟合形状（椭圆/圆）+ 最低点 + 目标十字（调试抓图/预览都看得到）
+        imeta = info["meta"]
+        is_ell = str(imeta.get("model", "circle")).lower() == "ellipse"
         try:
-            img.draw_circle(int(round(cx)), int(round(cy)), int(round(rr)),
-                            image.COLOR_GREEN, 2)
+            if is_ell:
+                ia = float(imeta.get("a", rr))
+                ib = float(imeta.get("b", rr))
+                img.draw_ellipse(int(round(cx)), int(round(cy)),
+                                 int(round(ia)), int(round(ib)),
+                                 0.0, 0.0, 360.0, image.COLOR_GREEN, 2)
+            else:
+                img.draw_circle(int(round(cx)), int(round(cy)), int(round(rr)),
+                                image.COLOR_GREEN, 2)
             img.draw_cross(int(round(cx)), int(round(cy + rr)), image.COLOR_RED, 6, 2)
             img.draw_line(0, int(round(ty)), img.width() - 1, int(round(ty)),
                           image.COLOR_YELLOW, 1)
             img.draw_line(int(round(tx)), 0, int(round(tx)), img.height() - 1,
                           image.COLOR_YELLOW, 1)
         except Exception:
-            pass
-        img.draw_string(2, 2, "dx=%+d dy=%+d %s n=%d" %
+            try:
+                img.draw_circle(int(round(cx)), int(round(cy)), int(round(rr)),
+                                image.COLOR_GREEN, 2)
+            except Exception:
+                pass
+        img.draw_string(2, 2, "dx=%+d dy=%+d %s %s k=%.2f rms=%.1f n=%d" %
                         (dx, dy, "OK" if ok_xy else "MOVE",
-                         info["meta"].get("npts", 0)),
+                         "ell" if is_ell else "cir",
+                         float(imeta.get("k", 1.0)), float(imeta.get("rms", 0.0)),
+                         imeta.get("npts", 0)),
                         image.COLOR_GREEN if ok_xy else image.COLOR_YELLOW, 2)
+        if rec is not None:
+            rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
+                                     {"action": "detect", "ok": 1 if ok_xy else 0}),
+                     "detect")
 
         # ---- 容差内：连续 N 帧稳定才回 ok=1 ----
         if ok_xy:
             reset_guard()
             stable += 1
             if stable >= need_stable:
-                log("[H] 物料盘最低点 (%d,%d) dx=%+d dy=%+d 已对齐（%d 次微调）"
-                    % (flx, fly, dx, dy, iters))
+                log("[H] 物料盘最低点 (%d,%d) dx=%+d dy=%+d 已对齐（%d 次微调）| %s"
+                    % (flx, fly, dx, dy, iters, imeta.get("reason", "")))
                 if disp:
                     disp.show(img)
-                return pack_disc(flx, fly, dx, 1)
+                if rec is not None:
+                    rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
+                                             {"action": "final_ok"}), "final_ok", force=True)
+                return finish(pack_disc(flx, fly, dx, 1))
             if disp:
                 disp.show(img)
             if ticks_ms() - t0 > timeout_ms:
                 log("[H] 超时（等待稳定），带偏差回复")
-                return pack_disc(flx, fly, dx, 1)
+                return finish(pack_disc(flx, fly, dx, 1))
             continue
 
         stable = 0
@@ -1207,14 +1275,20 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
             iters += 1
             if parts:
                 screen_echo.set_tx(" ".join(parts))
+            if rec is not None:
+                rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
+                                         {"action": "move_xy" if _align_movexy_mode()
+                                          else "move_split", "sent": " ".join(parts)}),
+                         "iter%d_before_move" % (iters - 1))
             if disp:
                 disp.show(img)
             if oneshot:
                 rx, ry, rdx = flx, fly, dx
+                post_meta = imeta
                 if _align_verify_on():
                     # 只读回读：先等一会，再等最低点连续 N 帧基本不动；绝不补发
                     post = _wait_stable_post(
-                        cam, ctl, _detect,
+                        cam, ctl, _detect_plain,
                         int(getattr(config, "ONE_SHOT_VERIFY_MS", 600)),
                         int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 2500)),
                         int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
@@ -1223,6 +1297,7 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
                         require_x=x_out, require_y=y_out)
                     if post is not None:
                         rx, ry = post["cx"], post["cy"]
+                        post_meta = post.get("meta") or imeta
                         rdx = int(round(rx - tx + dx_offset))
                         log("[H] 调整后最低点 (%d,%d) dx=%+d（回传此值，不再发 MOVEXY）"
                             % (rx, ry, rdx))
@@ -1230,20 +1305,28 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
                         log("[H] 调整后偏差：未检测到目标，回传移动前值")
                 else:
                     log("[H] 去回读：直接回动作前偏差 dx=%+d" % dx)
-                return pack_disc(rx, ry, rdx, 1)
+                if rec is not None:
+                    rec.snap(img, dbg_fields(info["c"], rx, ry, rdx, dy, post_meta,
+                                             {"action": "final_oneshot"}),
+                             "final_oneshot", force=True)
+                return finish(pack_disc(rx, ry, rdx, 1))
             if settle:
                 sleep_ms(settle)
             if ticks_ms() - t0 > timeout_ms:
                 log("[H] 超时（微调中），带偏差回复")
-                return pack_disc(flx, fly, dx, 1)
+                return finish(pack_disc(flx, fly, dx, 1))
             continue
 
         if disp:
             disp.show(img)
         if ticks_ms() - t0 > timeout_ms:
             log("[H] 超时")
-            return pack_disc(flx, fly, dx, 1)
-    return pack_none("H")
+            if rec is not None:
+                rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
+                                         {"action": "final_timeout"}),
+                         "final_timeout", force=True)
+            return finish(pack_disc(flx, fly, dx, 1))
+    return finish(pack_none("H"))
 
 
 # ======================================================================

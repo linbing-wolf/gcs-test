@@ -241,22 +241,96 @@ def _radial_edge_points(img, cx, cy, r, rays=72, band=10, step=2, min_grad=6.0):
     return pts
 
 
+def _ellipse_radius(a, b, ca, sa):
+    """轴对齐椭圆在单位方向 (ca, sa) 上的半径：r = a·b / √((b·ca)² + (a·sa)²)。"""
+    return a * b / math.sqrt((b * ca) ** 2 + (a * sa) ** 2)
+
+
+def _ellipse_rms(pts, cx, cy, a, b):
+    """轴对齐椭圆 (cx,cy,a,b) 的径向残差 RMS（原始像素坐标）。"""
+    if a <= 0 or b <= 0:
+        return 1e9
+    s = 0.0
+    n = 0
+    for (x, y) in pts:
+        dx, dy = x - cx, y - cy
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            continue
+        re = _ellipse_radius(a, b, dx / d, dy / d)
+        s += (d - re) ** 2
+        n += 1
+    return math.sqrt(s / n) if n else 1e9
+
+
+def fit_arc_ellipse(pts, k_min=0.80, k_max=1.15, k_step=0.01):
+    """轴对齐椭圆的最小二乘拟合（用「拉伸空间拟合圆」把 5 参数降到 4 参数）。
+
+    为什么不用 cv2.fitEllipse：物料盘只能看到下弧（约 220°），直接拟合完整椭圆
+    是病态的（上半部分无约束，实测 12 张真实图里有 2 张直接飞掉、其余角度也怪）。
+    盘是平面圆、镜头斜视 → 投影为轴对齐椭圆（水平长轴 a、竖直短轴 b=k·a）。
+    把点按 (x, y/k) 拉伸后在拉伸空间拟合圆，再映射回椭圆，兼顾精度与数值稳定。
+
+    返回 (cx, cy, a, b, k, rms)：
+      · 椭圆中心 (cx, cy)、水平半轴 a、竖直半轴 b(=k·a)、比例 k、径向残差 rms
+      · 盘最低点 = (cx, cy + b)
+    点太少/拟合退化返回 None。
+    """
+    if len(pts) < 12:
+        return None
+    best = None
+    k = float(k_min)
+    while k <= float(k_max) + 1e-9:
+        fit = precision.fit_circle([(x, y / k) for (x, y) in pts])
+        if fit is not None:
+            X, Y, R = fit
+            rms = _ellipse_rms(pts, X, k * Y, R, k * R)
+            if best is None or rms < best[0]:
+                best = (rms, k, X, k * Y, R, k * R)
+        k += float(k_step)
+    if best is None:
+        return None
+    rms, k, cx, cy, a, b = best
+    return cx, cy, a, b, k, rms
+
+
+def _reject_by_ellipse(pts, cx, cy, a, b, tol):
+    """剔除径向残差超 tol 的边缘点（抗中间黑条/夹具/阴影等离群）。"""
+    out = []
+    for (x, y) in pts:
+        dx, dy = x - cx, y - cy
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            continue
+        if abs(d - _ellipse_radius(a, b, dx / d, dy / d)) <= tol:
+            out.append((x, y))
+    return out
+
+
 def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
     """沿 a0..a1 的圆弧射线，在 r±band 内找亮度梯度最大的点（边缘点）。
 
     和 _radial_edge_points 的区别：只采样指定角度范围（物料盘只有下半弧可见），
     且每条约200点内取最大梯度。返回 [(x,y), ...]（像素坐标）。
+
+    r 为标量时是正圆；为 (a, b) 二元组时是轴对齐椭圆（水平半轴 a、竖直半轴 b），
+    每条射线按该方向上的椭圆半径采样——不然用单一半径去搜椭圆盘缘，两侧会搜不到。
     """
+    if isinstance(r, (tuple, list)) and len(r) == 2:
+        ea, eb = float(r[0]), float(r[1])
+    else:
+        ea = eb = float(r)
     pts = []
     w, h = img.width(), img.height()
     rays = max(8, int(rays))
     step = max(0.5, float(step))
-    r0 = max(2.0, float(r) - float(band))
-    r1 = max(r0 + step, float(r) + float(band))
     span = a1 - a0
     for i in range(rays):
         a = a0 + span * i / (rays - 1)
         ca, sa = math.cos(a), math.sin(a)
+        rc = ea if ea == eb else _ellipse_radius(ea, eb, ca, sa)
+        r0 = max(2.0, rc - float(band))
+        r1 = max(r0 + step, rc + float(band))
         rr = r0
         prev = None
         best_g, best_xy = -1.0, None
@@ -280,14 +354,22 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
 
 def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
                   min_grad=None, arc_deg=None, meta=None):
-    """物料盘下弧检测：从粗圆心沿下半弧找边缘点，迭代最小二乘拟合圆。
+    """物料盘下弧检测：从粗圆心沿下半弧找边缘点，迭代拟合「轴对齐椭圆」。
 
     为什么需要：物料盘（白色带孔大圆盘）常常只拍得到下半弧，圆心落在画面外，
     find_circles / Hough 找不到整圆；但可见的下弧足够外推出圆心和半径。
 
+    模型：盘是平面圆，镜头斜视 → 投影是**透视椭圆**（水平半轴 a ≥ 竖直半轴 b）。
+    用圆去套这条弧会系统性带偏（实测：边缘半径随角度极差约 12px，圆拟合残差
+    ~3~4px；最低点比真实低 ~3.5px，且绿圆在两侧明显翘离盘缘）。
+    故默认用 fit_arc_ellipse（PLATE_ARC_MODEL="ellipse"），可退回 "circle" 对比。
+
     参数 cx/cy/r 是「粗圆心 + 粗半径」先验（圆心可为负），bands 是几轮搜索带半径
-    （大→小逐步精修，可容忍物料盘移动）。返回 (cx, cy, r) 或 None。
-    盘最低点 = (cx, cy + r)。
+    （大→小逐步精修，可容忍物料盘移动）。
+
+    返回 (cx, cy, r)，其中 r 已换成**竖直半轴 b**：盘最低点 = (cx, cy + r)，
+    这样调用方（tasks.task_plate）的最低点公式无需改动。
+    meta 会写入 model/a/b/k/rms/npts，供绘制与调试输出使用。
     """
     if not hasattr(img, "get_pixel"):
         if meta is not None:
@@ -304,23 +386,64 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     arc = arc_deg if arc_deg is not None else getattr(
         config, "PLATE_ARC_DEG", (-20.0, 200.0))
     a0, a1 = math.radians(float(arc[0])), math.radians(float(arc[1]))
+    model = str(getattr(config, "PLATE_ARC_MODEL", "ellipse")).strip().lower()
+    robust = bool(getattr(config, "PLATE_ARC_ROBUST", True))
+    out_px = float(getattr(config, "PLATE_ARC_OUTLIER_PX", 6.0))
+    k_min = float(getattr(config, "PLATE_ELLIPSE_K_MIN", 0.80))
+    k_max = float(getattr(config, "PLATE_ELLIPSE_K_MAX", 1.15))
+    k_step = float(getattr(config, "PLATE_ELLIPSE_K_STEP", 0.01))
+    use_ellipse = model in ("ellipse", "ellip", "conic")
     cx, cy, r = float(cx), float(cy), float(r)
+    ea = eb = None
     for band in bands:
-        pts = _arc_edge_points(img, cx, cy, r, float(band), rays, step, min_grad, a0, a1)
+        shape = (ea, eb) if (use_ellipse and ea is not None) else r
+        pts = _arc_edge_points(img, cx, cy, shape, float(band), rays, step,
+                               min_grad, a0, a1)
         if meta is not None:
             meta["npts"] = len(pts)
         if len(pts) < 12:
             if meta is not None:
                 meta["reason"] = "points=%d<12" % len(pts)
             return None
-        fit = precision.fit_circle(pts)
-        if fit is None:
+        if use_ellipse:
+            fit = fit_arc_ellipse(pts, k_min, k_max, k_step)
+            if fit is None:
+                if meta is not None:
+                    meta["reason"] = "ellipse-degenerate"
+                return None
+            cx, cy, ea, eb, kk, rms = fit
+            # 鲁棒重拟合：剔除离群边缘点（中间黑条/夹具/阴影）再拟合一次
+            if robust:
+                for _ in range(2):
+                    keep = _reject_by_ellipse(pts, cx, cy, ea, eb,
+                                              max(out_px, 2.0 * rms))
+                    if len(keep) < 12 or len(keep) >= len(pts):
+                        break
+                    f2 = fit_arc_ellipse(keep, k_min, k_max, k_step)
+                    if f2 is None:
+                        break
+                    cx, cy, ea, eb, kk, rms = f2
+                    pts = keep
+            r = eb
             if meta is not None:
-                meta["reason"] = "fit-degenerate"
-            return None
-        cx, cy, r = fit
+                meta["model"] = "ellipse"
+                meta["a"] = round(ea, 1)
+                meta["b"] = round(eb, 1)
+                meta["k"] = round(kk, 3)
+                meta["rms"] = round(rms, 2)
+        else:
+            fit = precision.fit_circle(pts)
+            if fit is None:
+                if meta is not None:
+                    meta["reason"] = "fit-degenerate"
+                return None
+            cx, cy, r = fit
+            ea = eb = None
+            if meta is not None:
+                meta["model"] = "circle"
     if meta is not None:
-        meta["reason"] = "ok(npts=%d)" % (meta.get("npts", 0))
+        meta["reason"] = "ok(%s,npts=%d)" % (meta.get("model", "?"),
+                                             meta.get("npts", 0))
     return cx, cy, r
 
 

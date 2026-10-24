@@ -58,14 +58,19 @@ sys.modules["timing"] = timing
 
 # ---------------- 合成物料盘下弧图 ----------------
 class FakeArcImage:
-    """白色盘（235）+ 背景（150）+ 盘缘暗线（90）。圆心可在画面外（cy<0）。"""
+    """白色盘（235）+ 背景（150）+ 盘缘暗线（90）。圆心可在画面外（cy<0）。
+
+    kb 为「竖直/水平半轴比」：kb<1 时盘缘是透视椭圆（水平长轴 r、竖直短轴 r·kb），
+    用来验证 H 的椭圆模型；kb=1.0 即正圆（旧行为）。
+    """
 
     def __init__(self, cx, cy, r, W=640, H=480, fg=235, bg=150, edge=90,
-                 visible=True):
+                 visible=True, kb=1.0):
         self.cx, self.cy, self.r = cx, cy, r
         self.W, self.H = W, H
         self.fg, self.bg, self.edge = fg, bg, edge
         self.visible = visible
+        self.kb = kb
 
     def width(self): return self.W
     def height(self): return self.H
@@ -76,7 +81,7 @@ class FakeArcImage:
             return [0]
         if not self.visible:
             return [self.bg]
-        d = math.hypot(x - self.cx, y - self.cy)
+        d = math.hypot(x - self.cx, (y - self.cy) / self.kb)
         if abs(d - self.r) <= 2.0:
             return [self.edge]
         return [self.fg] if d <= self.r else [self.bg]
@@ -85,17 +90,25 @@ class FakeArcImage:
     def draw_rect(self, *a, **k): pass
     def draw_cross(self, *a, **k): pass
     def draw_circle(self, *a, **k): pass
+    def draw_ellipse(self, *a, **k): pass
     def draw_string(self, *a, **k): pass
+
+    def save(self, path, *a, **k):
+        """假 JPEG 落盘（给 disc_debug 抓图用）。"""
+        with open(path, "wb") as f:
+            f.write(b"\xff\xd8fake-jpeg")
 
 
 class FakeArcCam:
-    def __init__(self, cx=350.0, cy=-55.0, r=330.0, visible=True):
+    def __init__(self, cx=350.0, cy=-55.0, r=330.0, visible=True, kb=1.0):
         self.cx, self.cy, self.r = cx, cy, r
         self.visible = visible
+        self.kb = kb
 
     def read(self):
         Clock.tick(60)
-        return FakeArcImage(self.cx, self.cy, self.r, visible=self.visible)
+        return FakeArcImage(self.cx, self.cy, self.r, visible=self.visible,
+                            kb=self.kb)
 
     def skip_frames(self, n): pass
 
@@ -143,8 +156,9 @@ def frame_str(b):
     return str(b).strip("\r\n")
 
 
-# ---------------- 1) find_disc_arc ----------------
-print("\n== find_disc_arc：合成下弧 → 恢复圆心/半径 ==")
+# ---------------- 1) find_disc_arc（圆模型）----------------
+print("\n== find_disc_arc：合成正圆下弧 → 圆模型恢复圆心/半径 ==")
+config.PLATE_ARC_MODEL = "circle"
 for (cx0, cy0, r0) in [(311.0, -55.0, 330.0), (350.0, -90.0, 345.0),
                        (270.0, -40.0, 320.0)]:
     meta = {}
@@ -158,7 +172,32 @@ for (cx0, cy0, r0) in [(311.0, -55.0, 330.0), (350.0, -90.0, 345.0),
     else:
         check("恢复 (%.0f,%.0f,%.0f)" % (cx0, cy0, r0), False, "返回 None: %s" % meta)
 
-# ---------------- 2) task_plate one-shot ----------------
+# ---------------- 2) 透视椭圆下弧：椭圆模型恢复最低点 + k ----------------
+print("\n== find_disc_arc：合成透视椭圆下弧（椭圆模型）==")
+config.PLATE_ARC_MODEL = "ellipse"
+for (cx0, cy0, r0, kb0) in [(310.0, -55.0, 330.0, 0.90),
+                            (330.0, -70.0, 320.0, 0.93),
+                            (290.0, -60.0, 325.0, 0.88),
+                            (310.0, -55.0, 330.0, 1.00)]:
+    true_low_y = cy0 + r0 * kb0
+    meta = {}
+    res = vision.find_disc_arc(FakeArcImage(cx0, cy0, r0, kb=kb0),
+                               cx0, cy0, r0, meta=meta)
+    if res is None:
+        check("椭圆 kb=%.2f 能检到" % kb0, False, str(meta))
+        continue
+    cx, cy, b = res
+    err = math.hypot(cx - cx0, (cy + b) - true_low_y)
+    check("椭圆 kb=%.2f 最低点 err=%.1fpx" % (kb0, err), err <= 2.0,
+          "low=(%.1f,%.1f) 真值 y=%.1f rms=%s"
+          % (cx, cy + b, true_low_y, meta.get("rms")))
+    check("椭圆 kb=%.2f 估出的 k 准 (%.2f)" % (kb0, meta.get("k", 0)),
+          abs(float(meta.get("k", 0)) - kb0) <= 0.03,
+          "k_est=%s 真值=%.2f" % (meta.get("k"), kb0))
+    check("椭圆 kb=%.2f 返回竖直半轴 b(=最低点用)" % kb0,
+          abs(b - r0 * kb0) <= 6.0, "b=%.1f 真值=%.1f" % (b, r0 * kb0))
+
+# ---------------- 3) task_plate one-shot ----------------
 print("\n== task_plate：one-shot（direct 去回读 / verify 回读）==")
 config.ALIGN_ONE_SHOT = True
 # --- direct：发完 MOVEXY 直接回动作前的值 ---
@@ -183,11 +222,11 @@ parts = out.split(",")
 check("verify：回调整后的值（≈325）",
       len(parts) == 5 and abs(int(parts[1]) - 325) <= 6, out)
 
-# ---------------- 3) task_plate 闭环收敛 ----------------
-print("\n== task_plate：闭环（多轮）==")
+# ---------------- 4) task_plate 闭环收敛 ----------------
+print("\n== task_plate：闭环（多轮，带透视椭圆）==")
 config.ALIGN_ONE_SHOT = False
 config.PLATE_MAX_ITER = 8
-cam = FakeArcCam(cx=352.0, cy=-58.0, r=330.0)
+cam = FakeArcCam(cx=352.0, cy=-58.0, r=330.0, kb=0.92)
 link = ArcLink(cam)
 out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
 parts = out.split(",")
@@ -202,7 +241,44 @@ if out.startswith("DISC,"):
 else:
     check("闭环返回 DISC", False, out)
 
-# ---------------- 4) 画面稳定判定 ----------------
+# ---------------- 4b) H 调试抓图落盘 ----------------
+print("\n== H 调试抓图（PLATE_DEBUG_SAVE）落盘 ==")
+import tempfile
+import shutil
+import json
+
+_dbgdir = os.path.join(tempfile.gettempdir(), "selftest_plate_debug")
+shutil.rmtree(_dbgdir, ignore_errors=True)
+_old_save = config.PLATE_DEBUG_SAVE
+_old_dbgdir = config.PLATE_DEBUG_DIR
+config.PLATE_DEBUG_SAVE = True
+config.PLATE_DEBUG_DIR = _dbgdir
+config.ALIGN_ONE_SHOT = True
+config.ALIGN_REPLY_MODE = "direct"
+cam = FakeArcCam(cx=340.0, cy=-58.0, r=330.0, kb=0.92)
+out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(ArcLink(cam))))
+subs = os.listdir(_dbgdir) if os.path.isdir(_dbgdir) else []
+check("建了任务目录", len(subs) == 1, str(subs))
+if len(subs) == 1:
+    d = os.path.join(_dbgdir, subs[0])
+    meta_p = os.path.join(d, "meta.jsonl")
+    sum_p = os.path.join(d, "summary.json")
+    jpgs = [f for f in os.listdir(d) if f.endswith(".jpg")]
+    check("有非空 meta.jsonl", os.path.exists(meta_p) and os.path.getsize(meta_p) > 0)
+    check("有 summary.json", os.path.exists(sum_p))
+    check("存了关键帧 jpg", len(jpgs) >= 1, str(jpgs))
+    try:
+        with open(sum_p, encoding="utf-8") as f:
+            summ = json.load(f)
+        check("summary.result = 本次回复帧", summ.get("result") == out,
+              "%s vs %s" % (summ.get("result"), out))
+    except Exception as e:
+        check("summary.json 可解析", False, str(e))
+config.PLATE_DEBUG_SAVE = _old_save
+config.PLATE_DEBUG_DIR = _old_dbgdir
+shutil.rmtree(_dbgdir, ignore_errors=True)
+
+# ---------------- 5) 画面稳定判定 ----------------
 print("\n== _wait_scene_settle：画面稳定后提前开始 ==")
 
 
@@ -241,7 +317,7 @@ check("SCENE_SETTLE_ON=False 退回固定等待（≥上限）", ok2 and el2 >= 
       "elapsed=%dms" % el2)
 config.SCENE_SETTLE_ON = True
 
-# ---------------- 5) 看不到下弧 → NONE ----------------
+# ---------------- 6) 看不到下弧 → NONE ----------------
 print("\n== task_plate：看不到下弧 ==")
 config.ALIGN_ONE_SHOT = True
 cam = FakeArcCam(visible=False)
@@ -249,7 +325,7 @@ link = ArcLink(cam)
 out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
 check("回 NONE,H", out == "NONE,H", out)
 
-# ---------------- 6) 运行时切 verify（触发文件，免重编包）----------------
+# ---------------- 7) 运行时切 verify（触发文件，免重编包）----------------
 print("\n== _align_verify_on：触发文件 > config ==")
 import tempfile
 

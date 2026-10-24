@@ -374,8 +374,21 @@ PLATE_RAYS          = 140      # 下半弧采样射线数（越大越准、越�
 PLATE_STEP          = 2.0      # 径向采样步长(px)
 PLATE_MIN_GRAD      = 8.0      # 边缘最小亮度梯度（抗噪）
 PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见下弧
+# ---- 弧模型：盘是平面圆，镜头斜视 → 投影是「轴对齐椭圆」而不是圆 ----
+#   实测 12 张真实下弧图：边缘半径随角度极差约 12px（底部最小、±45° 最大），
+#   圆拟合残差 ~3~4px，最低点比真实低 ~3.5px，且绿圆在两侧明显翘离盘缘。
+#   "ellipse" = 拉伸空间拟合圆（k 自动估计），最低点 = (cx, cy + b)；"circle" = 旧行为。
+PLATE_ARC_MODEL     = "ellipse"
+PLATE_ARC_ROBUST    = True     # 拟合后剔除径向残差大的边缘点（中间黑条/夹具/阴影）再拟合
+PLATE_ARC_OUTLIER_PX = 6.0     # 离群剔除半径阈值(px)；实际用 max(它, 2×rms)
+PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
+PLATE_ELLIPSE_K_MAX = 1.05
+PLATE_ELLIPSE_K_STEP = 0.01
 PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定）
-PLATE_TARGET_Y      = 267.0    # 目标最低点 y（对外口径，现场标定）
+# 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点会往上移 ~3.5px，
+# 故下调同步修正（实测 12 张图 圆low−椭low 平均 3.5px、最大 5px）。
+# 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
+PLATE_TARGET_Y      = 263.5
 # 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款，先套 D/E 的值）
 #   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
 #   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
@@ -392,7 +405,13 @@ PLATE_GAIN          = 0.65     # 步长增益（比例系数）
 PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
 PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
 PLATE_INVERT_Y      = False    # 垂直方向反了置 True
-PLATE_DEBUG_SAVE    = False    # True=每次 H 存关键帧到 PLATE_DEBUG_DIR
+# ---- H 调试抓图（关键帧 + meta.jsonl，放在 APP 目录外，升级不丢）----
+PLATE_DEBUG_SAVE    = True     # True=每次 H 存关键帧（含画的椭圆/最低点）到 PLATE_DEBUG_DIR
+PLATE_DEBUG_DIR     = "/root/yyb_mover_data/plate_debug"
+PLATE_DEBUG_MAX_FRAMES = 16    # 单次 H 最多存多少张图
+PLATE_DEBUG_QUALITY = 85
+PLATE_DEBUG_KEEP_TASKS = 10    # 只保留最近 N 次 H 的目录
+PLATE_DEBUG_MIN_INTERVAL_MS = 100
 
 # ============================== 启动延时：改为「画面稳定」判定 ==============================
 # 收到 D/E、F、H 后不再死等固定毫秒，而是等画面连续稳定后再读第一帧：
