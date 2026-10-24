@@ -204,6 +204,14 @@ ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定�
 #   "verify" = 回读一次，用调整后（动作后）的 x/y/dx 回复（更准但慢）
 # STM32 若自己知道移动了多少、只想快速拿到偏差，就用 "direct"。
 ALIGN_REPLY_MODE     = "direct"
+# ---- 运行时切换对齐回复模式（现场诊断用，免重编包）----
+#   SSH 上 `touch /tmp/align_verify` → D/E/F/H 临时改 verify（回读，拿「移动后偏差」）；
+#   `rm /tmp/align_verify` → 恢复 config 默认；也可 `touch /tmp/align_direct` 反向覆盖。
+#   触发文件优先级高于 ALIGN_REPLY_MODE；结果按 ALIGN_MODE_CACHE_MS 缓存（免逐帧 stat）。
+#   切换时会打印一行 [ALIGN]（"触发文件 ... 强制 ..."），日志里能确认当次走没走回读。
+ALIGN_VERIFY_TRIGGER_FILE = "/tmp/align_verify"
+ALIGN_DIRECT_TRIGGER_FILE = "/tmp/align_direct"
+ALIGN_MODE_CACHE_MS  = 500
 ONE_SHOT_VERIFY      = True
 ONE_SHOT_VERIFY_MS   = 600    # 先等至少这么久，再开始判断是否停稳（加速：1200→600）
 ONE_SHOT_VERIFY_MAX_MS = 2500 # 停稳判断最多再等这么久（加速：4000→2500）
@@ -227,7 +235,7 @@ ALIGN_DY_OFFSET_E = None    # E 专用；None = 用 ALIGN_DY_OFFSET
 MOVEY_SCALE       = 0.86    # E 实测过冲比 107/92 → 1/1.163 ≈ 0.86
 ALIGN_INVERT_DY_D = False   # D：MOVEY 方向（反了就置 True）
 ALIGN_INVERT_DY_E = False   # E：MOVEY 方向（反了就置 True）
-MOVE_ECHO_HOLD_MS = 100     # 发完 MOVE 后屏幕回显停留时间(ms)（已从 300 降到 100）
+MOVE_ECHO_HOLD_MS = 0       # 发完 MOVE 后屏幕回显停留时间(ms)；0=不停留（响应最快）
 ALIGN_STABLE_FRAMES = 3     # 进入容差后还要连续 N 帧稳定才回 ok=1
 ALIGN_SETTLE_MS   = 1200    # 等机构真正停稳再测第二次；800→1200
 ALIGN_MAX_ITER    = 3       # 主修正 + 小补刀 + 最后一次收残差；2→3
@@ -368,6 +376,11 @@ PLATE_MIN_GRAD      = 8.0      # 边缘最小亮度梯度（抗噪）
 PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见下弧
 PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定）
 PLATE_TARGET_Y      = 267.0    # 目标最低点 y（对外口径，现场标定）
+# 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款，先套 D/E 的值）
+#   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
+#   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
+PLATE_DX_OFFSET     = 2
+PLATE_DY_OFFSET     = 40
 PLATE_TOL_X         = 6        # 水平容差(px)
 PLATE_TOL_Y         = 6        # 垂直容差(px)
 PLATE_STABLE_FRAMES = 3        # 进入容差后连续 N 帧稳定才回 ok=1
@@ -390,4 +403,4 @@ PLATE_DEBUG_SAVE    = False    # True=每次 H 存关键帧到 PLATE_DEBUG_DIR
 SCENE_SETTLE_ON     = True
 SCENE_SETTLE_FRAMES = 2        # 连续 N 帧画面变化 < 阈值 → 判定已稳定（3→2，提速）
 SCENE_SETTLE_DIFF   = 3.0      # 降采样(32x24)灰度均差阈值；越小越严、越大越松
-SCENE_SETTLE_MIN_MS = 40       # 至少等这么久，防止刚收到命令就误判稳定（100→40，提速）
+SCENE_SETTLE_MIN_MS = 20       # 至少等这么久，防止刚收到命令就误判稳定（100→40→20）

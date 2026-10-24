@@ -10,6 +10,7 @@ tasks.py —— 各视觉任务（对应新流程里下位机要"询问"的每�
 
 from maix import image, app
 from timing import ticks_ms, sleep_ms
+import os
 import config
 import precision
 import vision
@@ -111,13 +112,58 @@ def _align_movexy_mode():
         "movexy", "xy", "combined")
 
 
+_VERIFY_CACHE = {"t": None, "ov": None, "src": ""}
+
+
+def _align_verify_mode_from_config():
+    """仅看 config.ALIGN_REPLY_MODE：True=verify（回读），False=direct（去回读）。"""
+    return str(getattr(config, "ALIGN_REPLY_MODE", "direct")).strip().lower() == "verify"
+
+
+def _scan_verify_override():
+    """扫触发文件，返回 (override, src)；override ∈ (True=强制回读, False=强制去回读, None=无覆盖)。
+
+    触发文件给现场诊断用：SSH 上 `touch /tmp/align_verify` 就能让 D/E/F/H
+    临时回读一次、拿到「移动后偏差」，用完 `rm` 即恢复 config 默认，免重编包。
+    """
+    try:
+        vf = getattr(config, "ALIGN_VERIFY_TRIGGER_FILE", "")
+        df = getattr(config, "ALIGN_DIRECT_TRIGGER_FILE", "")
+        if vf and os.path.exists(vf):
+            return True, vf
+        if df and os.path.exists(df):
+            return False, df
+    except Exception:
+        pass
+    return None, ""
+
+
 def _align_verify_on():
     """发完 MOVEXY 后是否回读一次再回复。
 
-    True  = ALIGN_REPLY_MODE="verify"：回读，用调整后的 x/y/dx 回复（准但慢）
-    False = ALIGN_REPLY_MODE="direct"：去回读，立即回动作前的 x/y/dx（快）
+    True  = 回读，用调整后的 x/y/dx 回复（准但慢）
+    False = 去回读，立即回动作前的 x/y/dx（快）
+
+    优先级：触发文件 > config.ALIGN_REPLY_MODE。config 每次即时生效；
+    触发文件的扫描结果按 ALIGN_MODE_CACHE_MS 缓存，避免在逐帧循环里频繁 stat。
     """
-    return str(getattr(config, "ALIGN_REPLY_MODE", "direct")).strip().lower() == "verify"
+    c = _VERIFY_CACHE
+    now = ticks_ms()
+    ttl = int(getattr(config, "ALIGN_MODE_CACHE_MS", 500))
+    if c["t"] is None or ttl <= 0 or now < c["t"] or now - c["t"] >= ttl:
+        ov, src = _scan_verify_override()
+        if (ov, src) != (c["ov"], c["src"]):
+            if ov is None:
+                log("[ALIGN] 无触发文件，回复模式按 config：%s"
+                    % ("verify 回读" if _align_verify_mode_from_config()
+                       else "direct 去回读"))
+            else:
+                log("[ALIGN] 触发文件 %s → 强制 %s"
+                    % (src, "verify 回读" if ov else "direct 去回读"))
+        c["ov"], c["src"], c["t"] = ov, src, now
+    if c["ov"] is None:
+        return _align_verify_mode_from_config()
+    return c["ov"]
 
 
 def _make_align_actions(x_out, y_out, sx_step, sy_step):
@@ -206,8 +252,8 @@ def _wait_stable_post(cam, ctl, detect, initial_ms, max_ms, tol, need,
     return last
 
 
-def _frame_sig(img, cols=32, rows=24):
-    """画面的降采样灰度签名（32x24=768 点），用来比较相邻帧是否变化。
+def _frame_sig(img, cols=24, rows=18):
+    """画面的降采样灰度签名（24x18=432 点），用来比较相邻帧是否变化。
 
     纯 get_pixel 采样，不依赖 cv2/numpy；img 没有像素接口时返回 None。
     """
@@ -293,7 +339,7 @@ def _wait_scene_settle(cam, ctl, disp, max_ms, tag=""):
         if el >= max_ms:
             log("[%s] 画面稳定等待到上限（%dms），继续" % (tag, max_ms))
             return True
-        sleep_ms(20)
+        sleep_ms(8)
 
 
 def _confirm_road(ai, img, roi):
@@ -1035,6 +1081,8 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
     bands = tuple(float(b) / sx for b in bands)
     tx = float(getattr(config, "PLATE_TARGET_X", 311.0))
     ty = float(getattr(config, "PLATE_TARGET_Y", 267.0))
+    dx_offset = int(getattr(config, "PLATE_DX_OFFSET", 0))
+    dy_offset = int(getattr(config, "PLATE_DY_OFFSET", 0))
     tol_x = int(getattr(config, "PLATE_TOL_X", 6))
     tol_y = int(getattr(config, "PLATE_TOL_Y", 6))
     need_stable = max(1, int(getattr(config, "PLATE_STABLE_FRAMES", 3)))
@@ -1104,8 +1152,8 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
         lx, ly, info = r
         cx, cy, rr = info["c"]
         flx, fly = P.smooth("H", lx, ly)
-        dx = int(round(flx - tx))
-        dy = int(round(fly - ty))
+        dx = int(round(flx - tx + dx_offset))
+        dy = int(round(fly - ty + dy_offset))
         ok_xy = abs(dx) <= tol_x and abs(dy) <= tol_y
 
         # 画出拟合圆 + 最低点 + 目标十字（调试抓图/预览都看得到）
@@ -1175,7 +1223,7 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
                         require_x=x_out, require_y=y_out)
                     if post is not None:
                         rx, ry = post["cx"], post["cy"]
-                        rdx = int(round(rx - tx))
+                        rdx = int(round(rx - tx + dx_offset))
                         log("[H] 调整后最低点 (%d,%d) dx=%+d（回传此值，不再发 MOVEXY）"
                             % (rx, ry, rdx))
                     else:

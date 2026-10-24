@@ -171,8 +171,8 @@ check("返回 DISC 帧", out.startswith("DISC,"), out)
 check("超差时发过 MOVEXY", any(s.startswith("MOVEXY,") for s in link.sent),
       str(link.sent))
 check("DISC 带 5 个字段", len(parts) == 5, out)
-check("direct：回动作前的值 (x=350, dx=39)",
-      len(parts) == 5 and int(parts[1]) == 350 and int(parts[3]) == 39, out)
+check("direct：回动作前的值 (x=350, dx=350-311+2=41)",
+      len(parts) == 5 and int(parts[1]) == 350 and int(parts[3]) == 41, out)
 
 # --- verify：回读后用调整后的值 ---
 config.ALIGN_REPLY_MODE = "verify"
@@ -193,9 +193,11 @@ out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
 parts = out.split(",")
 if out.startswith("DISC,"):
     x, y, dx = int(parts[1]), int(parts[2]), int(parts[3])
+    tx_eff = config.PLATE_TARGET_X - config.PLATE_DX_OFFSET
+    ty_eff = config.PLATE_TARGET_Y - config.PLATE_DY_OFFSET
     check("收敛到容差内", abs(dx) <= config.PLATE_TOL_X and
-          abs(y - config.PLATE_TARGET_Y) <= config.PLATE_TOL_Y,
-          "low=(%d,%d) dx=%d" % (x, y, dx))
+          abs(y - ty_eff) <= config.PLATE_TOL_Y,
+          "low=(%d,%d) dx=%d 目标=(%d,%d)" % (x, y, dx, tx_eff, ty_eff))
     check("发出过 MOVEXY", any(s.startswith("MOVEXY,") for s in link.sent))
 else:
     check("闭环返回 DISC", False, out)
@@ -246,6 +248,65 @@ cam = FakeArcCam(visible=False)
 link = ArcLink(cam)
 out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
 check("回 NONE,H", out == "NONE,H", out)
+
+# ---------------- 6) 运行时切 verify（触发文件，免重编包）----------------
+print("\n== _align_verify_on：触发文件 > config ==")
+import tempfile
+
+vf = os.path.join(tempfile.gettempdir(), "selftest_align_verify.flag")
+df = os.path.join(tempfile.gettempdir(), "selftest_align_direct.flag")
+for _p in (vf, df):
+    try:
+        os.remove(_p)
+    except OSError:
+        pass
+_old = (getattr(config, "ALIGN_VERIFY_TRIGGER_FILE", None),
+        getattr(config, "ALIGN_DIRECT_TRIGGER_FILE", None),
+        getattr(config, "ALIGN_MODE_CACHE_MS", None),
+        config.ALIGN_REPLY_MODE)
+config.ALIGN_VERIFY_TRIGGER_FILE = vf
+config.ALIGN_DIRECT_TRIGGER_FILE = df
+config.ALIGN_MODE_CACHE_MS = 0     # 关缓存，让触发文件立刻生效
+
+config.ALIGN_REPLY_MODE = "direct"
+check("无触发文件 + config=direct → 去回读", tasks._align_verify_on() is False)
+config.ALIGN_REPLY_MODE = "verify"
+check("无触发文件 + config=verify → 回读", tasks._align_verify_on() is True)
+
+config.ALIGN_REPLY_MODE = "direct"
+with open(vf, "w"):
+    pass
+check("touch align_verify → 强制回读（覆盖 config）",
+      tasks._align_verify_on() is True)
+os.remove(vf)
+check("rm 触发文件 → 恢复 config（去回读）", tasks._align_verify_on() is False)
+
+config.ALIGN_REPLY_MODE = "verify"
+with open(df, "w"):
+    pass
+check("touch align_direct → 强制去回读（覆盖 config）",
+      tasks._align_verify_on() is False)
+os.remove(df)
+check("rm 触发文件 → 恢复 config（回读）", tasks._align_verify_on() is True)
+
+# E2E：触发文件让 config=direct 的 one-shot 真的走回读（回调整后的值）
+config.ALIGN_ONE_SHOT = True
+config.ALIGN_REPLY_MODE = "direct"
+cam = FakeArcCam(cx=350.0, cy=-55.0, r=330.0)
+out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(ArcLink(cam))))
+with open(vf, "w"):
+    pass
+cam = FakeArcCam(cx=350.0, cy=-55.0, r=330.0)
+out_v = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(ArcLink(cam))))
+os.remove(vf)
+check("对照：无触发文件时回动作前的 x=350",
+      out.startswith("DISC,") and int(out.split(",")[1]) == 350, out)
+check("触发文件生效：config=direct 也回读（x≈323 而非 350）",
+      out_v.startswith("DISC,") and abs(int(out_v.split(",")[1]) - 323) <= 6, out_v)
+
+# 还原
+(config.ALIGN_VERIFY_TRIGGER_FILE, config.ALIGN_DIRECT_TRIGGER_FILE,
+ config.ALIGN_MODE_CACHE_MS, config.ALIGN_REPLY_MODE) = _old
 
 print()
 if FAILED:

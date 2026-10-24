@@ -13,6 +13,7 @@
 
 import os
 import sys
+import tempfile
 import types
 
 APP = os.path.dirname(os.path.abspath(__file__))
@@ -500,6 +501,54 @@ def main():
               sum(1 for x in lk5.sent if x.startswith('MOVEXY,')) == 1, lk5.sent)
         check('一次性模式：立即回 DISC ok=1',
               out5[0] == 'DISC' and out5[-1] == '1', out5)
+
+        # 运行时触发文件：config=direct 也能临时走 verify（拿「移动后偏差」）
+        old_reply_mode = config.ALIGN_REPLY_MODE
+        old_vf = config.ALIGN_VERIFY_TRIGGER_FILE
+        old_df = config.ALIGN_DIRECT_TRIGGER_FILE
+        old_cache = config.ALIGN_MODE_CACHE_MS
+        vf = os.path.join(tempfile.gettempdir(), 'selftest_task_verify.flag')
+        try:
+            os.remove(vf)
+        except OSError:
+            pass
+        config.ALIGN_VERIFY_TRIGGER_FILE = vf
+        config.ALIGN_MODE_CACHE_MS = 0        # 关缓存，触发文件立刻生效
+        try:
+            config.ALIGN_ONE_SHOT = True
+            # 基线：config 本身就是 verify
+            config.ALIGN_REPLY_MODE = 'verify'
+            camv = FakeCam(1, circle_x=640, circle_y=240)
+            outv = frame_str(tasks.task_disc(
+                camv, None, config.ROI_DISC_ROUGH, 'D',
+                p=P_ID, ctl=tasks.TaskCtl(_AlignLink(camv))))
+            # config=direct，但触发文件强制 verify → 应与基线完全一致
+            config.ALIGN_REPLY_MODE = 'direct'
+            with open(vf, 'w'):
+                pass
+            camt = FakeCam(1, circle_x=640, circle_y=240)
+            outt = frame_str(tasks.task_disc(
+                camt, None, config.ROI_DISC_ROUGH, 'D',
+                p=P_ID, ctl=tasks.TaskCtl(_AlignLink(camt))))
+            check('触发文件让 config=direct 也回读（== verify 基线）',
+                  outt == outv, '%s vs %s' % (outt, outv))
+            # 反证：无触发文件 + config=direct → 去回读，与基线不同
+            os.remove(vf)
+            camd = FakeCam(1, circle_x=640, circle_y=240)
+            outd = frame_str(tasks.task_disc(
+                camd, None, config.ROI_DISC_ROUGH, 'D',
+                p=P_ID, ctl=tasks.TaskCtl(_AlignLink(camd))))
+            check('无触发文件 → 去回读（!= verify 基线）', outd != outv,
+                  '%s vs %s' % (outd, outv))
+        finally:
+            try:
+                os.remove(vf)
+            except OSError:
+                pass
+            config.ALIGN_REPLY_MODE = old_reply_mode
+            config.ALIGN_VERIFY_TRIGGER_FILE = old_vf
+            config.ALIGN_DIRECT_TRIGGER_FILE = old_df
+            config.ALIGN_MODE_CACHE_MS = old_cache
 
         # MOVE 系数：dx=320，限幅 40，10x → MOVE,400
         config.ALIGN_ONE_SHOT = True
