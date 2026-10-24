@@ -367,7 +367,10 @@ OBST_TIMEOUT_MS = 3000                 # 兜底超时，超时按无障碍回
 # ⚠️ 粗圆心/半径和目标最低点都要现场标定；先把盘移到目标位置，看日志里的 low=(x,y)。
 PLATE_ON            = True
 PLATE_INIT_CX       = 310.0    # 粗圆心 x（对外 640x480 口径）
-PLATE_INIT_CY       = -55.0    # 粗圆心 y（可为负：圆心在画面外）
+# 粗圆心 y：先验「盘大致在哪」，决定第一轮搜索带扫哪里（带内 ±PLATE_SEARCH_BANDS[0]）。
+# 落点目标下移后（PLATE_TARGET_Y=333），把先验收在「旧落点 263 ~ 新落点 333」中间，
+# 保证两种位置都在搜索带内（先验低点 = cy+r ≈ 298，±60 覆盖 238~358）。
+PLATE_INIT_CY       = -32.0
 PLATE_INIT_R        = 330.0    # 粗半径（像素）
 PLATE_SEARCH_BANDS  = (60.0, 28.0, 16.0)  # 迭代搜索带半径(px)：大→小逐步精修，容忍盘移动
 PLATE_RAYS          = 140      # 下半弧采样射线数（越大越准、越慢）
@@ -388,7 +391,8 @@ PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定
 # 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点整体上移，
 # 故下调同步修正（实测 12 张真实图 圆low−椭low 平均 4.2px，范围 0.3~7.4px）。
 # 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
-PLATE_TARGET_Y      = 263.0
+# 现场要求「落点大幅下移」：263 → 333（再下移 70px）。
+PLATE_TARGET_Y      = 333.0
 # 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款）
 #   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
 #   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
