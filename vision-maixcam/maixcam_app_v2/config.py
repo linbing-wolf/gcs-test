@@ -293,7 +293,7 @@ TOUCH_UI_SEND_UART = False  # 触屏触发的任务是否也发给 STM32（默�
 # "单片机到底发进来没有、发的是什么、回的是什么、有没有坏帧"。
 # 注意：SHOW_PREVIEW=False 时没有屏幕，这一项自动无效。
 SCREEN_ECHO = True          # False = 关掉回显条（屏幕与之前完全一样）
-SCREEN_ECHO_IDLE_MS = 100   # 空闲等待命令时多久刷一次预览(ms)；0=空闲不刷(屏幕会冻住)
+SCREEN_ECHO_IDLE_MS = 0     # 0=空闲不刷预览（响应最快，屏幕会停在上一次画面）；>0=每 N ms 刷一帧
 # 空闲主循环的轮询间隔(ms)：越小则命令响应越快（每轮只 sleep 这么久再 poll）。
 IDLE_POLL_MS        = 2
 SCREEN_ECHO_LINES = 3       # 显示行数 1..3（1=只显示 RX，2=+TX，3=+状态计数）
