@@ -131,7 +131,7 @@ static void scope_and_failure_tests(void)
     for(test=0;test<4;test++) {
         reset_plant(0,1.15);run.travel_axis=BODY_FORWARD;run.travel_sign=1;
         run.straight_hold.valid=1;run.straight_hold.sample_ms=clock_ms;run.straight_hold.lateral_mm=20;
-        if(test==0)run.travel_axis=BODY_LEFT;
+        if(test==0)run.corner.active=1;
         if(test==1)run.station_shift=1;
         if(test==2)run.vector_move=1;
         if(test==3)run.obstacle_phase=2;
@@ -172,10 +172,13 @@ static void scope_and_failure_tests(void)
             finish_plant(30000);
         }
     }
-    puts("PASS straight scope/safety: station/lateral/MOVEXY/obstacle excluded; sign, bounds, primary stop, stale feedback, emergency stop, CAN fault and recovery");
+    puts("PASS straight scope/safety: station/corner/MOVEXY/obstacle excluded; sign, bounds, primary stop, stale feedback, emergency stop, CAN fault and recovery");
 }
 
-int main(void)
+#ifndef STRAIGHT_HOLD_TEST_MAIN
+#define STRAIGHT_HOLD_TEST_MAIN main
+#endif
+int STRAIGHT_HOLD_TEST_MAIN(void)
 {
     unequal_wheel_tests();sample_alignment_tests();high_speed_and_unobserved_slip_tests();scope_and_failure_tests();
     printf("PASS straight hold: %lu assertions; software simulation, no hardware accessed\n",(unsigned long)assertions);

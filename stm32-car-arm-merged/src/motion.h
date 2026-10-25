@@ -7,7 +7,7 @@ typedef enum
     MOTION_RUNNING,       /* 当前相对位置命令执行中。 */
     MOTION_WAIT_CONFIRM,  /* 估时已过，仍等待人工确认实际位移。 */
     MOTION_DONE,          /* 当前命令已得到相应确认。 */
-    MOTION_FAULT          /* 命令提交失败，已请求停车；等待超时仅保留人工确认。 */
+    MOTION_FAULT          /* 命令提交失败，未自动请求停车；保持未确认，等待显式处理。 */
 } MotionState;
 typedef struct
 {

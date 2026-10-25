@@ -1,5 +1,6 @@
 #include "navigation.h"
 #include "route_table.h"
+#include "car_config.h"
 #include <string.h>
 static int stationary(NavState state)
 {
@@ -8,7 +9,6 @@ static int stationary(NavState state)
 
 static void fault(Navigation *navigation, NavError error)
 {
-    navigation->motion.stop(navigation->motion.user);
     navigation->error = error;
     navigation->state = NAV_FAULT;
 }
@@ -53,7 +53,7 @@ int nav_init(Navigation *navigation, uint8_t initial_node, RoadHeading heading, 
 
 int nav_start(Navigation *navigation, uint8_t target, uint16_t rpm)
 {
-    if (!navigation || target >= 9 || (rpm && (rpm < 20 || rpm > 300)) || !navigation->position_confirmed
+    if (!navigation || target >= 9 || (rpm && (rpm < 20 || rpm > CAR_WHEEL_MAX_RPM)) || !navigation->position_confirmed
         || !stationary(navigation->state) || navigation->state == NAV_FAULT)
         return 0;
     navigation->target = target;

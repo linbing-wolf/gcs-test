@@ -336,9 +336,9 @@ static void arm_warning(const char *reason, uint32_t now)
              reason,(unsigned)axis_address(arm.query_axis),(unsigned)arm.query_kind);
     arm_output(message);
 }
-static void arm_fail(const char *reason)
+static void arm_fail(const char *reason, uint32_t now)
 {
-    arm_stop(); arm_output("[arm fault] "); arm_output(reason); arm_output("\r\n");
+    arm_warning(reason,now);
 }
 void arm_can_error(uint8_t flags) { if (arm.enabled) arm_rx_fault |= flags; }
 void arm_can_rx(uint32_t id,uint8_t ide,uint8_t rtr,uint8_t length,const uint8_t *data,uint32_t now)
@@ -368,7 +368,7 @@ static void arm_receive(void)
         for(i=0;i<f.length;i++) f.data[i]=arm_rx[arm_tail].data[i];
         arm_tail=(uint8_t)((arm_tail+1u)%ARM_RX_SIZE); a=&arm.axis[f.axis];
         if (f.data[0]==0xfd && a->submitted) {
-            if(f.data[1]!=2) {arm_fail("position command rejected");return;} a->ack=1; continue;
+            if(f.data[1]!=2) {arm_fail("position command rejected",f.ms);return;} a->ack=1; continue;
         }
         if (!arm.waiting || f.axis!=arm.query_axis || f.data[0]!=kinds[arm.query_kind]
             || (int32_t)(f.ms-arm.query_ms)<0) continue;
@@ -479,7 +479,7 @@ static void begin_step(uint32_t now)
         arm.target.lift=ARM_LIFT_HOME_MM; /* 先完成整段上升，下降目标另存，到顶延时后才提交。 */
     }
     if(!pose_valid(arm.target.slide,arm.target.lift,arm.target.yaw,arm.target.claw)) {
-        arm_fail("recipe target outside configured travel");
+        arm_fail("recipe target outside configured travel",now);
         return;
     }
     for(i=0;i<2;i++)if(arm.axis[i].samples!=7
@@ -656,6 +656,17 @@ static int clearance_reached(uint32_t now)
     delta*=ARM_LIFT_ENCODER_SIGN;
     return arm.lift+delta>=((arm.target.mask&CUP_EXIT_DELAY) ? ARM_PLATFORM_TURN_START_LIFT_MM : ARM_CLEARANCE_MM);
 }
+int arm_station_clearance_ready(uint32_t now)
+{
+    const ArmAxis *lift=&arm.axis[1];
+    if(!arm.enabled || !arm.referenced || !arm.platform_known || arm_failed())return 0;
+    if(arm.state==ARM_IDLE)
+        return arm.feedback_verified && arm.slide==ARM_SLIDE_HOME_MM && arm.lift==ARM_LIFT_HOME_MM;
+    /* wait_clearance只由新鲜升降位置放行；保留原110/125mm门槛，不用估时冒充离物。 */
+    return arm.state==ARM_MOVING && (arm.target.mask&(AFTER_CLEARANCE|CUP_EXIT_DELAY))
+        && !arm.wait_clearance && (lift->samples&4u)
+        && (uint32_t)(now-lift->position_ms)<=ARM_FEEDBACK_TIMEOUT_MS;
+}
 static int arm_axis_complete(unsigned i,uint32_t now)
 {
     ArmAxis *a=&arm.axis[i];
@@ -821,7 +832,7 @@ void arm_update(uint32_t now)
     if(CAN1->ESR & 4u)arm_rx_fault|=4u;
 #endif
     if(arm_rx_fault & 129u){clear_arm_rx(0);arm_rx_fault&=126u;arm.waiting=0;arm_warning("CAN receive overflow; continue polling",now);}
-    if(arm_rx_fault){arm_fail("CAN transmit/bus fault");return;}
+    if(arm_rx_fault)arm_fail("CAN transmit/bus fault",now);
     arm_receive();
     if(arm.state==ARM_IDLE || arm.state==ARM_FAULT)return;
     if((uint32_t)(now-arm.phase_ms)>ARM_ACTION_TIMEOUT_MS){arm_warning("action deadline exceeded; wait for position",now);arm.phase_ms=now;}

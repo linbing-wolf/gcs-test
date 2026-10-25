@@ -103,7 +103,7 @@ static void plate_wait_and_cancel_tests(void)
                 while((!run_active || run.velocity_phase!=VELOCITY_FORWARD || run.progress_mm<3) && clock_ms<deadline)plant_step();
                 CHECK(clock_ms<deadline && run.station_shift && run_active);
             }
-            if(variant==2 || variant==4) {motor_flags[2]=7;tick(700);}
+            if(variant==2 || variant==4) {motor_flags[2]=11;tick(700);}
             else {send_line("!");tick(10);}
             CHECK(!run_active && !station_active() && arm_failed());
             CHECK(!vision_motion_peek_xy(NULL,NULL,NULL) && vision_tx_count==6 && !arm_positions);

@@ -10,7 +10,7 @@ typedef enum
     NAV_WAIT_RETURN,  /* 道路已封禁，等待实际回到道路起点的确认。 */
     NAV_ARRIVED,      /* 人工导航目标已确认到达。 */
     NAV_STOPPED,      /* 已请求停车。 */
-    NAV_FAULT         /* 无路可走、配置错误或运动失败。 */
+    NAV_FAULT         /* 无路/配置/提交失败的未解决状态，不自动发停车命令。 */
 } NavState;
 typedef enum
 {

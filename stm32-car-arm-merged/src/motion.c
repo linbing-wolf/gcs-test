@@ -65,7 +65,7 @@ int motion_start(Motion *motion, MotionParameters parameters, uint32_t now_ms)
     float wheel_signed[4];
     uint32_t wheel_pulses[4], max_pulses = 0;
     if (!motion || (motion->state != MOTION_IDLE && motion->state != MOTION_DONE)
-        || (unsigned) parameters.axis > BODY_LEFT || rpm < 20 || rpm > 300)
+        || (unsigned) parameters.axis > BODY_LEFT || rpm < 20 || rpm > CAR_WHEEL_MAX_RPM)
         return 0;
     distance_mm = parameters.mm < 0 ? - (int) parameters.mm : parameters.mm;
     if (!distance_mm || distance_mm > 2000)
@@ -123,14 +123,12 @@ int motion_start(Motion *motion, MotionParameters parameters, uint32_t now_ms)
             wheel_rpm = 1;
         if (!motion->io.position(motion->io.user, wheels[wheel_index].addr, dir, wheel_rpm, parameters.acceleration, wheel_pulses[wheel_index]))
         {
-            stop_wheels(motion);
             motion->state = MOTION_FAULT;
             return 0;
         }
     }
     if (!motion->io.synchronize(motion->io.user))
     {
-        stop_wheels(motion);
         motion->state = MOTION_FAULT;
         return 0;
     }

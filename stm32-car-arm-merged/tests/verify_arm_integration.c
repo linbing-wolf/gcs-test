@@ -155,7 +155,7 @@ static void wheel_lock_failures(void)
     }
     for(mode=0;mode<2;mode++) {
         reset_fixture();declare_pose();
-        if(mode)bus_off=1;else motor_flags[3]=7;
+        if(mode)bus_off=1;else motor_flags[3]=11;
         advance_arm(650);CHECK(arm_stops==2 && arm_lock.state==3);
     }
     reset_fixture();declare_pose();
@@ -349,9 +349,9 @@ static void axis_status_log_only_tests(void)
         }
         before=output_size;advance_arm(1500);CHECK(output_size==before); /* 相同异常不刷屏。 */
         arm_status_override[axis]=3;advance_arm(400);CHECK(!arm_busy() && !arm_failed() && !arm_stops);
-        send_line("arm yaw 125");advance_arm(ARM_SERVO_TIME_MS/4u);CHECK(arm_busy());
-        arm_status_override[axis]=7;before=output_size;advance_arm(ARM_SERVO_TIME_MS/4u);CHECK(output_size>before); /* 恢复后再次异常重新记录。 */
-        seen=output_size;arm_status_override[axis]=11;advance_arm(ARM_SERVO_TIME_MS/4u);CHECK(output_size>seen); /* 标志变化同样记录。 */
+        send_line("arm yaw 125");advance_arm(1);CHECK(arm_busy());
+        arm_status_override[axis]=7;before=output_size;advance_arm(6u*ARM_POLL_MS+1u);CHECK(output_size>before); /* 两轴各三类反馈，一整轮后核对。 */
+        seen=output_size;arm_status_override[axis]=11;advance_arm(6u*ARM_POLL_MS+1u);CHECK(output_size>seen); /* 标志变化同样记录。 */
         stop_request();CHECK(arm_stops>=2 && arm_failed());
     }
     reset_fixture();declare_pose();arm_status_override[0]=7;arm_freeze=1;

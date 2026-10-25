@@ -55,7 +55,7 @@
 #define MOTOR_ARRIVAL_NOTICE     0x9fu
 #define MOTOR_FLAG_ENABLED           1u
 #define MOTOR_FLAG_ARRIVED           2u
-#define MOTOR_FLAG_STALLED           4u
+#define MOTOR_FLAG_STALLED           4u /* 仅记录堵转标志；未使能/保护及其他运动故障仍阻止运行。 */
 #define MOTOR_FLAG_PROTECTED         8u
 /* ===== 1. 全局状态：Keil Watch 窗口可观察这些变量 ===== */
 static struct {uint32_t start_ms,elapsed_ms;uint8_t running,started;} screen_clock;
@@ -123,6 +123,15 @@ typedef struct {
     int8_t sign;
     uint16_t mm;
 } RunLeg;
+
+typedef struct {
+    float x,y,ux,uy,length,end_s,radius;
+    uint8_t edge,segment;
+} CornerLeg;
+typedef struct {
+    float x,y,ux,uy,length,s,cx,cy,radius,angle,turn,yaw,dyaw,speed_mm_s;
+    float blend_x,blend_y,blend_length;
+} CornerSpan;
 typedef struct
 {
     RunState state;
@@ -133,7 +142,7 @@ typedef struct
     uint16_t steps;            /* 逻辑平移段及转向计数；直线穿越不增加一次启停。 */
     RoadHeading heading;     /* 已通过IMU对齐的地图朝向；地面实际姿态仍需检查。 */
     RoadHeading target_heading;
-    RoadHeading initial_heading; /* runimu：A右上朝扫码为+Y，C右下朝扫码为-Y。 */
+    RoadHeading initial_heading; /* runimu：A/C原启停位置，由操作者预先朝-X，首段直接横移。 */
     uint8_t turning;         /* 当前动作是否为旋转；完成前不改变heading。 */
     uint8_t acks;             /* 电机1～4对应bit0～3，15表示四轮均回复速度ACK。 */
     uint8_t ready;            /* 四轮新鲜反馈掩码；15不等于地面实际到位。 */
@@ -147,9 +156,10 @@ typedef struct
     uint16_t completed_roads; /* 本轮已按反馈完整走完的无向道路；部分路段不计入。 */
     uint8_t imu_mode;         /* 已建立闭环会话，供诊断和中断采样故障检查。 */
     uint8_t turn_only, translation_only;
-    uint8_t station_enabled, station_phase, scan_turn_stage, vision_debug;
+    uint8_t station_enabled, station_phase, scan_turn_stage, vision_debug; /* scan_turn_stage沿用字段名：首段横移扫码窗口。 */
     uint8_t station_departing, station_speed_logged; /* 工位离站预检范围及每轮日志去重。 */
-    uint8_t departure_overlap; /* 末尾回正与离站转弯/平移重叠；两轴已实际135/0。 */
+    uint8_t departure_overlap; /* 1高位收回后的末尾回正；2粗加工最后抓回离物后，道路与车载收尾并行。 */
+    int16_t station_return_mm; /* 工位末环到2环的车身前向距离，作为离站路径前缀，不计入道路里程。 */
     uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
     uint8_t station_entry_overlap; /* 原料/粗加工/暂存进站小角度末修正与准备姿态并行。 */
     uint8_t station_approach_overlap; /* 视觉/索引最后一段与下一靠近动作并行；夹爪仍等子动作完成。 */
@@ -157,8 +167,14 @@ typedef struct
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
     uint16_t lateral_rpm;
     struct {
-        uint8_t active, passed, arriving, polarity_ready, start_edge, reversing;
+        uint8_t active, passed, arriving, polarity_ready, start_edge, reversing, visual_terminal;
+        uint8_t start_segment, start_job, leg_count, leg_index, span_count, scan_gate, scan_fallback;
+        RoadHeading start_heading, end_heading;
+        int16_t prefix_mm; /* 非零时首段是工位回2环；此路径起点为最后抓取环，不是地图节点。 */
+        CornerLeg legs[8];
+        CornerSpan spans[16];
         float first_mm, second_mm, arc_mm, total_mm, x_mm, y_mm, s_mm, speed_mm_s;
+        float vx_mm_s,vy_mm_s,measured_s_mm;
         float command[3], integrated_yaw_cdeg; /* 同一比例限制四轮变化率；上次里程对应的IMU角度。 */
         int32_t heading_target;
         int16_t origin_yaw_cdeg;
@@ -168,7 +184,7 @@ typedef struct
         int16_t yaw[48];
         uint32_t yaw_ms[48];
         uint8_t yaw_head, yaw_count;
-    } corner; /* 仅D→E→H；旋转时积分同一时刻的四轮增量，不能沿用固定车身轴总里程。 */
+    } corner; /* 到下一作业点的直线/圆弧串；同一时刻四轮增量配合IMU积分。 */
     uint8_t vector_move;      /* 仅MOVEXY工位子动作：前后/横移目标独立闭环，同一批四轮速度。 */
     int8_t vector_last_wheel_sign[4];
     uint16_t vector_wheel_reversals[4]; /* 本段成功提交的非零轮速命令换向次数，零速不清除上一方向。 */
@@ -196,10 +212,10 @@ typedef struct
     struct {
         int64_t previous[4], latest[4];
         uint32_t previous_ms[4], latest_ms[4], sample_ms;
-        int32_t lateral_mm, command_mrpm;
+        int32_t lateral_mm, forward_mm, command_mrpm;
         int16_t command_rpm;
         uint8_t valid;
-    } straight_hold; /* 同时刻编码器投影；相对本直行串起点的车身横向位移，不是地面绝对位置。 */
+    } straight_hold; /* 同时刻编码器投影；前后行驶观测左右，横移观测前后，均相对本直行串起点。 */
     int32_t progress_mm;
     int32_t encoder_offset_mm; /* 同一直行串内已通过的段长；不中断编码器基线。 */
     uint16_t continuation_mm, blocked_roads;
@@ -216,10 +232,15 @@ typedef struct
         uint8_t seen;
     } heading_window;
     uint8_t pending_command;
+    uint8_t route_terminal;
     RoadPlan road;            /* structure.h 中取出的当前有向道路参数。 */
 } FullRouteState;
 static FullRouteState run;
 static FullRouteState station_parent; /* 索引子动作完成后恢复原路线现场，不推进节点/任务。 */
+static struct {
+    uint32_t last_ms,stage[6],total[6];
+    uint8_t active,job,category;
+} route_timing;
 static HeadingSensor heading_sensor;
 static volatile uint8_t can_rx_fault, imu_uart_fault;
 typedef struct {
@@ -647,9 +668,10 @@ static void scanner_text_byte(uint8_t byte)
             scanner.result[scanner.length]=0;
             if(scanner.length) {
                 text("[scan] ");text(scanner.result);text("\r\n");scanner.results++;
-                /* 配置状态与任务接收独立；仅首次B点接码，格式验证仍由原任务解析器完成。 */
-                if(run.station_enabled && run.job==0u && run.edge==1u
-                    && ((run_active && run.scan_turn_stage==1u) || (!run_active && run.state==RUN_STATION))
+                /* 配置状态与任务接收独立；首段横移途中或首次B点停等接码。 */
+                if(run.station_enabled && run.job==0u
+                    && ((run_active && run.scan_turn_stage==1u && run.edge<=1u)
+                        || (!run_active && run.state==RUN_STATION && run.edge==1u))
                     && !stop_pending && !station_task_ready()) {
                     char task_line[sizeof(scanner.result)+6u];
                     snprintf(task_line,sizeof(task_line),"task %s",scanner.result);
@@ -745,7 +767,6 @@ static void queue_byte(uint8_t value)
     if (next == rx_tail)
     {
         rx_overflow = 1;
-        stop_pending = 1;
         return;
     }
     rx_buffer[rx_head] = value;
@@ -792,7 +813,6 @@ void USART3_IRQHandler(void)
     {
         (void) USART_ReceiveData(USART3);
         rx_overflow = 1;
-        stop_pending = 1;
     }
 }
 
@@ -1071,26 +1091,25 @@ static void run_warning(const char *reason)
     text(" wait_ms=");number(clock_ms-run.query_ms);text("; task retained\r\n");
 }
 
+/* 自动异常只告警，当前指令/任务/姿态账本不由故障分支取消。 */
 static void run_fault(const char *reason)
 {
-    can_tx_cancel(0);if(run.vision_debug)run.job=0;run.vision_debug=0;
-    if (run_rx_overflow) reason = "CAN reply queue overflow";
-    else if (can_rx_fault & 2u) reason = "CAN transmit queue full; command not queued";
-    else if (can_rx_fault & 1u) reason = "CAN hardware FIFO overrun; feedback lost";
-    run_active = 0;
-    run.departure_overlap = run.station_entry_overlap = 0;
-    if (run.station_enabled) {station_abort();vision_cancel_pick();if (arm_enabled()) {arm_stop();arm_lock.state=3;}}
-    else if (!run.turn_only && !run.translation_only) station_clear_task();
-    run.state = RUN_FAULT;
-    nav_stop(&nav);
-    pose_set = 0;
-    nav.position_confirmed = 0;
-    text("[run fault] ");
-    text(reason);
-    text("; stopped; no automatic retry\r\n");
-    run_status();
-    feedback_status();
-    if (run.imu_mode) imu_status();
+    run_warning(reason);
+}
+
+/* 首段60mm在A/C->B内完成，B->E沿原990mm；连续模式把偏移平滑并入1030mm。
+ * 连续C回程在B->C前中段同时完成原60mm侧移；E->B保持原990mm。 */
+static int run_plan_road(uint8_t edge,RoadPlan *road)
+{
+    const uint8_t *nodes=full_route_nodes[run.plan];
+    if(!road_plan(nodes[edge],nodes[edge+1u],road))return 0;
+    if(!edge && CAR_RUN_CORNER_ENABLED && CAR_RUN_OMNI_ENABLED) {
+        road->segments[0]=road->segments[1];
+        road->count=1;road->length=(uint16_t)abs(road->segments[0].mm);
+    } else if(CAR_RUN_CORNER_ENABLED && CAR_RUN_OMNI_ENABLED && run.plan==1u && edge==FULL_ROUTE_NODES-2u) {
+        road->count=1;road->length=(uint16_t)abs(road->segments[0].mm);
+    }
+    return 1;
 }
 
 /* 统一计算实际车身动作；预看下一段不能改动当前道路和完成记录。 */
@@ -1105,6 +1124,12 @@ static int run_resolve_leg(const RoadPlan *road, uint8_t segment, uint8_t edge,
     p = road->segments[segment];
     if ((unsigned)p.axis > BODY_LEFT || !p.mm) return 0;
     leg->mm = (uint16_t)(p.mm < 0 ? -p.mm : p.mm);
+    /* A/C车头已由操作者摆好；首路60mm和1030mm都保持初始航向，含旧道路策略变体。 */
+    if(!edge && road->to==NODE_B && (road->from==NODE_A || road->from==NODE_C)) {
+        if(!road_motion_parameters(p,heading,&body))return 0;
+        leg->axis=body.axis;leg->sign=body.mm>0 ? 1 : -1;leg->heading=heading;
+        return 1;
+    }
 #if CAR_RUN_OMNI_ENABLED
     /* 无障碍时首次/已走道路同等处理；接口保留旧策略参数供兼容变体使用。 */
     (void)edge;(void)completed;
@@ -1151,7 +1176,7 @@ static int run_next_straight(RoadPlan *road, uint8_t *edge, uint8_t *segment,
         if (node == full_route_jobs[run.plan][run.job] || *edge + 2u >= FULL_ROUTE_NODES) return 0;
         *completed |= (uint16_t)(1u << road->road);
         (*edge)++;*segment = 0;
-        if (!road_plan(full_route_nodes[run.plan][*edge],full_route_nodes[run.plan][*edge + 1u],road)) return 0;
+        if (!run_plan_road(*edge,road)) return 0;
     }
     if ((run.blocked_roads & (uint16_t)(1u << road->road))
         || !run_resolve_leg(road,*segment,*edge,current.heading,*completed,next)) return 0;
@@ -1191,6 +1216,10 @@ static int run_segment(void)
     if (!run_resolve_leg(&run.road,run.segment,run.edge,run.heading,run.completed_roads,&leg)) return 0;
     run.travel_axis = leg.axis;run.travel_sign = leg.sign;run.target_heading = leg.heading;
     run.remaining_mm = leg.mm;run.continuation_mm = run_straight_remaining(leg);
+    if(run.station_return_mm) {
+        run.travel_axis=BODY_FORWARD;run.travel_sign=run.station_return_mm>0 ? 1 : -1;
+        run.remaining_mm=(uint16_t)abs(run.station_return_mm);run.continuation_mm=0;
+    }
     run_segment_log(leg.mm);
     run_begin_alignment();
     return 1;
@@ -1211,6 +1240,7 @@ static void run_done(void)
     run_active = 0;
     if (run.station_shift) {
         uint8_t approach_overlap=run.station_approach_overlap;
+        int index_overlap=station_index_overlap_active();
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
         /* 子动作已真实完成停车，保留其最新航向/停车证明供后续同向衔接。 */
         station_parent.heading_control=run.heading_control;
@@ -1218,9 +1248,10 @@ static void run_done(void)
 #endif
         run = station_parent;
         run.state = RUN_STATION;
-        if(approach_overlap) {
+        if(approach_overlap || index_overlap) {
             run_station_continue_arm();
-            text("[station approach overlap] chassis correction complete; arm approach continues\r\n");
+            text(index_overlap ? "[station pipeline] chassis index complete; onboard arm work continues\r\n"
+                               : "[station approach overlap] chassis correction complete; arm approach continues\r\n");
             return;
         }
         run.station_relock = 1;
@@ -1255,11 +1286,42 @@ static void run_done(void)
 /* 从 structure.h 取出当前有向道路，再启动道路的第一段。 */
 static int run_road(void)
 {
-    const uint8_t *nodes = full_route_nodes[run.plan];
-    if (!road_plan(nodes[run.edge], nodes[run.edge + 1u], &run.road))
+    if (!run_plan_road(run.edge, &run.road))
         return 0;
     run.segment = 0;
     return run_segment();
+}
+
+/* 互斥的墙钟时间归类；并行动作只计一次，道路时间包含其预检/转向/反馈等待。 */
+static void run_timing_line(const char *label,const uint32_t *values)
+{
+    static const char *names[6]={" road_ms="," scan_wait_ms="," station_move_ms="," arm_ms="," vision_wait_ms="," other_ms="};
+    unsigned i;uint32_t total=0;
+    text("[run timing] ");text(label);text(" job=");number(route_timing.job);
+    for(i=0;i<6u;i++){total+=values[i];text(names[i]);number(values[i]);}
+    text(" total_ms=");number(total);text("\r\n");
+}
+static void run_timing_poll(void)
+{
+    FullRouteState *root=run.station_shift ? &station_parent : &run;
+    uint8_t done;
+    uint32_t elapsed;
+    if(!route_timing.active)return;
+    elapsed=clock_ms-route_timing.last_ms;route_timing.last_ms=clock_ms;
+    route_timing.stage[route_timing.category]+=elapsed;route_timing.total[route_timing.category]+=elapsed;
+    done=run.state==RUN_STOPPED || run.state==RUN_FAULT || (!run.station_shift && run.state==RUN_DONE);
+    if(root->job!=route_timing.job || done) {
+        run_timing_line("stage",route_timing.stage);memset(route_timing.stage,0,sizeof(route_timing.stage));
+        route_timing.job=root->job;
+    }
+    if(done){run_timing_line("total",route_timing.total);route_timing.active=0;return;}
+    if(run.station_shift)route_timing.category=2;
+    else if(run_active)route_timing.category=0;
+    else if(run.state==RUN_STATION && !root->job)route_timing.category=1;
+    else if(arm_busy())route_timing.category=3;
+    else if(vision_pick_state()==VISION_PICK_WAITING || vision_align_state()==VISION_PICK_WAITING
+        || vision_stack_state()==VISION_PICK_WAITING)route_timing.category=4;
+    else route_timing.category=5;
 }
 
 /* runimu入口：清除人工位置确认，进入IMU和四轮反馈自检。 */
@@ -1285,7 +1347,7 @@ static int start_run(uint8_t initial_node)
     run.plan = initial_node == NODE_C;
     run.imu_mode = 1;run.station_enabled=(uint8_t)station_auto_enabled();
     run.turn_rpm = CAR_TURN_CLOSED_LOOP_RPM;
-    run.initial_heading = initial_node == NODE_C ? HEAD_Y_NEG : HEAD_Y_POS;
+    run.initial_heading = HEAD_X_NEG;
     run.yaw_zero_cdeg = heading_wrap_cdeg((int32_t)sample.yaw_cdeg
         - CAR_MAP_YAW_SIGN * (int32_t)run.initial_heading * 9000);
     imu_uart_fault = 0;
@@ -1298,8 +1360,14 @@ static int start_run(uint8_t initial_node)
     run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
     run_clear_rx();
     run_active = 1;
+    if(run.station_enabled) {
+        run.scan_turn_stage=1;
+        text("[scan station] first approach; automatic qr init; scan during lateral travel\r\n");
+        scanner_init(scanner.baud ? scanner.baud : CAR_SCANNER_UART_BAUD);
+    }
     screen_clock.start_ms=clock_ms;screen_clock.elapsed_ms=0;
     screen_clock.started=screen_clock.running=1;
+    memset(&route_timing,0,sizeof(route_timing));route_timing.active=1;route_timing.last_ms=clock_ms;
     text("[run route] ");
     for (i = 0; i < FULL_ROUTE_NODES; i++)
     {
@@ -1309,8 +1377,8 @@ static int start_run(uint8_t initial_node)
     }
     text("; forward rpm=" CAR_STRING_VALUE(CAR_RUN_RPM) "; turn rpm=");
     number(run.turn_rpm);
-    text(initial_node == NODE_C ? "; zone=2 bottom_right; initial heading=-Y toward SCAN"
-                               : "; zone=1 top_right; initial heading=+Y toward SCAN");
+    text(initial_node == NODE_C ? "; zone=2 bottom_right; original start position; initial heading=-X toward D/E/F"
+                               : "; zone=1 top_right; original start position; initial heading=-X toward D/E/F");
     text("; start lateral rpm<=" CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; continuous forward/backward; station_auto per configuration\r\n");
     run_status();
     return 1;
@@ -1324,7 +1392,7 @@ static int start_heading_turn(int16_t relative_degrees, uint16_t rpm)
     HeadingSample sample = heading_snapshot();
     if (run_active || stop_pending || (drive.state != MOTION_IDLE && drive.state != MOTION_DONE)
         || !relative_degrees || relative_degrees < -180 || relative_degrees > 180
-        || rpm < 20 || rpm > 300
+        || rpm < 20 || rpm > CAR_WHEEL_MAX_RPM
         || !heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS))
         return 0;
     nav_stop(&nav);
@@ -1377,14 +1445,15 @@ static int start_heading_shift(int32_t mm, uint16_t rpm)
     return 1;
 }
 
-/* 工位内仅允许高位收回；两区索引/视觉微调允许保持各自观察角。
- * 下一环位允许实际收拢后的末尾旋转并行；道路仅离站回正阶段可用此例外。 */
+/* 固定环位流水线通过离物净空后允许车载搬运；视觉微调仍只允许原有高位/末段靠近。
+ * 普通道路仅允许进站高位观察准备及离站末尾回正，不放开地面取放。 */
 static int station_chassis_pose_safe(void)
 {
     int slide,lift;float yaw;
     float work_yaw=(run.job==1u || run.job==4u) ? ARM_PICK_YAW_DEG
         : (run.job==3u || run.job==6u) ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;
     arm_pose_now(&slide,&lift,&yaw,NULL);
+    if(station_index_overlap_active())return arm_enabled() && arm_pose_known() && !arm_failed();
     if(run_active && run.station_shift && run.station_approach_overlap)
         return arm_enabled() && arm_pose_known() && !arm_failed();
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
@@ -1402,7 +1471,7 @@ static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
     uint8_t i;
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
     static MotorFeedback parked_feedback[MOTOR_COUNT];
-    int overlap=arm_translation_overlap_ready();
+    int overlap=arm_translation_overlap_ready() || station_index_overlap_active();
 #endif
     int storage = run.job == 3u || run.job == 6u;
     int index_rpm = storage ? STN_STORAGE_INDEX_RPM : STN_ROUGH_INDEX_RPM;
@@ -1413,7 +1482,7 @@ static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
         MotorFeedback *f = &motor_feedback[i];
         station_log_wheel_speed(i,"launch");
         if (!f->speed_valid || !(f->status_flags & MOTOR_FLAG_ENABLED)
-            || (f->status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))
+            || (f->status_flags & MOTOR_FLAG_PROTECTED)
             || (uint32_t)(clock_ms - f->speed_ms) > ARM_FEEDBACK_TIMEOUT_MS
             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
     }
@@ -1530,6 +1599,22 @@ static int run_station_heading(uint8_t node, RoadHeading *heading)
     }
 }
 
+/* 包括F->E->D共线预看段；不能等进入最后730mm才从高速开始制动。 */
+static int run_rough_arrival(void)
+{
+    return run.station_enabled && !run.station_shift && !run.translation_only && !run.turn_only && !run.obstacle_phase
+        && run.job<FULL_ROUTE_JOBS && full_route_jobs[run.plan][run.job]==NODE_D;
+}
+
+/* F/H仍交接近站残差；D保留编码器定位，减速后超程不能直接交给视觉。 */
+static int run_visual_arrival(void)
+{
+    RoadHeading heading;
+    return run.road.to!=NODE_D && run.station_enabled && !run.station_shift && !run.translation_only && !run.turn_only && !run.obstacle_phase
+        && run.job<FULL_ROUTE_JOBS && run.road.to==full_route_jobs[run.plan][run.job]
+        && run.segment+1u==run.road.count && run_station_heading(run.road.to,&heading);
+}
+
 static void run_advance_segment(void)
 {
     RoadHeading station_heading;
@@ -1544,12 +1629,16 @@ static void run_advance_segment(void)
     run.edge++;
     node = full_route_nodes[run.plan][run.edge];
     if (run.station_enabled && node == NODE_B && run.job == 0u) {
-        text("[scan station] first B arrival; automatic qr init\r\n");
-        scanner_init(scanner.baud ? scanner.baud : CAR_SCANNER_UART_BAUD);
-        run.scan_turn_stage=1;
-        run.target_heading=(RoadHeading)STN_SCAN_HEADING;run.remaining_mm=0;
-        text("[scan station] B reached; configuring QR while aligning rear scanner; accept when READY\r\n");
-        run_begin_alignment();return;
+        run.scan_turn_stage=0;run.turning=0;
+        if(station_task_ready()) {
+            run.job++;run.transition_ready=1;
+            text("[scan station] B reached; task latched; depart directly on route heading\r\n");
+            if(!run_road())run_fault("scan departure road failed");
+        } else {
+            text("[scan station] B reached; no task yet; hold and continue scanning\r\n");
+            run_finish_node();
+        }
+        return;
     }
     if (node == full_route_jobs[run.plan][run.job]
         && run_station_heading(node, &station_heading)) {
@@ -1619,13 +1708,20 @@ static void run_station_handoff(void)
 }
 static void run_resume_after_station(void)
 {
+    int16_t return_mm=0;
+    int through=station_through_departure(&return_mm);
     int overlap=station_departure_ready();
+    if(through)overlap=2;
     if (full_route_nodes[run.plan][run.edge] != full_route_jobs[run.plan][run.job]
         || (!(arm_ready() && arm_parked()) && !overlap)) {
         run_fault("station completion/parked pose mismatch");return;
     }
     run.departure_overlap=(uint8_t)overlap;
-    if(overlap)text(CAR_ARM_TRANSLATION_OVERLAP_ENABLED ? "[station departure] final rotation overlaps turn/translation\r\n" : "[station departure] final rotation overlaps turn; translation waits\r\n");
+    run.station_return_mm=through ? return_mm : 0;
+    if(through) {
+        text("[station through departure] return_mm=");signed_number(return_mm);
+        text("; measured clearance; onboard return continues; ring2 joins next road without stop\r\n");
+    } else if(overlap)text(CAR_ARM_TRANSLATION_OVERLAP_ENABLED ? "[station departure] final rotation overlaps turn/translation\r\n" : "[station departure] final rotation overlaps turn; translation waits\r\n");
     run.job++;text("[run station] complete; job=");number(run.job);text("/8; resume after fresh feedback\r\n");
     run_station_handoff();
 }
@@ -1661,8 +1757,8 @@ static void run_station_update(void)
         text("[vision debug done] commanded moves complete; hold position/yaw; no grip, return or route\r\n");
         return;
     }
-    if (!station_active() || station_departure_ready()) {
-        if (!station_departure_ready() && (!arm_ready() || !arm_parked())) {run_fault("station ended without parked arm");return;}
+    if (!station_active() || station_departure_ready() || station_through_departure(NULL)) {
+        if (!station_departure_ready() && !station_through_departure(NULL) && (!arm_ready() || !arm_parked())) {run_fault("station ended without parked arm");return;}
         /* 扫码完成也直接选择下一道路，不再恢复进站前航向后又转回B->E。 */
         run_resume_after_station();
     }
@@ -1759,6 +1855,13 @@ static int run_record_frame(const RunCanFrame *frame)
         feedback->speed_ms = frame->received_ms;
         feedback->speed_valid = 1;
     } else if (frame->data[0] == MOTOR_STATUS_COMMAND) {
+        if ((feedback->status_flags ^ frame->data[1]) & MOTOR_FLAG_STALLED) {
+            text("[wheel stall] addr=");number(frame->id >> CAN_MOTOR_ADDRESS_SHIFT);
+            text(" flags_dec=");number(frame->data[1]);
+            text(frame->data[1] & MOTOR_FLAG_STALLED
+                ? "; reported; log only; driver protection unchanged\r\n"
+                : "; cleared\r\n");
+        }
         feedback->status_flags = frame->data[1];
         feedback->status_replies++;
         feedback->status_ms = frame->received_ms;
@@ -1769,13 +1872,7 @@ static int run_record_frame(const RunCanFrame *frame)
 
 static void arm_lock_fault(const char *reason)
 {
-    arm_lock.state = 3;
-    arm_stop();
-    nav_stop(&nav);
-    pose_set = nav.position_confirmed = 0;
-    text("[arm interlock fault] "); text(reason);
-    text("; chassis stopped; inspect then arm on to recheck\r\n");
-    if (run.station_enabled && run.state==RUN_STATION) run_fault("station chassis interlock failed");
+    run_warning(reason);
 }
 
 static void arm_lock_begin(void)
@@ -1822,8 +1919,8 @@ static void arm_lock_update(void)
         arm_lock.seen[i] |= (uint8_t)(1u << kind);
         if (kind) station_log_wheel_speed(i,"interlock");
         else if (!(motor_feedback[i].status_flags & MOTOR_FLAG_ENABLED)
-                 || (motor_feedback[i].status_flags & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED))) {
-            arm_lock_fault("wheel disabled/stalled/protected");return;
+                 || (motor_feedback[i].status_flags & MOTOR_FLAG_PROTECTED)) {
+            arm_lock_fault("wheel disabled/protected");return;
         }
     }
     for (i = 0; i < MOTOR_COUNT; i++) {
@@ -1926,7 +2023,7 @@ int station_chassis_approach_begin(void)
         || abs(run.turn_cmd_rpm)>STN_APPROACH_OVERLAP_RPM) return 0;
     for(i=0;i<MOTOR_COUNT;i++)
         if(!(motor_feedback[i].status_flags&MOTOR_FLAG_ENABLED)
-            || (motor_feedback[i].status_flags&(MOTOR_FLAG_STALLED|MOTOR_FLAG_PROTECTED)))return 0;
+            || (motor_feedback[i].status_flags&MOTOR_FLAG_PROTECTED))return 0;
     if(run.vector_move) {
         for(i=0;i<2u;i++)
             if(abs(run.vector_target_mm[i]-run.vector_progress_mm[i])>STN_APPROACH_OVERLAP_MM)return 0;
@@ -1935,29 +2032,39 @@ int station_chassis_approach_begin(void)
     return 1;
 }
 
-/* 原料/粗加工/暂存只在进站最后朝向修正时提前准备；不提前推进节点或视觉请求。 */
+/* 最后一段进站路上朝向已经匹配时先转到观察角；节点、视觉和地面抓放仍等到站。 */
 static void run_station_prepare_entry(void)
 {
     uint8_t i;
+    RoadHeading heading;
+    int incoming;
     HeadingSample sample=heading_snapshot();
-    if(!run_active || !run.station_enabled || run.station_shift || !run.station_align_pending
+    if(!run_active || !run.station_enabled || run.station_shift || run.translation_only || run.turn_only || run.obstacle_phase
         || run.station_entry_overlap || run.job<1u || run.job>6u
-        || run.velocity_phase!=VELOCITY_TURN || stop_pending || can_rx_fault || run_rx_overflow
+        || (run.velocity_phase!=VELOCITY_TURN && run.velocity_phase!=VELOCITY_FORWARD)
+        || run.departure_overlap || stop_pending || can_rx_fault || run_rx_overflow
         || arm_lock.state!=2 || !arm_ready() || !arm_parked() || arm_busy()
         || run.velocity_waiting || run.acks!=ALL_MOTORS_MASK
         || !heading_sample_fresh(&sample,clock_ms,CAR_IMU_MAX_AGE_MS)
         || !run_velocity_feedback_fresh()
-        || abs(run.heading_control.error_cdeg)>STN_APPROACH_OVERLAP_YAW_CDEG)return;
+        || !run_station_heading(full_route_jobs[run.plan][run.job],&heading))return;
+    incoming=run.road.to==full_route_jobs[run.plan][run.job] && run.segment+1u==run.road.count;
+    if(run.corner.active)incoming=run.corner.leg_index+1u==run.corner.leg_count && run.corner.end_heading==heading;
+    if(!run.station_align_pending && !incoming)return;
+    if(abs(heading_wrap_cdeg(CAR_MAP_YAW_SIGN*(int32_t)heading*9000
+        - ((int32_t)sample.yaw_cdeg-run.yaw_zero_cdeg)))>STN_APPROACH_OVERLAP_YAW_CDEG)return;
+    /* 路径参考也已朝向作业区，避免圆角中车头瞬间经过目标角就提前准备。 */
+    if(abs(heading_wrap_cdeg(CAR_MAP_YAW_SIGN*(int32_t)heading*9000+run.yaw_zero_cdeg
+        - ((int32_t)run.heading_control.last_yaw_cdeg+run.heading_control.error_cdeg)))>STN_APPROACH_OVERLAP_YAW_CDEG)return;
     for(i=0;i<MOTOR_COUNT;i++)
-        if(abs(run.wheel_rpm[i])>STN_APPROACH_OVERLAP_RPM
-            || !(motor_feedback[i].status_flags&MOTOR_FLAG_ENABLED)
-            || (motor_feedback[i].status_flags&(MOTOR_FLAG_STALLED|MOTOR_FLAG_PROTECTED)))return;
-    if(station_start(full_route_nodes[run.plan][run.edge],run.job,clock_ms)<0) {
+        if(!(motor_feedback[i].status_flags&MOTOR_FLAG_ENABLED)
+            || (motor_feedback[i].status_flags&MOTOR_FLAG_PROTECTED))return;
+    if(station_start(full_route_jobs[run.plan][run.job],run.job,clock_ms)<0) {
         run_fault("station action refused");return;
     }
     run.station_entry_overlap=run.station_phase=1;
     text("[station entry overlap] job=");number(run.job);
-    text("; final heading correction; preparation started; vision/grip wait for chassis\r\n");
+    text("; work-area heading matched; observation yaw starts during approach; vision/grip wait for chassis\r\n");
 }
 
 /* 每批四轮速度先收到ACK，才提交下一批；同步启动前检查急停和发送错误。 */
@@ -2111,11 +2218,6 @@ static int run_vector_distance(void)
         /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_Y));
     run.vector_progress_mm[1]=(int32_t)((float)sum_left*CAR_POSITION_PULSES_PER_REV
         /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X));
-    for(i=0;i<2;i++) {
-        int32_t target=run.vector_target_mm[i],progress=run.vector_progress_mm[i];
-        if(target<0){target=-target;progress=-progress;}
-        if(progress < -CAR_DISTANCE_OVERRUN_MM || progress>target+CAR_DISTANCE_OVERRUN_MM)return 0;
-    }
     i=(uint8_t)(abs(run.vector_target_mm[1])>abs(run.vector_target_mm[0]));
     run.progress_mm=run.vector_progress_mm[i]*(run.vector_target_mm[i]>0 ? 1 : -1);
     return 1;
@@ -2169,7 +2271,7 @@ static int16_t run_vector_slew(uint8_t axis,int16_t desired,uint8_t due)
 
 static int run_straight_hold_enabled(void)
 {
-    return CAR_STRAIGHT_HOLD_ENABLED && run.travel_axis==BODY_FORWARD
+    return CAR_STRAIGHT_HOLD_ENABLED && !run.corner.active
         && !run.vector_move && !run.station_shift && !run.obstacle_phase;
 }
 
@@ -2203,30 +2305,36 @@ static void run_straight_observe(void)
         if(!span || span>CAR_VELOCITY_FEEDBACK_MS || offset>span)return;
         position=run.straight_hold.previous[i]
             +(run.straight_hold.latest[i]-run.straight_hold.previous[i])*offset/span;
-        /* 单轴encoder_sign把本段前/后运动都归一为正；恢复车身左右符号要乘travel_sign。 */
+        /* encoder_sign按主轴归一；乘travel_sign恢复车身符号。
+         * 前后与横移的混控符号之比相同，此投影也可提取横移时的前后位移。 */
         sum+=(position-run.encoder_start[i])*run.encoder_sign[i]*projection[i]*run.travel_sign;
     }
-    run.straight_hold.lateral_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
-        /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X));
+    if(run.travel_axis==BODY_LEFT)
+        run.straight_hold.forward_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
+            /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_Y));
+    else
+        run.straight_hold.lateral_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
+            /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X));
     run.straight_hold.sample_ms=common_ms;run.straight_hold.valid=1;
 }
 
-/* 只在主轴仍前进/后退时纠偏，不新增到站后的独立横移或改变距离完成条件。 */
-static int16_t run_straight_correction(int16_t forward,int16_t turn,uint8_t due)
+/* 主轴仍运动时同步纠偏；主轴归零即结束，不新增到站后的独立回位动作。 */
+static int16_t run_straight_correction(int16_t primary,int16_t turn,uint8_t due)
 {
-    int32_t error=run.straight_hold.lateral_mm,target=0,limit,change;
-    if(!forward || !run_straight_hold_enabled() || !run.straight_hold.valid
+    int32_t error=run.travel_axis==BODY_LEFT ? run.straight_hold.forward_mm : run.straight_hold.lateral_mm;
+    int32_t target=0,limit,change;
+    if(!primary || !run_straight_hold_enabled() || !run.straight_hold.valid
         || (uint32_t)(clock_ms-run.straight_hold.sample_ms)>CAR_VELOCITY_FEEDBACK_MS) {
         run.straight_hold.command_mrpm=run.straight_hold.command_rpm=0;return 0;
     }
-    limit=abs(forward)-abs(turn)-1;
+    limit=abs(primary)-abs(turn)-1;
     if(limit<0)limit=0;
     if(limit>CAR_STRAIGHT_HOLD_MAX_RPM)limit=CAR_STRAIGHT_HOLD_MAX_RPM;
     if(abs(error)>CAR_STRAIGHT_HOLD_DEADBAND_MM) {
         target=(abs(error)-CAR_STRAIGHT_HOLD_DEADBAND_MM)*CAR_STRAIGHT_HOLD_KP_X100/100;
         if(target<1)target=1;
         if(target>limit)target=limit;
-        if(error>0)target=-target; /* 左偏为正，补向右；后退沿用同一车身符号。 */
+        if(error>0)target=-target; /* 前后行驶：左偏补右；横移：前偏补后，后偏补前。 */
     }
     if(due) {
         uint32_t elapsed=clock_ms-run.control_ms;
@@ -2278,19 +2386,14 @@ static int run_velocity_distance(void)
             run.encoder_previous_delta[i] = delta;
             run.encoder_sample_ms[i] = motor_feedback[i].position_ms;
         }
-        /* 单轮明显反向不能与其他三轮平均后冒充正常里程。末端微量纠角保留容差。 */
+        /* 极性冲突只告警；仍保留按原符号计算出的实际位移，不自动停车。 */
         if (run.encoder_sign[i] && delta * run.encoder_sign[i] < -learn_counts) {
-            text("[encoder direction conflict] wheel=");number(i + 1u);text("\r\n");
-            return 0;
+            run_warning("encoder direction conflict; no automatic stop");
         }
         sum += delta * run.encoder_sign[i];
     }
     run_straight_observe();
     if (run.encoder_ready != 15u) {
-        if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_ENCODER_LEARN_TIMEOUT_MS) {
-            text("[encoder directions unconfirmed] mask=");number(run.encoder_ready);text("\r\n");
-            return 0;
-        }
         return 1;
     }
     run.progress_mm = (int32_t)((float)sum * CAR_POSITION_PULSES_PER_REV
@@ -2300,8 +2403,6 @@ static int run_velocity_distance(void)
            && run.progress_mm >= run.action_mm) {
         if (!run_pass_straight()) return 0;
     }
-    if (run.progress_mm < -CAR_DISTANCE_OVERRUN_MM
-        || (run.obstacle_phase != 1 && run.progress_mm > run.action_mm + CAR_DISTANCE_OVERRUN_MM)) return 0;
     return 1;
 }
 
@@ -2318,7 +2419,22 @@ static int16_t run_forward_target(int32_t remaining)
     speed = remaining * CAR_DISTANCE_KP_X100 / 100;
     mm_per_rpm_s = CAR_POSITION_PULSES_PER_REV
         / (60.0f * (run.travel_axis == BODY_LEFT ? CALIBRATED_PPM_X : CALIBRATED_PPM_Y));
-    delay_rpm = CAR_DRIVE_DECEL_RPM_PER_S * (CAR_DRIVE_BRAKE_LOOKAHEAD_MS / 1000.0f);
+    if(CAR_RUN_OMNI_ENABLED && !run.station_shift && !run.translation_only && !run.obstacle_phase && run.encoder_ready==ALL_MOTORS_MASK) {
+        static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
+        unsigned i;int32_t rpm=0;uint32_t age=0;
+        for(i=0;i<4u;i++) {
+            rpm+=motor_feedback[i].speed_rpm*(run.travel_axis==BODY_LEFT ? ls[i] : fs[i]);
+            age+=clock_ms-motor_feedback[i].position_ms;
+        }
+        /* 只给道路制动参考补偿CPOS平均年龄，不外推到位判据，也不改工位微调。 */
+        rpm=abs(rpm)/4;age/=4;
+        if(age>CAR_DRIVE_BRAKE_LOOKAHEAD_MS)age=CAR_DRIVE_BRAKE_LOOKAHEAD_MS;
+        if(rpm>CAR_ENCODER_LEARN_RPM)remaining-=(int32_t)(rpm*mm_per_rpm_s*age/1000.0f);
+        if(remaining<=CAR_DISTANCE_TOLERANCE_MM)return 0;
+        speed=remaining*CAR_DISTANCE_KP_X100/100;
+    }
+    delay_rpm = CAR_DRIVE_DECEL_RPM_PER_S
+        * ((run_rough_arrival() ? CAR_ROUGH_BRAKE_LOOKAHEAD_MS : CAR_DRIVE_BRAKE_LOOKAHEAD_MS) / 1000.0f);
     braking_rpm = sqrtf(delay_rpm * delay_rpm
         + 2.0f * CAR_DRIVE_DECEL_RPM_PER_S * (remaining - CAR_DISTANCE_TOLERANCE_MM) / mm_per_rpm_s) - delay_rpm;
     if (speed > (int32_t)braking_rpm) speed = (int32_t)braking_rpm;
@@ -2345,6 +2461,8 @@ static int16_t run_forward_slew(int16_t desired)
     if (!run.forward_mrpm) run.profile_sign = (int8_t)sign;
     if (run.profile_sign != sign) target = 0;
     rate = target > run.forward_mrpm ? CAR_DRIVE_ACCEL_RPM_PER_S : CAR_DRIVE_DECEL_RPM_PER_S;
+    if(target>run.forward_mrpm && !run.station_shift && !run.translation_only && !run.obstacle_phase)
+        rate=CAR_ROUTE_ACCEL_RPM_PER_S;
     /* 串口输出或ACK等待后不追补大步进；保持单次指令变化量有界。 */
     if (elapsed > CAR_DRIVE_SLEW_MAX_DT_MS) elapsed = CAR_DRIVE_SLEW_MAX_DT_MS;
     change = (int32_t)(rate * elapsed);
@@ -2413,7 +2531,8 @@ static void run_velocity_log(void)
         text(" turn_ref="); signed_number(run.turn_ref_rpm);
         text(" turn_cmd="); signed_number(run.turn_cmd_rpm);
         if(run_straight_hold_enabled()) {
-            text(" cross_mm=");signed_number(run.straight_hold.lateral_mm);
+            if(run.travel_axis==BODY_LEFT)text(" cross_axis=forward");
+            text(" cross_mm=");signed_number(run.travel_axis==BODY_LEFT ? run.straight_hold.forward_mm : run.straight_hold.lateral_mm);
             text(" cross_rpm=");signed_number(run.straight_hold.command_rpm);
             text(" cross_valid=");number(run.straight_hold.valid);
         }
@@ -2482,27 +2601,47 @@ static float corner_clip(float value,float low,float high)
     return value<low ? low : value>high ? high : value;
 }
 
-/* 地图D→E朝上、E→H朝左；局部x朝E，y朝H。车头+X到+Y对应IMU右转90度。 */
+/* 局部x=起步车身左侧、y=起步车身后方；路径由连续直线和相切圆弧组成。 */
 static CornerPoint run_corner_point(float s)
 {
     CornerPoint p;
-    float r=CAR_CORNER_RADIUS_MM,pre=run.corner.first_mm-r;
+    unsigned i;
     memset(&p,0,sizeof(p));
-    if(s<=pre) {p.x=corner_clip(s,0,pre);p.dx=1;}
-    else if(s<pre+run.corner.arc_mm) {
-        float u=(s-pre)/run.corner.arc_mm,a=u*1.570796327f,u2=u*u,u3=u2*u;
-        p.x=pre+r*sinf(a);p.y=r-r*cosf(a);p.dx=cosf(a);p.dy=sinf(a);
-        p.yaw_cdeg=-9000*(10*u3-15*u3*u+6*u3*u2);
-        p.yaw_per_mm=-9000*(30*u2-60*u3+30*u3*u)/run.corner.arc_mm;
-    } else {p.x=run.corner.first_mm;p.y=r+s-pre-run.corner.arc_mm;p.dy=1;p.yaw_cdeg=-9000;}
+    for(i=0;i<run.corner.span_count;i++) {
+        CornerSpan *span=&run.corner.spans[i];
+        float d=corner_clip(s-span->s,0,span->length);
+        if(s>span->s+span->length && i+1u<run.corner.span_count)continue;
+        p.yaw_cdeg=span->yaw;
+        if(span->radius>0) {
+            float u=d/span->length,a=span->angle+span->turn*d/span->radius;
+            float u2=u*u,u3=u2*u;
+            p.x=span->cx+span->radius*cosf(a);p.y=span->cy+span->radius*sinf(a);
+            p.dx=-span->turn*sinf(a);p.dy=span->turn*cosf(a);
+            /* 三次插值保持两端角速度为零，峰值为均值1.5倍，低于原五次的1.875倍。 */
+            p.yaw_cdeg+=span->dyaw*(3*u2-2*u3);
+            p.yaw_per_mm=span->dyaw*6*(u-u2)/span->length;
+        } else {
+            p.x=span->x+span->ux*d;p.y=span->y+span->uy*d;
+            p.dx=span->ux;p.dy=span->uy;
+            if(span->blend_length>0) {
+                float u=corner_clip(d/span->blend_length,0,1),u2=u*u,u3=u2*u;
+                float shift=10*u3-15*u3*u+6*u3*u2;
+                float slope=(30*u2-60*u3+30*u3*u)/span->blend_length;
+                p.x+=span->blend_x*shift;p.y+=span->blend_y*shift;
+                p.dx+=span->blend_x*slope;p.dy+=span->blend_y*slope;
+            }
+        }
+        break;
+    }
     return p;
 }
 
 static void run_corner_yaw_record(HeadingSample sample)
 {
     unsigned last=(run.corner.yaw_head+47u)%48u,index=run.corner.yaw_head;
+    /* 启动时可能再次读到较旧的同一份IMU；禁止倒序时间形成跨越约49天的插值区间。 */
     if(!sample.valid || (run.corner.yaw_count
-        && (uint32_t)(sample.received_ms-run.corner.yaw_ms[last])<10u))return;
+        && (int32_t)(sample.received_ms-run.corner.yaw_ms[last])<10))return;
     run.corner.yaw[index]=sample.yaw_cdeg;run.corner.yaw_ms[index]=sample.received_ms;
     run.corner.yaw_head=(uint8_t)((index+1u)%48u);
     if(run.corner.yaw_count<48u)run.corner.yaw_count++;
@@ -2522,28 +2661,156 @@ static int run_corner_yaw_at(uint32_t when,float *yaw)
     return 0;
 }
 
+/* 先限制规划本身所需的轮速变化，避免入弯后只能靠统一斜坡牺牲转向或平移。
+ * 恒定路径速度v下，轮速变化率为d(RPM/v)/ds*v^2；预留20%给位置/航向反馈。 */
+static float run_corner_span_speed(CornerSpan *span)
+{
+    static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
+    float previous[4]={0},step=span->length/32.0f;
+    float speed=span->radius>0 ? (span->dyaw ? CAR_CORNER_SPEED_MM_S : CAR_CORNER_FIXED_YAW_SPEED_MM_S)
+        *sqrtf(span->radius/CAR_CORNER_RADIUS_MM)
+        : CAR_WHEEL_MAX_RPM*CAR_POSITION_PULSES_PER_REV/(60.0f*CALIBRATED_PPM_X);
+    unsigned sample,wheel;
+    for(sample=0;sample<=32u;sample++) {
+        CornerPoint p=run_corner_point(span->s+step*sample);
+        float a=p.yaw_cdeg*0.0001745329252f;
+        float f=(sinf(a)*p.dx-cosf(a)*p.dy)*60.0f*CALIBRATED_PPM_Y/CAR_POSITION_PULSES_PER_REV;
+        float l=(cosf(a)*p.dx+sinf(a)*p.dy)*60.0f*CALIBRATED_PPM_X/CAR_POSITION_PULSES_PER_REV;
+        for(wheel=0;wheel<4u;wheel++) {
+            float next=fs[wheel]*f+ls[wheel]*l+p.yaw_per_mm/CAR_CORNER_YAW_GAIN_X100;
+            if(fabsf(next)*speed>CAR_WHEEL_MAX_RPM)speed=CAR_WHEEL_MAX_RPM/fabsf(next);
+            if(sample) {
+                float slope=fabsf(next-previous[wheel])/step;
+                float rate=next*previous[wheel]>=0 && fabsf(next)>fabsf(previous[wheel])
+                    ? CAR_ROUTE_ACCEL_RPM_PER_S : CAR_DRIVE_DECEL_RPM_PER_S;
+                if(slope*speed*speed>rate*0.8f)speed=sqrtf(rate*0.8f/slope);
+            }
+            previous[wheel]=next;
+        }
+    }
+    return speed;
+}
+
+/* 只收集到下一取放作业点；首个B是扫码条件点，可在有码时穿过。 */
+static int run_corner_plan(void)
+{
+    RoadPlan road;
+    uint8_t edge=run.edge,part=run.segment,job=run.job,finished=0;
+    unsigned i,last_arc=0,arcs=0;
+    float x=0,y=0,total=0,yaw=0,yaw_delta,start_x=0,start_y=0;
+    memset(&run.corner,0,sizeof(run.corner));
+    run.corner.start_edge=edge;run.corner.start_segment=part;run.corner.start_job=job;
+    run.corner.start_heading=run.corner.end_heading=run.heading;
+    if(!edge && !part && CAR_RUN_CORNER_ENABLED && CAR_RUN_OMNI_ENABLED) {
+        MotionParameters body;
+        if(!road_plan(full_route_nodes[run.plan][0],NODE_B,&road)
+            || !road_motion_parameters(road.segments[0],run.heading,&body))return 0;
+        start_x=body.axis==BODY_LEFT ? body.mm : 0;
+        start_y=body.axis==BODY_FORWARD ? -body.mm : 0;
+    }
+    if(run.station_return_mm) {
+        CornerLeg *leg=&run.corner.legs[run.corner.leg_count++];
+        run.corner.prefix_mm=run.station_return_mm;
+        leg->edge=edge;leg->segment=255u;leg->length=(float)abs(run.station_return_mm);
+        leg->uy=run.station_return_mm>0 ? -1.0f : 1.0f;
+        y=leg->uy*leg->length;leg->y=y; /* 此段终点就是原道路的2环基准。 */
+    }
+    while(run.corner.leg_count<8u && edge+1u<FULL_ROUTE_NODES) {
+        if(!run_plan_road(edge,&road) || (run.blocked_roads&(1u<<road.road)))return 0;
+        for(;part<road.count;part++) {
+            CornerLeg *leg;MotionParameters body,p=road.segments[part];
+            if(run.corner.leg_count>=8u || !road_motion_parameters(p,run.heading,&body))return 0;
+            leg=&run.corner.legs[run.corner.leg_count++];
+            leg->edge=edge;leg->segment=part;leg->length=(float)abs(p.mm);
+            leg->ux=body.axis==BODY_LEFT ? (body.mm>0 ? 1.0f : -1.0f) : 0;
+            leg->uy=body.axis==BODY_FORWARD ? (body.mm>0 ? -1.0f : 1.0f) : 0;
+            x+=leg->ux*leg->length;y+=leg->uy*leg->length;
+            if(!edge && !part) {x+=start_x;y+=start_y;}
+            leg->x=x;leg->y=y;
+        }
+        if(road.to==full_route_jobs[run.plan][job]) {
+            if(!job && road.to==NODE_B)job++;
+            else {finished=1;break;}
+        }
+        edge++;part=0;
+    }
+    if(!finished || run.corner.leg_count<2u)return 0;
+    (void)run_station_heading(road.to,&run.corner.end_heading);
+    for(i=0;i+1u<run.corner.leg_count;i++) {
+        CornerLeg *a=&run.corner.legs[i],*next=&run.corner.legs[i+1u];
+        float dot=a->ux*next->ux+a->uy*next->uy;
+        if(dot< -0.5f)return 0; /* 折返仍沿用停车路径；当前非作业路线没有此情形。 */
+        if(dot<0.5f) {
+            a->radius=CAR_CORNER_RADIUS_MM;
+            if(a->radius>a->length*0.5f)a->radius=a->length*0.5f;
+            if(a->radius>next->length*0.5f)a->radius=next->length*0.5f;
+            arcs++;
+        }
+    }
+    if(!arcs)return 0;
+    x=y=0;
+    for(i=0;i<run.corner.leg_count;i++) {
+        CornerLeg *leg=&run.corner.legs[i];CornerSpan *span;
+        float previous=i ? run.corner.legs[i-1u].radius : 0;
+        float length=leg->length-previous-leg->radius;
+        if(length>0.001f) {
+            span=&run.corner.spans[run.corner.span_count++];
+            span->x=x+leg->ux*previous;span->y=y+leg->uy*previous;
+            span->ux=leg->ux;span->uy=leg->uy;span->s=total;span->length=length;total+=length;
+        }
+        if(leg->radius>0) {
+            CornerLeg *next=&run.corner.legs[i+1u];
+            span=&run.corner.spans[run.corner.span_count++];
+            span->x=leg->x-leg->ux*leg->radius;span->y=leg->y-leg->uy*leg->radius;
+            span->turn=leg->ux*next->uy-leg->uy*next->ux;span->radius=leg->radius;
+            span->cx=span->x-span->turn*leg->uy*span->radius;
+            span->cy=span->y+span->turn*leg->ux*span->radius;
+            span->angle=atan2f(span->y-span->cy,span->x-span->cx);
+            span->s=total;span->length=1.570796327f*span->radius;total+=span->length;
+            run.corner.arc_mm+=span->length;last_arc=run.corner.span_count-1u;
+        }
+        leg->end_s=total;x=leg->x;y=leg->y;
+    }
+    yaw_delta=(float)heading_wrap_cdeg(CAR_MAP_YAW_SIGN*((int32_t)run.corner.end_heading-run.heading)*9000);
+    for(i=0;i<run.corner.span_count;i++) {
+        run.corner.spans[i].yaw=yaw;
+        if(i==last_arc){run.corner.spans[i].dyaw=yaw_delta;yaw=yaw_delta;}
+    }
+    if(start_x || start_y) {
+        CornerSpan *span=&run.corner.spans[0];
+        span->blend_x=start_x;span->blend_y=start_y;
+        span->blend_length=CAR_START_BLEND_MM<span->length ? CAR_START_BLEND_MM : span->length;
+    }
+    if(run.plan==1u && road.to==NODE_C) {
+        CornerSpan *span=&run.corner.spans[run.corner.span_count-1u];
+        CornerLeg *last=&run.corner.legs[run.corner.leg_count-1u];MotionParameters body;
+        (void)road_motion_parameters(road.segments[1],run.heading,&body);
+        span->blend_x=body.axis==BODY_LEFT ? body.mm : 0;
+        span->blend_y=body.axis==BODY_FORWARD ? -body.mm : 0;
+        span->blend_length=CAR_C_RETURN_BLEND_MM<span->length ? CAR_C_RETURN_BLEND_MM : span->length;
+        last->x+=span->blend_x;last->y+=span->blend_y;x=last->x;y=last->y;
+    }
+    for(i=0;i<run.corner.span_count;i++)if(run.corner.spans[i].radius>0 || run.corner.spans[i].blend_length>0)
+        run.corner.spans[i].speed_mm_s=run_corner_span_speed(&run.corner.spans[i]);
+    run.corner.total_mm=total;run.corner.first_mm=x;run.corner.second_mm=y;
+    run.corner.scan_gate=run.station_enabled && !run.job && !run.edge ? 1u : 0u;
+    return 1;
+}
+
 static void run_corner_begin(void)
 {
-    RoadPoint d,e,h;RoadPlan next;
     unsigned i;uint32_t age=0;
     HeadingSample sample=heading_snapshot();
-    if(!CAR_RUN_CORNER_ENABLED || !CAR_RUN_OMNI_ENABLED || !run.station_enabled
-        || run.station_shift || run.turn_only || run.translation_only || run.obstacle_phase
-        || run.road.from!=NODE_D || run.road.to!=NODE_E || run.road.count!=1u
-        || run.heading!=HEAD_X_POS || CAR_STATION_STORAGE_HEADING!=HEAD_Y_POS
-        || full_route_jobs[run.plan][run.job]!=NODE_H || run.edge+2u>=FULL_ROUTE_NODES
-        || full_route_nodes[run.plan][run.edge+2u]!=NODE_H
-        || !road_plan(NODE_E,NODE_H,&next) || next.count!=1u
-        || (run.blocked_roads&((1u<<run.road.road)|(1u<<next.road))))return;
-    if(!road_point(NODE_D,&d) || !road_point(NODE_E,&e) || !road_point(NODE_H,&h)
-        || d.x!=e.x || e.y!=h.y || d.y-e.y<=CAR_CORNER_RADIUS_MM
-        || e.x-h.x<=CAR_CORNER_RADIUS_MM)return;
-    memset(&run.corner,0,sizeof(run.corner));
-    run.corner.active=1;run.corner.start_edge=run.edge;
-    run.corner.first_mm=d.y-e.y;run.corner.second_mm=e.x-h.x;
-    run.corner.arc_mm=1.570796327f*CAR_CORNER_RADIUS_MM;
-    run.corner.total_mm=run.corner.first_mm+run.corner.second_mm-2*CAR_CORNER_RADIUS_MM+run.corner.arc_mm;
-    run.corner.origin_yaw_cdeg=heading_wrap_cdeg(run.yaw_zero_cdeg+CAR_MAP_YAW_SIGN*(int32_t)HEAD_X_POS*9000);
+    if(!CAR_RUN_CORNER_ENABLED || !CAR_RUN_OMNI_ENABLED
+        || run.station_shift || run.turn_only || run.translation_only || run.obstacle_phase)return;
+    if(!run_corner_plan()) {
+        if(run.station_return_mm)run_fault("station return path planning failed");
+        return;
+    }
+    run.corner.active=1;
+    if(!run.edge && !run.segment)
+        run.distance_mm+=(uint16_t)lroundf(hypotf(run.corner.spans[0].blend_x,run.corner.spans[0].blend_y));
+    run.corner.origin_yaw_cdeg=heading_wrap_cdeg(run.yaw_zero_cdeg+CAR_MAP_YAW_SIGN*(int32_t)run.heading*9000);
     run.corner.heading_target=run.heading_control.target_cdeg;
     run.corner.command_ms=clock_ms;run.corner.integrated_yaw_cdeg=sample.yaw_cdeg;
     for(i=0;i<4u;i++) {
@@ -2551,13 +2818,11 @@ static void run_corner_begin(void)
         run.corner.previous_ms[i]=run.corner.latest_ms[i]=motor_feedback[i].position_ms;
         if((uint32_t)(clock_ms-motor_feedback[i].position_ms)>age)age=clock_ms-motor_feedback[i].position_ms;
     }
-    run.corner.integrated_ms=clock_ms-age;
-    run.corner.projection_ms=run.corner.integrated_ms;
-    run.corner.yaw[0]=sample.yaw_cdeg;run.corner.yaw_ms[0]=run.corner.integrated_ms;
-    run.corner.yaw_head=run.corner.yaw_count=1;
-    run.continuation_mm=0;
-    text("[route corner begin] D>E>H radius_mm=" CAR_STRING_VALUE(CAR_CORNER_RADIUS_MM)
-         " arc_speed_mm_s=" CAR_STRING_VALUE(CAR_CORNER_SPEED_MM_S) "; encoder/IMU path and yaw; physical_path=unconfirmed\r\n");
+    run.corner.integrated_ms=clock_ms-age;run.corner.projection_ms=run.corner.integrated_ms;
+    run.corner.yaw[0]=sample.yaw_cdeg;run.corner.yaw_ms[0]=sample.received_ms;
+    run.corner.yaw_head=run.corner.yaw_count=1;run.continuation_mm=0;
+    text("[route corner begin] start_edge=");number(run.corner.start_edge);
+    text(" legs=");number(run.corner.leg_count);text("; continuous forward/lateral, yaw only as required by destination\r\n");
 }
 
 /* 串行轮询先插值四轮CPOS到共同时间，再旋转增量；纯转动的轮增量在逆混控中抵消。
@@ -2570,7 +2835,8 @@ static int run_corner_observe(void)
     if(!run.corner.polarity_ready) {
         if(!run_velocity_distance())return 0;
         if(run.encoder_ready==ALL_MOTORS_MASK) {
-            for(i=0;i<4u;i++)run.corner.polarity[i]=(int8_t)(run.encoder_sign[i]*ls[i]);
+            for(i=0;i<4u;i++)run.corner.polarity[i]=(int8_t)(run.encoder_sign[i]
+                *(run.travel_axis==BODY_LEFT ? ls[i] : fs[i])*run.travel_sign);
             run.corner.polarity_ready=1;
         }
     }
@@ -2598,35 +2864,92 @@ static int run_corner_observe(void)
     left*=CAR_POSITION_PULSES_PER_REV/(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X);
     delta=heading_wrap_cdeg((int32_t)lroundf(yaw-run.corner.integrated_yaw_cdeg));
     angle=heading_wrap_cdeg((int32_t)lroundf(run.corner.integrated_yaw_cdeg+delta*0.5f)-run.corner.origin_yaw_cdeg)*0.0001745329252f;
-    run.corner.x_mm+=sinf(angle)*forward+cosf(angle)*left;
-    run.corner.y_mm+=-cosf(angle)*forward+sinf(angle)*left;
+    {
+        float dx=sinf(angle)*forward+cosf(angle)*left,dy=-cosf(angle)*forward+sinf(angle)*left;
+        float dt=(common-run.corner.integrated_ms)/1000.0f,weight=dt/(0.08f+dt);
+        run.corner.vx_mm_s+=(dx/dt-run.corner.vx_mm_s)*weight;
+        run.corner.vy_mm_s+=(dy/dt-run.corner.vy_mm_s)*weight;
+        run.corner.x_mm+=dx;run.corner.y_mm+=dy;
+    }
     memcpy(run.corner.integrated,position,sizeof(position));run.corner.integrated_ms=common;run.corner.integrated_yaw_cdeg=yaw;
     return 1; /* 圆角位置超出原500mm边界仍继续路径闭环，不按估计值中止任务。 */
 }
 
-static float run_corner_project(void)
+static float run_corner_project(float x,float y)
 {
-    float pre=run.corner.first_mm-CAR_CORNER_RADIUS_MM,r=CAR_CORNER_RADIUS_MM;
-    float a=corner_clip(atan2f(run.corner.x_mm-pre,r-run.corner.y_mm),0,1.570796327f);
-    float candidates[3],best=0,error=1e30f;
-    unsigned i;
-    candidates[0]=corner_clip(run.corner.x_mm,0,pre);
-    candidates[1]=pre+a*r;
-    candidates[2]=pre+run.corner.arc_mm+corner_clip(run.corner.y_mm-r,0,run.corner.second_mm-r);
-    for(i=0;i<3u;i++) {
-        CornerPoint p=run_corner_point(candidates[i]);
-        float dx=p.x-run.corner.x_mm,dy=p.y-run.corner.y_mm,d=dx*dx+dy*dy;
-        if(d<error){error=d;best=candidates[i];}
+    unsigned i;float best=1.0e30f,result=0;
+    for(i=0;i<run.corner.span_count;i++) {
+        CornerSpan *span=&run.corner.spans[i];CornerPoint point;
+        float d,s,dx,dy,distance;
+        if(span->radius>0) {
+            float angle=atan2f(y-span->cy,x-span->cx)-span->angle;
+            if(angle>3.141592654f)angle-=6.283185307f;
+            if(angle< -3.141592654f)angle+=6.283185307f;
+            d=corner_clip(span->turn*angle,0,1.570796327f)*span->radius;
+        } else d=corner_clip((x-span->x)*span->ux+(y-span->y)*span->uy,0,span->length);
+        s=span->s+d;point=run_corner_point(s);
+        dx=point.x-x;dy=point.y-y;distance=dx*dx+dy*dy;
+        if(distance<best){best=distance;result=s;}
     }
-    return best;
+    return result;
 }
 
-/* 保留三轴比例，以共同缩放限制单轮速度及变化率；不会让高速平移挤掉转向分量。 */
+/* 无任务码时不切过扫码点：在首个圆弧入口保留原1030mm直达B停等。 */
+static void run_corner_scan_gate(float s)
+{
+    unsigned i;
+    if(run.corner.scan_gate!=1u || run.corner.reversing)return;
+    if(station_task_ready()){run.corner.scan_gate=2;return;}
+    for(i=0;i<run.corner.span_count;i++)if(run.corner.spans[i].radius>0) {
+        if(s<run.corner.spans[i].s)break;
+        run.corner.scan_fallback=1;run.corner.scan_gate=0;run.corner.span_count=run.corner.leg_count=1;
+        run.corner.spans[0].length=run.corner.legs[0].length;
+        run.corner.legs[0].radius=0;run.corner.legs[0].end_s=run.corner.total_mm=run.corner.legs[0].length;
+        run.corner.first_mm=run.corner.legs[0].x;run.corner.second_mm=run.corner.legs[0].y;
+        run.corner.end_heading=run.corner.start_heading;run.corner.arc_mm=0;
+        text("[scan station] no task at bend entry; continue to B before waiting\r\n");break;
+    }
+}
+
+/* 在圆弧出口推进逻辑路段；不把切角过程当作停车到过节点。 */
+static void run_corner_advance(float s,CornerPoint point)
+{
+    while(run.corner.leg_index+1u<run.corner.leg_count
+        && s>=run.corner.legs[run.corner.leg_index].end_s) {
+        CornerLeg *next=&run.corner.legs[++run.corner.leg_index];RunLeg leg;
+        if(run.station_return_mm) {
+            run.station_return_mm=0;
+            text("[station ring2 join] continuous velocity into departure road; no visual or stop\r\n");
+        }
+        if(next->edge!=run.edge) {
+            uint8_t node=run.road.to;
+            run.completed_roads|=(uint16_t)(1u<<run.road.road);
+            if(!run.job && node==NODE_B) {
+                run.job++;run.scan_turn_stage=0;
+                text("[scan station] B bypassed; task latched; continuous forward/lateral transition\r\n");
+            }
+            run.edge=next->edge;
+            (void)run_plan_road(run.edge,&run.road);
+        }
+        run.segment=next->segment;
+        if(fabsf(point.yaw_cdeg-heading_wrap_cdeg(CAR_MAP_YAW_SIGN*((int32_t)run.corner.end_heading-run.corner.start_heading)*9000))<0.5f)
+            run.target_heading=run.corner.end_heading;
+        (void)run_resolve_leg(&run.road,run.segment,run.edge,run.target_heading,run.completed_roads,&leg);
+        run.travel_axis=leg.axis;run.travel_sign=leg.sign;run.action_mm=run.remaining_mm=leg.mm;
+        run.steps++;run.distance_mm+=leg.mm;run.corner.passed=1;
+        if(run.plan==1u && next->edge==FULL_ROUTE_NODES-2u)
+            run.distance_mm+=(uint16_t)lroundf(hypotf(run.corner.spans[run.corner.span_count-1u].blend_x,
+                run.corner.spans[run.corner.span_count-1u].blend_y));
+        text("[route corner pass] edge=");number(run.edge);text(" segment=");number(run.segment);
+        text("; continuous velocity, no stop/realign\r\n");
+    }
+}
+
 static void run_corner_slew(float desired[3],int16_t output[3])
 {
     static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
     uint32_t elapsed=clock_ms-run.corner.command_ms;
-    float maximum=0,scale=1,limit=CAR_WHEEL_MAX_RPM,step;
+    float maximum=0,scale=1,limit=CAR_WHEEL_MAX_RPM,seconds,accel;
     unsigned i;
     if(elapsed>CAR_DRIVE_SLEW_MAX_DT_MS)elapsed=CAR_DRIVE_SLEW_MAX_DT_MS;
     if(run.corner.reversing && limit>CAR_OBSTACLE_RETURN_RPM)limit=CAR_OBSTACLE_RETURN_RPM;
@@ -2635,9 +2958,18 @@ static void run_corner_slew(float desired[3],int16_t output[3])
         if(value>maximum)maximum=value;
     }
     if(maximum>limit)for(i=0;i<3u;i++)desired[i]*=limit/maximum;
-    step=CAR_DRIVE_DECEL_RPM_PER_S*(elapsed/1000.0f);
+    seconds=elapsed/1000.0f;
+    accel=run.corner.reversing ? CAR_DRIVE_DECEL_RPM_PER_S : CAR_ROUTE_ACCEL_RPM_PER_S;
     for(i=0;i<4u;i++) {
-        float change=fabsf(fs[i]*(desired[0]-run.corner.command[0])+ls[i]*(desired[1]-run.corner.command[1])+desired[2]-run.corner.command[2]);
+        float previous=fs[i]*run.corner.command[0]+ls[i]*run.corner.command[1]+run.corner.command[2];
+        float next=fs[i]*desired[0]+ls[i]*desired[1]+desired[2];
+        float change=fabsf(next-previous),step;
+        /* 每轮先按原减速率过零，再用道路加速率升速；三轴仍共同比例推进。 */
+        if(previous*next<0) {
+            float stop_seconds=fabsf(previous)/CAR_DRIVE_DECEL_RPM_PER_S;
+            step=seconds<=stop_seconds ? CAR_DRIVE_DECEL_RPM_PER_S*seconds
+                : fabsf(previous)+accel*(seconds-stop_seconds);
+        } else step=(fabsf(next)>fabsf(previous) ? accel : CAR_DRIVE_DECEL_RPM_PER_S)*seconds;
         if(change>step && step/change<scale)scale=step/change;
     }
     for(i=0;i<3u;i++) {
@@ -2650,32 +2982,43 @@ static void run_corner_slew(float desired[3],int16_t output[3])
 static void run_corner_update(void)
 {
     CornerPoint point;
-    float s,remaining,speed,pre=run.corner.first_mm-CAR_CORNER_RADIUS_MM;
+    float s,remaining,speed;
     float coefficient=60.0f*CALIBRATED_PPM_X/CAR_POSITION_PULSES_PER_REV;
-    float decel=CAR_DRIVE_DECEL_RPM_PER_S/coefficient,delay=decel*CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0f;
-    float ex,ey,vx,vy,angle,desired[3],rate,effort;
+    float decel=CAR_DRIVE_DECEL_RPM_PER_S/coefficient;
+    float delay=decel*(run_rough_arrival() ? CAR_ROUGH_BRAKE_LOOKAHEAD_MS : CAR_DRIVE_BRAKE_LOOKAHEAD_MS)/1000.0f;
+    float ex,ey,vx,vy,angle,desired[3],rate,effort,x,y,measured_s,age;
     int16_t command[3];int32_t target;
-    unsigned i;uint8_t due;
+    unsigned i;uint8_t due,visual_end;
     if(!run_corner_observe()){run_fault("encoder corner direction learning failed");return;}
     if(run.corner.polarity_ready && (uint32_t)(clock_ms-run.corner.integrated_ms)>CAR_VELOCITY_FEEDBACK_MS) {
         /* 单轮恢复的第一份CPOS尚不能形成共同时间；先沿用原反馈等待，不能拿旧位置配新航向。 */
         run_wait_feedback("four-wheel position timestamps incomplete; awaiting coherent feedback");return;
     }
-    s=run_corner_project();point=run_corner_point(s);
+    measured_s=run_corner_project(run.corner.x_mm,run.corner.y_mm);run_corner_scan_gate(measured_s);
+    measured_s=run_corner_project(run.corner.x_mm,run.corner.y_mm);
+    age=(uint32_t)(clock_ms-run.corner.integrated_ms)/1000.0f;
+    if(age>CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0f)age=CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0f;
+    /* 本次只补偿固定车头长横移；同步转头仍沿用共同采样时刻的既有角度前馈。 */
+    if(run.corner.start_heading!=run.corner.end_heading)age=0;
+    x=run.corner.x_mm+run.corner.vx_mm_s*age;y=run.corner.y_mm+run.corner.vy_mm_s*age;
+    s=run_corner_project(x,y);point=run_corner_point(s);
     if(run.corner.integrated_ms!=run.corner.projection_ms) {
-        run.corner.speed_mm_s=(s-run.corner.s_mm)*1000.0f/(run.corner.integrated_ms-run.corner.projection_ms);
+        run.corner.speed_mm_s=(measured_s-run.corner.measured_s_mm)*1000.0f/(run.corner.integrated_ms-run.corner.projection_ms);
+        run.corner.measured_s_mm=measured_s;
         run.corner.projection_ms=run.corner.integrated_ms;
     }
     run.corner.s_mm=s;
     target=run.corner.heading_target+(int32_t)lroundf(point.yaw_cdeg);
     if(target!=run.heading_control.target_cdeg)run.heading_control.stable_samples=0;
     run.heading_control.target_cdeg=target;run.heading_control.error_cdeg=target-run.heading_control.progress_cdeg;
-    if(!run.corner.reversing && !run.corner.passed && s>=pre+run.corner.arc_mm) {
-        run.completed_roads|=(uint16_t)(1u<<run.road.road);run.edge++;run.segment=0;
-        if(!road_plan(NODE_E,NODE_H,&run.road)){run_fault("corner exit road missing");return;}
-        run.corner.passed=1;run.travel_axis=BODY_LEFT;run.travel_sign=-1;run.target_heading=HEAD_Y_POS;
-        run.remaining_mm=run.action_mm=(uint16_t)run.corner.second_mm;run.steps++;run.distance_mm+=run.action_mm;
-        text("[route corner pass] E bypassed; moving and yaw continuous; H checkpoint pending\r\n");
+    if(!run.corner.reversing)run_corner_advance(measured_s,point);
+    visual_end=run.station_enabled && !run.corner.reversing && (run.corner.arriving || run_visual_arrival());
+    if(!run.corner.visual_terminal && visual_end && measured_s>=run.corner.total_mm-CAR_DISTANCE_TOLERANCE_MM
+        && hypotf(run.corner.first_mm-run.corner.x_mm,run.corner.second_mm-run.corner.y_mm)<=CAR_ROUTE_VISUAL_WINDOW_MM)
+    {
+        run.corner.visual_terminal=1;text("[route arrival] node=");send_byte((uint8_t)('A'+run.road.to));
+        text(" residual_xy_mm=");signed_number((int32_t)(run.corner.first_mm-run.corner.x_mm));text(",");
+        signed_number((int32_t)(run.corner.second_mm-run.corner.y_mm));text("; position to vision; zero/yaw feedback still required\r\n");
     }
     remaining=run.corner.reversing ? s : run.corner.total_mm-s;
     speed=sqrtf(delay*delay+2*decel*corner_clip(remaining-CAR_DISTANCE_TOLERANCE_MM,0,100000))-delay;
@@ -2683,25 +3026,38 @@ static void run_corner_update(void)
     if(speed>remaining*CAR_CORNER_TRACK_GAIN_X100/100.0f)speed=remaining*CAR_CORNER_TRACK_GAIN_X100/100.0f;
     if(remaining>CAR_DISTANCE_TOLERANCE_MM && speed<CAR_CORNER_MIN_MM_S)speed=CAR_CORNER_MIN_MM_S;
     if(remaining<=CAR_DISTANCE_TOLERANCE_MM)speed=0;
-    if(s<=pre) {
-        float entry=sqrtf(delay*delay+CAR_CORNER_SPEED_MM_S*CAR_CORNER_SPEED_MM_S+2*decel*corner_clip(pre-s,0,100000))-delay;
-        if(entry<CAR_CORNER_SPEED_MM_S)entry=CAR_CORNER_SPEED_MM_S;
-        if(speed>entry)speed=entry;
-    } else if(s<pre+run.corner.arc_mm && speed>CAR_CORNER_SPEED_MM_S)speed=CAR_CORNER_SPEED_MM_S;
+    for(i=0;i<run.corner.span_count;i++)if(run.corner.spans[i].radius>0 || run.corner.spans[i].blend_length>0) {
+        CornerSpan *span=&run.corner.spans[i];
+        float arc_speed=span->speed_mm_s;
+        float distance=run.corner.reversing ? s-span->s-span->length : span->s-s;
+        if(distance>=0) {
+            float entry=sqrtf(delay*delay+arc_speed*arc_speed+2*decel*distance)-delay;
+            if(entry<arc_speed)entry=arc_speed;
+            if(speed>entry)speed=entry;
+        } else if(s>=span->s && s<=span->s+span->length && speed>arc_speed)speed=arc_speed;
+    }
     if(!run.corner.polarity_ready && speed>CAR_ENCODER_LEARN_RPM/coefficient)speed=CAR_ENCODER_LEARN_RPM/coefficient;
     if(abs(run.heading_control.error_cdeg)>CAR_CORNER_SLOW_YAW_CDEG)
         speed*=CAR_CORNER_SLOW_YAW_CDEG/(float)abs(run.heading_control.error_cdeg);
     if(run.corner.reversing)speed=-corner_clip(speed,0,CAR_CORNER_RETURN_MM_S);
-    ex=point.x-run.corner.x_mm;ey=point.y-run.corner.y_mm;
+    ex=point.x-x;ey=point.y-y;
     if(remaining<=CAR_DISTANCE_TOLERANCE_MM) {
         point=run_corner_point(run.corner.reversing ? 0 : run.corner.total_mm);
-        ex=point.x-run.corner.x_mm;ey=point.y-run.corner.y_mm;
+        ex=point.x-x;ey=point.y-y;
     }
     vx=fabsf(ex)<=CAR_DISTANCE_TOLERANCE_MM ? 0 : corner_clip(ex*CAR_CORNER_TRACK_GAIN_X100/100.0f,-CAR_CORNER_TRACK_MAX_MM_S,CAR_CORNER_TRACK_MAX_MM_S);
     vy=fabsf(ey)<=CAR_DISTANCE_TOLERANCE_MM ? 0 : corner_clip(ey*CAR_CORNER_TRACK_GAIN_X100/100.0f,-CAR_CORNER_TRACK_MAX_MM_S,CAR_CORNER_TRACK_MAX_MM_S);
     if(vx && fabsf(vx)<CAR_CORNER_MIN_MM_S)vx=vx>0 ? CAR_CORNER_MIN_MM_S : -CAR_CORNER_MIN_MM_S;
     if(vy && fabsf(vy)<CAR_CORNER_MIN_MM_S)vy=vy>0 ? CAR_CORNER_MIN_MM_S : -CAR_CORNER_MIN_MM_S;
     vx+=point.dx*speed;vy+=point.dy*speed;
+    if(run.plan==1u && run.corner.start_edge==FULL_ROUTE_NODES-4u && !run.corner.reversing && vx>0) {
+        /* C回程外侧分量单独预制动，前进可继续；四轮共用变化率，留一半能力给另一轴。 */
+        float axis_decel=decel*0.5f,axis_delay=axis_decel*CAR_DRIVE_BRAKE_LOOKAHEAD_MS/1000.0f;
+        float room=corner_clip(run.corner.first_mm-x,0,100000);
+        float maximum=sqrtf(axis_delay*axis_delay+2*axis_decel*room)-axis_delay;
+        if(vx>maximum)vx=maximum;
+    }
+    if(run.corner.visual_terminal && visual_end)vx=vy=0;
     angle=heading_wrap_cdeg((int32_t)run.heading_control.last_yaw_cdeg-run.corner.origin_yaw_cdeg)*0.0001745329252f;
     desired[0]=(sinf(angle)*vx-cosf(angle)*vy)*60.0f*CALIBRATED_PPM_Y/CAR_POSITION_PULSES_PER_REV;
     desired[1]=(cosf(angle)*vx+sinf(angle)*vy)*coefficient;
@@ -2712,15 +3068,20 @@ static void run_corner_update(void)
         -(run.heading_control.rate_cdeg_s-rate)*CAR_DRIVE_HEADING_KD_X100)/10000.0f;
     desired[2]=corner_clip(rate/CAR_CORNER_YAW_GAIN_X100+effort,-CAR_CORNER_YAW_MAX_RPM,CAR_CORNER_YAW_MAX_RPM);
     if(!vx && !vy)desired[2]=heading_control_rpm(&run.heading_control,run.turn_rpm);
-    if(!run.corner.reversing && run.corner.passed && !run.corner.arriving
-        && fabsf(run.corner.first_mm-run.corner.x_mm)<=STN_APPROACH_OVERLAP_MM
-        && fabsf(run.corner.second_mm-run.corner.y_mm)<=STN_APPROACH_OVERLAP_MM) {
+    if(!run.corner.reversing && run.corner.leg_index+1u==run.corner.leg_count && !run.corner.arriving
+        && run_station_heading(run.road.to,&run.target_heading)
+        && ((fabsf(run.corner.first_mm-run.corner.x_mm)<=STN_APPROACH_OVERLAP_MM
+            && fabsf(run.corner.second_mm-run.corner.y_mm)<=STN_APPROACH_OVERLAP_MM)
+            || (run.corner.visual_terminal && hypotf(run.corner.first_mm-run.corner.x_mm,
+                run.corner.second_mm-run.corner.y_mm)<=CAR_ROUTE_VISUAL_WINDOW_MM))) {
         uint8_t low=1;
         for(i=0;i<4u;i++)if(abs(run.wheel_rpm[i])>STN_APPROACH_OVERLAP_RPM)low=0;
         if(low) {
             run.completed_roads|=(uint16_t)(1u<<run.road.road);run.edge++;run.segment=run.road.count;
             run.corner.arriving=1;run.station_align_pending=1;run.turning=1;run.velocity_phase=VELOCITY_TURN;
-            text("[station alignment] node=H right_side=WORK_AREA target_heading_dec=0; curved arrival checkpoint pending\r\n");
+            text("[station alignment] node=");send_byte((uint8_t)('A'+run.road.to));
+            text(" right_side=WORK_AREA target_heading_dec=");number(run.target_heading);
+            text("; curved arrival checkpoint pending\r\n");
         }
     }
     due=(uint32_t)(clock_ms-run.control_ms)>=CAR_VELOCITY_CONTROL_MS && !run.velocity_waiting;
@@ -2732,13 +3093,25 @@ static void run_corner_update(void)
     }
     if(!vx && !vy && !run.wheel_rpm[0] && !run.wheel_rpm[1] && !run.wheel_rpm[2] && !run.wheel_rpm[3]
         && run_velocity_stopped() && run.heading_control.stable_samples>=CAR_HEADING_STABLE_SAMPLES
+        && ((run.corner.visual_terminal && visual_end)
+            || (fabsf(point.x-run.corner.x_mm)<=CAR_DISTANCE_TOLERANCE_MM && fabsf(point.y-run.corner.y_mm)<=CAR_DISTANCE_TOLERANCE_MM))
         && (uint32_t)(run.heading_control.sample_ms-run.heading_control.stable_ms)>=CAR_HEADING_STABLE_MS) {
         run.corner.active=0;run.remaining_mm=0;run.turning=0;run.transition_ready=1;
-        run.heading=run.target_heading=run.corner.reversing ? HEAD_X_POS : HEAD_Y_POS;
+        run.heading=run.target_heading=run.corner.reversing ? run.corner.start_heading : run.corner.end_heading;
         if(run.corner.reversing){run_return_wait();return;}
-        run.station_align_pending=0;
-        text("[station right-side ready] node=H heading_dec=0; encoder/IMU curved path complete; physical_pose=unconfirmed\r\n");
-        run_finish_node();return;
+        if(run.corner.visual_terminal && !run.corner.arriving) {
+            run.completed_roads|=(uint16_t)(1u<<run.road.road);run.edge++;run.segment=run.road.count;
+            run.corner.arriving=1;
+        }
+        if(run.corner.arriving) {
+            run.station_align_pending=0;
+            text("[station right-side ready] node=");send_byte((uint8_t)('A'+run.road.to));
+            text(" heading_dec=");number(run.heading);
+            text(run.corner.visual_terminal ? "; navigation residual to vision; physical_pose=unconfirmed\r\n"
+                : "; encoder/IMU curved path complete; physical_pose=unconfirmed\r\n");
+            run_finish_node();
+        } else run_advance_segment();
+        return;
     }
     run.progress_mm=(int32_t)s;run_heading_window_sample();
     if((uint32_t)(clock_ms-run.log_ms)>=CAR_CONTROL_LOG_MS) {
@@ -2754,7 +3127,7 @@ static int run_obstacle_request(void)
 {
     if (!run_active || !run.imu_mode || run.turn_only || run.translation_only) return 0;
     if (run.obstacle_phase) {run_fault("obstacle repeated during stop/return; hold position");return 1;}
-    if(run.corner.active && run.station_entry_overlap) {run_fault("obstacle during station work; no automatic reverse");return 1;}
+    if(run.corner.active && (run.station_entry_overlap || run.corner.prefix_mm)) {run_fault("obstacle during station work; no automatic reverse");return 1;}
     run.obstacle_preflight = run.state == RUN_PREFLIGHT;
     run.obstacle_leg_active = !run.turning
         && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD);
@@ -2765,10 +3138,11 @@ static int run_obstacle_request(void)
         run.completed_roads &= (uint16_t)~(1u << run.road.road);
     }
     if(run.corner.active) {
-        RoadPlan first,second;
-        run.obstacle_node=NODE_D;run.obstacle_leg_active=0;
-        if(road_plan(NODE_D,NODE_E,&first) && road_plan(NODE_E,NODE_H,&second))
-            run.completed_roads&=(uint16_t)~((1u<<first.road)|(1u<<second.road));
+        unsigned part;RoadPlan road;
+        run.obstacle_node=full_route_nodes[run.plan][run.corner.start_edge];run.obstacle_leg_active=0;
+        for(part=0;part<run.corner.leg_count;part++)if(run_plan_road(run.corner.legs[part].edge,&road))
+            run.completed_roads&=(uint16_t)~(1u<<road.road);
+        run.scan_turn_stage=0;
         memset(run.corner.command,0,sizeof(run.corner.command));run.corner.command_ms=clock_ms;
     }
     run.obstacle_phase = 1;run.alignment_waiting=0;run.state = RUN_OBSTACLE_STOP;run.phase_ms = clock_ms;
@@ -2783,19 +3157,10 @@ static int run_obstacle_request(void)
     return 1;
 }
 
-/* 反馈不足时只暂停底盘输出，保留本段和工位现场；新数据恢复后继续。 */
+/* 反馈不足只继续查询；保留最后指令，不自动发零速，也不伪造新反馈。 */
 static void run_wait_feedback(const char *reason)
 {
     run_warning(reason);
-    run.forward_mrpm=0;run.forward_profile_ms=clock_ms;run.phase_ms=clock_ms;
-    run.straight_hold.command_mrpm=run.straight_hold.command_rpm=0;
-    if(run.corner.active) {memset(run.corner.command,0,sizeof(run.corner.command));run.corner.command_ms=clock_ms;}
-    if(run.vector_move) {
-        run.vector_mrpm[0]=run.vector_mrpm[1]=0;
-        run.vector_profile_ms[0]=run.vector_profile_ms[1]=clock_ms;
-    }
-    if ((run.state!=RUN_PREFLIGHT || run.velocity_sent)
-        && !run_velocity_send(0,0,0)) {run_fault("velocity batch submit failed");return;}
     run_velocity_query();
 }
 
@@ -2811,15 +3176,15 @@ static void run_velocity_update(void)
         uint8_t address = (uint8_t)(frame.id >> 8);
         if (!run_record_frame(&frame)) continue;
         if (frame.data[0] == MOTOR_VELOCITY_COMMAND) {
-            if (frame.data[1] != MOTOR_POSITION_ACK) {run_fault("velocity command rejected");return;}
+            if (frame.data[1] != MOTOR_POSITION_ACK) {run_fault("velocity command rejected");continue;}
             if (run.velocity_waiting && (uint32_t)(frame.received_ms - run.velocity_ms) < CAR_VELOCITY_ACK_MS) {
                 run.acks |= (uint8_t)(1u << (address - 1u));
                 if (run.acks == ALL_MOTORS_MASK) run.velocity_waiting = 0;
             }
         }
         if (frame.data[0] == MOTOR_STATUS_COMMAND
-            && (!(frame.data[1] & MOTOR_FLAG_ENABLED) || (frame.data[1] & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED)))) {
-            run_fault("motor disabled or stalled");return;
+            && (!(frame.data[1] & MOTOR_FLAG_ENABLED) || (frame.data[1] & MOTOR_FLAG_PROTECTED))) {
+            run_fault("motor disabled or protected");
         }
         if (address == run.pending && frame.data[0] == run.pending_command
             && (int32_t)(frame.received_ms - run.query_ms) >= 0) {
@@ -2860,9 +3225,10 @@ static void run_velocity_update(void)
             run.corner.reversing=1;run.corner.arriving=0;run.corner.command_ms=clock_ms;
             run.obstacle_phase=2;run.state=RUN_MOVING;run.turning=0;
             run.station_align_pending=0;run.velocity_phase=VELOCITY_FORWARD;run.phase_ms=clock_ms;
-            run.edge=run.corner.start_edge;run.segment=0;
-            if(!road_plan(NODE_D,NODE_E,&run.road)){run_fault("corner return road missing");return;}
-            text("[obstacle returning] curved path to D; encoder/IMU; original speed limit retained\r\n");
+            run.edge=run.corner.start_edge;run.segment=run.corner.start_segment;run.job=run.corner.start_job;
+            if(!run_plan_road(run.edge,&run.road)){run_fault("corner return road missing");return;}
+            text("[obstacle returning] curved path to ");send_byte((uint8_t)('A'+run.obstacle_node));
+            text("; encoder/IMU; original speed limit retained\r\n");
             return;
         }
         if (run.obstacle_leg_active) {
@@ -2893,12 +3259,12 @@ static void run_velocity_update(void)
     for (i = 0; i < MOTOR_COUNT; i++)
         if (run.wheel_rpm[i] && (uint32_t)(clock_ms - run.wheel_start_ms[i]) > CAR_VELOCITY_STALL_MS
             && (uint32_t)(clock_ms - motor_feedback[i].position_changed_ms) > CAR_VELOCITY_STALL_MS) {
-            run_fault("wheel position did not follow velocity command");return;
+            run_fault("wheel position did not follow velocity command");
         }
     if (run.velocity_phase == VELOCITY_TURN && (run.heading_control.target_cdeg > 4500 || run.heading_control.target_cdeg < -4500)
         && ((run.heading_control.target_cdeg > 0 && run.heading_control.progress_cdeg < -500)
             || (run.heading_control.target_cdeg < 0 && run.heading_control.progress_cdeg > 500))) {
-        run_fault("IMU rotation direction mismatch");return;
+        run_fault("IMU rotation direction mismatch");
     }
     if (run.velocity_phase == VELOCITY_BASELINE) {
         if (run.departure_overlap && !CAR_ARM_TRANSLATION_OVERLAP_ENABLED) {run_velocity_query();return;}
@@ -2928,9 +3294,11 @@ static void run_velocity_update(void)
         run.left_ref_rpm = run.left_cmd_rpm = 0;
         run.control_dt_ms = 0;
         memset(&run.heading_window, 0, sizeof(run.heading_window));
-        run.velocity_phase = VELOCITY_FORWARD;run.state = RUN_MOVING;
-        run.phase_ms = clock_ms;run.steps++;run.distance_mm += run.action_mm;
+        run.velocity_phase = VELOCITY_FORWARD;run.state = RUN_MOVING;run.route_terminal=0;
+        run.phase_ms = clock_ms;
+        if(!run.station_return_mm){run.steps++;run.distance_mm += run.action_mm;}
         run_corner_begin();
+        if(!run_active)return;
         run_status();
     }
     if(run.corner.active){run_corner_update();return;}
@@ -2940,13 +3308,17 @@ static void run_velocity_update(void)
         if (run.velocity_phase == VELOCITY_FORWARD) {
             int32_t remaining = (int32_t)run.action_mm - run.progress_mm + run.continuation_mm;
             if (run.heading_control.error_cdeg > CAR_HEADING_MAX_DRIFT_CDEG || run.heading_control.error_cdeg < -CAR_HEADING_MAX_DRIFT_CDEG) {
-                run_fault("IMU excessive translation heading error");return;
+                run_fault("IMU excessive translation heading error");
             }
             if(run.vector_move) {
                 forward=run_vector_target(0);left=run_vector_target(1);
                 if(!forward && !left)run.velocity_phase=VELOCITY_STOP_FORWARD;
             } else if (run.travel_axis == BODY_LEFT) {
-                if (remaining <= CAR_DISTANCE_TOLERANCE_MM && remaining >= -CAR_DISTANCE_TOLERANCE_MM)
+                if(!run.route_terminal && remaining<=CAR_DISTANCE_TOLERANCE_MM && abs(remaining)<=CAR_ROUTE_VISUAL_WINDOW_MM && run_visual_arrival()) {
+                    run.route_terminal=1;text("[route arrival] node=");send_byte((uint8_t)('A'+run.road.to));
+                    text(" residual_mm=");signed_number(remaining);text("; position to vision; zero/yaw feedback still required\r\n");
+                }
+                if (remaining <= CAR_DISTANCE_TOLERANCE_MM && (remaining >= -CAR_DISTANCE_TOLERANCE_MM || run.route_terminal))
                     run.velocity_phase = VELOCITY_STOP_FORWARD;
                 else left = run_forward_target(remaining);
             } else if (remaining <= CAR_DISTANCE_TOLERANCE_MM) run.velocity_phase = VELOCITY_STOP_FORWARD;
@@ -2957,7 +3329,7 @@ static void run_velocity_update(void)
             if(run_vector_target(0) || run_vector_target(1)) {
                 run.velocity_phase=VELOCITY_FORWARD;run.stopped_ms=0;
             }
-        } else if (run.travel_axis == BODY_LEFT
+        } else if (run.travel_axis == BODY_LEFT && !run.route_terminal
                    && ((int32_t)run.action_mm - run.progress_mm > CAR_DISTANCE_TOLERANCE_MM
                        || run.progress_mm - (int32_t)run.action_mm > CAR_DISTANCE_TOLERANCE_MM)) {
             /* 减速/末端纠角产生的行程漂移必须重新收敛，不能在距离超差时报告完成。 */
@@ -3008,16 +3380,23 @@ static void run_velocity_update(void)
     if(run_straight_hold_enabled() && drive_heading) {
         int16_t available;
         left=run_straight_correction(forward,turn,control_due);
-        /* 有横向修正时优先保留横移/航向余量，避免300RPM同比限幅稀释纠偏。 */
+        /* 有横向修正时优先保留横移/航向余量，避免单轮限幅稀释纠偏。 */
         available=(int16_t)(CAR_WHEEL_MAX_RPM-abs(left)-abs(turn));
         if(left && abs(forward)>available)forward=forward>0 ? available : -available;
     }
-    if (left && !run.vector_move && run.travel_axis==BODY_LEFT) {
-        int16_t per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
-        /* 沿用前移mm/米的经验补偿，换算为轮速；此项不是位置观测。 */
-        float trim = (float)(left > 0 ? left : -left) * per_m * CALIBRATED_PPM_Y
-                     / (1000.0f * CALIBRATED_PPM_X);
-        forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
+    if (!run.vector_move && run.travel_axis==BODY_LEFT) {
+        if(run_straight_hold_enabled()) {
+            int16_t available;
+            forward=run_straight_correction(left,turn,control_due);
+            available=(int16_t)(CAR_WHEEL_MAX_RPM-abs(forward)-abs(turn));
+            if(forward && abs(left)>available)left=left>0 ? available : -available;
+        } else if(left) {
+            int16_t per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
+            /* 未启用位置纠偏的既有路径保留经验前移；闭环时不叠加固定前移。 */
+            float trim = (float)(left > 0 ? left : -left) * per_m * CALIBRATED_PPM_Y
+                         / (1000.0f * CALIBRATED_PPM_X);
+            forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
+        }
     }
     if (run.travel_axis == BODY_LEFT) run.forward_ref_rpm = forward;
     if (control_due) {
@@ -3044,17 +3423,6 @@ static void run_velocity_update(void)
                 run_finish_node();
                 return;
             }
-            if (run.scan_turn_stage==1u) {
-                run.scan_turn_stage=0;run.turning=0;
-                if (station_task_ready()) {
-                    /* 扫码已与转向重叠，不再进入扫码工位重复获取机构互锁。
-                     * 下一段仍按IMU确认出站朝向，不把途中扫码当作航向已到位。 */
-                    run.job++;run.transition_ready=1;
-                    text("[scan station] task latched; depart directly on route heading\r\n");
-                    if (!run_road()) run_fault("scan departure road failed");
-                } else run_finish_node();
-                return;
-            }
             if (run.turn_only) {run_done();return;}
             run_begin_baseline();
         } else if (run.velocity_phase == VELOCITY_STOP_FORWARD) {
@@ -3067,9 +3435,6 @@ static void run_velocity_update(void)
             text(" error_cdeg=");signed_number(run.heading_control.error_cdeg);text("\r\n");
             run.remaining_mm = 0;
             if (run.obstacle_phase == 2) {
-                if (run.progress_mm - (int32_t)run.action_mm > CAR_DISTANCE_TOLERANCE_MM) {
-                    run_fault("obstacle return distance outside tolerance");return;
-                }
                 run_return_next();return;
             }
             if (run.translation_only) run_done();
@@ -3097,19 +3462,16 @@ static void run_update(void)
     if (entry_host_can_bus_off())
     {
         run_fault("CAN bus off");
-        return;
     }
 #else
     if (CAN1->ESR & CAN_BUS_OFF_FLAG)
     {
         run_fault("CAN bus off");
-        return;
     }
 #endif
     if (can_rx_fault) {
         run_fault((can_rx_fault & 2u) ? "CAN transmit queue full; command not queued"
                                     : "CAN hardware FIFO overrun; feedback lost");
-        return;
     }
     run_velocity_update();
 }
@@ -3216,14 +3578,14 @@ static void help(void)
     text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
-    text("turn = IMU closed-loop rotation test | rpm 20..300\r\n");
+    text("turn = IMU closed-loop rotation test | rpm 20.." CAR_STRING_VALUE(CAR_WHEEL_MAX_RPM) "\r\n");
     text("TURN: left90 / right90 / left180 / right180 = IMU relative angle closed-loop\r\n");
     text("runimu obstacle = stop, return by encoder to last tracked node, then wait; no automatic detector\r\n");
     text("test = single-segment calibration | nav = return to navigation (stops)\r\n");
-    text("TEST: dist 50..2000 mm | rpm 20..300 | f/b/l/r (body directions)\r\n");
+    text("TEST: dist 50..2000 mm | rpm 20.." CAR_STRING_VALUE(CAR_WHEEL_MAX_RPM) " | f/b/l/r (body directions)\r\n");
     text("TEST l/r: IMU heading + encoder distance, lateral rpm limited to " CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; fresh IMU required\r\n");
     text("Inspect actual stop and reset physical start before the next direction key.\r\n");
-    text("pose A | heading 0..3 (+Y,-X,-Y,+X) | go H | rpm 20..300 (0=road table)\r\n");
+    text("pose A | heading 0..3 (+Y,-X,-Y,+X) | go H | rpm 20.." CAR_STRING_VALUE(CAR_WHEEL_MAX_RPM) " (0=road table)\r\n");
     text("confirm (segment) | node B (actual arrival) | obstacle | return A\r\n");
     text("block 0..11 | unblock 0..11 | progress measured_mm | info | help\r\n");
     text("! = immediate stop request (no Enter); s/z stop after Enter\r\n");
@@ -3272,7 +3634,7 @@ static int command_turn_test(const char *command_text)
     if (drive.state == MOTION_RUNNING || stop_pending)
         return 0;
     if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value)
-        && value >= 20 && value <= 300)
+        && value >= 20 && value <= CAR_WHEEL_MAX_RPM)
     {
         turn_rpm = value;
         accepted = 1;
@@ -3300,7 +3662,7 @@ static int command_translation_test(const char *command_text)
         accepted = 1;
     }
     else if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value)
-        && value >= 20 && value <= 300
+        && value >= 20 && value <= CAR_WHEEL_MAX_RPM
         && drive.state != MOTION_RUNNING)
     {
         test_rpm = value;
@@ -3511,7 +3873,7 @@ static void command(char *command_text)
     else if (!strncmp(command_text, "go ", 3) && pose_set && parse_node(command_text + 3, &node))
         accepted = nav_start(&nav, node, speed_rpm);
     else if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value) && (!value || (value >= 20
-        && value <= 300)) && (nav.state == NAV_IDLE || nav.state == NAV_ARRIVED
+        && value <= CAR_WHEEL_MAX_RPM)) && (nav.state == NAV_IDLE || nav.state == NAV_ARRIVED
         || nav.state == NAV_STOPPED))
     {
         speed_rpm = value;
@@ -3557,6 +3919,10 @@ static void turn_postcheck_update(void)
 static void firmware_step(void)
 {
     uint8_t value,stopped_this_step=stop_pending;
+    if(rx_overflow && !stop_pending) {
+        __disable_irq();rx_tail=rx_head;rx_overflow=0;__enable_irq();
+        line_length=0;text("[RX overflow warning: discarded input; no automatic stop]\r\n");
+    }
     if (stop_pending)
     {
         uint8_t overflow;
@@ -3585,6 +3951,7 @@ static void firmware_step(void)
             run_status();
     }
     if(!stop_pending)can_tx_update();
+    run_timing_poll();
     if(start_button_update() && !stopped_this_step && !stop_pending) {
         char start_command[]="runimu C";
         text("[button] requesting runimu C\r\n");
@@ -3608,8 +3975,8 @@ static void firmware_step(void)
             line[line_length++] = (char) value;
         else
         {
-            stop_pending = 1;
             rx_overflow = 1;
+            line_length = 0;
         }
     }
     screen_update();
@@ -3628,7 +3995,8 @@ static void firmware_step(void)
         }
         if (run_active && run.station_enabled
             && !(run.station_shift ? station_chassis_pose_safe()
-                 : ((arm_ready() && arm_parked()) || (run.departure_overlap && arm_departure_rotation_active())
+                 : ((arm_ready() && arm_parked()) || (run.departure_overlap
+                       && (run.departure_overlap==2u ? station_through_departure(NULL) : arm_departure_rotation_active()))
                     || (run.station_entry_overlap && arm_enabled() && arm_pose_known() && !arm_failed())))) {
             run_fault("arm left parked pose during route");return;
         }
@@ -3650,8 +4018,7 @@ static void firmware_step(void)
                 text("[test estimate elapsed; measure actual distance; NOT arrival]\r\n");
             if (state == MOTION_FAULT)
             {
-                motion_stop(&drive);
-                text("[test timeout/failure: stop requested; inspect vehicle before next key]\r\n");
+                run_warning("test command failed; no automatic stop; actual confirmation required");
             }
         }
         else
@@ -3720,7 +4087,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261024-merge2-r75; raw plate H once per batch\r\n");
+    text("[drive] version=20261025-merge2-r92; lateral forward-position hold; RPM limit200\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

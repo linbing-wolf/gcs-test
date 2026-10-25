@@ -28,7 +28,7 @@ try {
         $cornerHashes[$cornerName]=(Get-FileHash -LiteralPath $cornerName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;sourceHashes=$cornerHashes;variants=@(0,1);hardwareAccessed=$false;
-        scope='Only auto D-E-H corners, closed-loop A/C and both storage visits, polarity/asymmetric wheels, pause/resume, emergency and curved obstacle return; not vehicle acceptance'} |
+        scope='Fast transitions: A seven/C six corners, fixed/changing yaw, per-wheel acceleration/braking/reversal, C final60mm blended into B-C and visual terminal handoff, full jobs, coherent feedback, pause/resume and curved return; not vehicle acceptance'} |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $cornerOut 'result.json') -Encoding UTF8
     Write-Output $cornerOut
 } finally {$env:PATH=$cornerOldPath;Pop-Location}

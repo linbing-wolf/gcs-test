@@ -10,6 +10,8 @@ int arm_parked(void);
 int arm_departure_rotation_active(void);
 /* 当前动作两轴已实际到135/0且不会再移动，只剩末尾旋转；可衔接底盘平移。 */
 int arm_translation_overlap_ready(void);
+/* 地面取放后的抬升已通过原有实际净空判据；仅供已编排的工位索引衔接。 */
+int arm_station_clearance_ready(uint32_t now);
 int arm_pose_known(void);
 int arm_command(const char *command, uint32_t now);
 void arm_update(uint32_t now);

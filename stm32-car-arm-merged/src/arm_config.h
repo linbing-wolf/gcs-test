@@ -26,7 +26,7 @@
 #define ARM_PLATFORM_TURN_START_LIFT_MM 110 /* 原料/粗加工抓回/车载杯夹紧后实际升到此高度才开始云台/平推，mm；继续升至135。 */
 #endif
 #ifndef ARM_CUP_EXIT_DESCENT_DELAY_MS
-#define ARM_CUP_EXIT_DESCENT_DELAY_MS 300u /* 各区夹紧后实际升到最高位再延迟下降/换杯，ms；当前300，0=到顶即下降，不等转向结束。 */
+#define ARM_CUP_EXIT_DESCENT_DELAY_MS 200u /* 各区夹紧后实际升到最高位再延迟下降/换杯，ms；当前300，0=到顶即下降，不等转向结束。 */
 #endif
 #if ARM_PLATFORM_TURN_START_LIFT_MM < ARM_LIFT_MIN_MM || ARM_PLATFORM_TURN_START_LIFT_MM > ARM_LIFT_HOME_MM
 #error Invalid_platform_turn_start_height
@@ -70,10 +70,10 @@
 #define ARM_CHASSIS_STOP_HOLD_MS     200u /* 机构会话获取底盘状态的保持时间，ms；非每个抓放步骤的延时。 */
 #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u /* 底盘互锁等待诊断时限，ms；具体等待/日志行为见主控。 */
 #define ARM_SERVO_TIME_MS           300u /* 载物台插值时长，ms；减小会更快发完目标，舵机无到位反馈。 */
-#define ARM_YAW_TIME_MS             150u /* 云台插值时长，ms；减小加快指令变化，与末端保持40ms独立。 */
+#define ARM_YAW_TIME_MS             100u /* 云台插值时长，ms；减小加快指令变化，与末端保持40ms独立。 */
 #define ARM_YAW_SETTLE_MS            40u /* 最终云台PWM写入后的保持时间，ms；减小更快衔接，稳定性须实测。 */
-#define ARM_CLAW_TIME_MS             50u /* 夹爪开合插值时长，ms；与合爪后的抓稳保持120ms独立。 */
-#define ARM_CLAW_CLOSE_HOLD_MS      120u /* 最终合爪PWM写入后抓稳保持，ms；减小可能未抓稳就上升，张爪不加此等待。 */
+#define ARM_CLAW_TIME_MS             30u /* 夹爪开合插值时长，ms；与合爪后的抓稳保持120ms独立。 */
+#define ARM_CLAW_CLOSE_HOLD_MS      50u /* 最终合爪PWM写入后抓稳保持，ms；减小可能未抓稳就上升，张爪不加此等待。 */
 #define ARM_YAW_TEST_TIME_MS        8000u /* 全行程诊断单次插值时间，不改变夹取动作速度。 */
 #define ARM_POLL_MS                   10u /* 机构反馈查询间隔，ms；减小增加CAN流量，净空阶段穿插升降位置查询。 */
 #define ARM_FEEDBACK_TIMEOUT_MS      500u /* 机构反馈新鲜度/查询等待窗口，ms；不是动作间隔。 */

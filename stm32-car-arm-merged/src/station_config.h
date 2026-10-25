@@ -1,5 +1,8 @@
 #ifndef STATION_CONFIG_H
 #define STATION_CONFIG_H
+/* 复用现有连续道路和工位并行开关；关闭其中之一即保留原回2环停车路径。 */
+#define STN_ROUGH_THROUGH_ENABLED (CAR_ARM_TRANSLATION_OVERLAP_ENABLED && CAR_RUN_CORNER_ENABLED && CAR_RUN_OMNI_ENABLED)
+#define STN_STORAGE_FIRST_THROUGH_ENABLED STN_ROUGH_THROUGH_ENABLED /* 仅首次暂存：回2环并入离站道路；第二次逐物块叠放保持。 */
 /* B点二维码板位于+X；扫码模块在车尾，车头须朝-X，让车尾朝+X。 */
 #define STN_SCAN_HEADING 1u /* B点扫码车头地图朝向编号；1=向左，使车尾扫码器朝二维码板。 */
 /* 粗加工区 / 暂存区的取放姿态标定表。
