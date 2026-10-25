@@ -653,13 +653,23 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
         d["reason"] = "no-fit"
         return None
     rank, rms, tag, res, m2 = best
-    if gate and rank != 0:
-        d["reason"] = "reject(最好 rms=%.2f npts=%d)" % (rms, m2.get("npts", 0))
-        d["rejected"] = True
-        return None
     for k, v in m2.items():
         d[k] = v
     d["prior_used"] = tag
+    d["low_conf"] = bool(gate and rank != 0)
+    if gate and rank != 0:
+        # 现场要求：不准确也要执行完 → 默认 "report"（只标记低置信，照常返回最佳猜测）
+        # 想恢复「不可信就回 NONE」的严格模式：PLATE_GATE_MODE="reject"
+        mode = str(getattr(config, "PLATE_GATE_MODE", "report")).strip().lower()
+        d["reject_reason"] = "rms=%.2f npts=%d" % (rms, m2.get("npts", 0))
+        if mode in ("reject", "none", "strict"):
+            d["reason"] = "reject(最好 rms=%.2f npts=%d)" % (
+                rms, m2.get("npts", 0))
+            d["rejected"] = True
+            return None
+        d["reason"] = "lowconf(%s,rms=%.2f,npts=%d,prior=%s)" % (
+            d.get("model", "?"), rms, m2.get("npts", 0), tag)
+        return res
     d["reason"] = "ok(%s,npts=%d,prior=%s)" % (d.get("model", "?"),
                                                d.get("npts", 0), tag)
     return res

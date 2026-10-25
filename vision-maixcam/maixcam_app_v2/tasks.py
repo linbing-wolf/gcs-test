@@ -1292,8 +1292,12 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
                         image.COLOR_GREEN if ok_xy else image.COLOR_YELLOW, 2)
         if rec is not None:
             rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
-                                     {"action": "detect", "ok": 1 if ok_xy else 0}),
+                                     {"action": "detect", "ok": 1 if ok_xy else 0,
+                                      "low_conf": 1 if imeta.get("low_conf") else 0}),
                      "detect")
+        if imeta.get("low_conf"):
+            log("[H] 低置信拟合（%s）→ 仍按最佳猜测执行：low=(%d,%d) dx=%+d dy=%+d"
+                % (imeta.get("reject_reason", ""), flx, fly, dx, dy))
 
         # ---- 容差内：连续 N 帧稳定才回 ok=1 ----
         if ok_xy:
@@ -1323,6 +1327,10 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
             y_out = abs(dy) > tol_y
             sx_step = _axis_step(dx, gain, step_min, step_max, 1.0, inv_x) if x_out else 0
             sy_step = _axis_step(dy, gain, step_min, step_max, 1.0, inv_y) if y_out else 0
+            _cap = max(0, int(getattr(config, "PLATE_LOWCONF_STEP_MAX", 0)))
+            if _cap and imeta.get("low_conf"):
+                sx_step = max(-_cap, min(_cap, sx_step))
+                sy_step = max(-_cap, min(_cap, sy_step))
             actions = _make_align_actions(x_out, y_out, sx_step, sy_step)
             parts = []
             for name, step, payload in actions:

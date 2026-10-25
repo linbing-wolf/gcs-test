@@ -408,12 +408,18 @@ PLATE_COARSE_R_MIN       = 150.0 # 粗圆半径绝对范围
 PLATE_COARSE_R_MAX       = 560.0
 PLATE_COARSE_R_RATIO_MIN = 0.55  # 又要在「配置先验半径 × 这个比例」范围内，防认错圆
 PLATE_COARSE_R_RATIO_MAX = 1.60
-# ---- 质量闸门：拟合不可信就不回假圆（宁回 NONE，让上位机重摆）----
+# ---- 质量闸门：拟合不可信时怎么处理 ----
 #   实测 35 张真实图：可信拟合 rms ≤ 3.0 / npts ≥ 44；假圆 rms ≥ 5.96。
-#   判据以 rms 为主（区分干净），npts 只防退化（粗定位找回的小弧点数会偏少）。
+#   PLATE_GATE_MODE:
+#     "report" = 【默认·现场要求】只标记低置信（日志 + meta.low_conf），
+#                仍按最佳猜测发 MOVEXY / 回 DISC —— 「不准确也要执行完」
+#     "reject" = 严格：不可信就回 NONE,H（不动作）
 PLATE_QUALITY_GATE  = True
-PLATE_MAX_RMS       = 4.0      # 拟合残差上限(px)，超了判不可信
-PLATE_MIN_PTS       = 30       # 有效边缘点下限，少了判不可信
+PLATE_GATE_MODE     = "report"
+PLATE_MAX_RMS       = 4.0      # 拟合残差上限(px)，超了算低置信
+PLATE_MIN_PTS       = 30       # 有效边缘点下限，少了算低置信
+# 低置信时把单次步长限幅（0=不限）；防止一次错拟合把车甩太远。
+PLATE_LOWCONF_STEP_MAX = 0
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
 PLATE_ELLIPSE_K_MAX = 1.05
 PLATE_ELLIPSE_K_STEP = 0.01

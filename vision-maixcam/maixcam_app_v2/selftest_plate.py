@@ -467,21 +467,32 @@ print("\n== 假圆防护（粗定位 + 质量闸门）==")
 _old_g = (config.PLATE_MAX_RMS, config.PLATE_QUALITY_GATE,
           config.PLATE_COARSE_LOCATE)
 
-# (a) 质量闸门：把残差上限压到极小 → 任何拟合都判不可信（回 None，不发假 MOVEXY）
+# (a) 质量闸门：把残差上限压到极小 → 拟合判为低置信
 config.PLATE_COARSE_LOCATE = False
 config.PLATE_QUALITY_GATE = True
+_old_mode = config.PLATE_GATE_MODE
 config.PLATE_MAX_RMS = 0.001
+#   默认 report 模式：只标记，仍返回最佳猜测（现场要求「不准确也要执行完」）
+config.PLATE_GATE_MODE = "report"
 m = {}
 r = vision.find_disc_arc(FakeArcImage(310.0, -55.0, 330.0), 310.0, -55.0, 330.0,
                          meta=m)
-check("闸门：残差超限 → 判不可信回 None",
+check("闸门 report：低置信也返回结果（并标记 low_conf）",
+      r is not None and m.get("low_conf") is True, str(m.get("reason")))
+#   reject 模式：不可信就回 None（严格，不动作）
+config.PLATE_GATE_MODE = "reject"
+m = {}
+r = vision.find_disc_arc(FakeArcImage(310.0, -55.0, 330.0), 310.0, -55.0, 330.0,
+                         meta=m)
+check("闸门 reject：残差超限 → 判不可信回 None",
       r is None and m.get("rejected") is True, str(m.get("reason")))
+config.PLATE_GATE_MODE = _old_mode
 config.PLATE_MAX_RMS = 4.0
 m = {}
 r = vision.find_disc_arc(FakeArcImage(310.0, -55.0, 330.0), 310.0, -55.0, 330.0,
                          meta=m)
-check("阈值正常时同一张图能通过",
-      r is not None and not m.get("rejected"), str(m.get("reason")))
+check("阈值正常时同一张图判为可信（不标 low_conf）",
+      r is not None and not m.get("low_conf"), str(m.get("reason")))
 
 # (b) 粗定位：盘横向偏移 250px（远超搜索带 ±60）
 _img_far = FakeArcImage(560.0, -55.0, 330.0, kb=0.92)
