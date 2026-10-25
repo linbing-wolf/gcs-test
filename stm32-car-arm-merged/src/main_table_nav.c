@@ -314,6 +314,7 @@ static void run_status(void);
 static void run_velocity_update(void);
 static void run_begin_alignment(void);
 static int run_velocity_stopped(void);
+static uint16_t run_wheel_limit_rpm(void);
 static void arm_lock_begin(void);
 static void run_resume_after_station(void);
 static void run_station_update(void);
@@ -1220,6 +1221,8 @@ static int run_segment(void)
         run.travel_axis=BODY_FORWARD;run.travel_sign=run.station_return_mm>0 ? 1 : -1;
         run.remaining_mm=(uint16_t)abs(run.station_return_mm);run.continuation_mm=0;
     }
+    run.lateral_rpm=run.travel_axis==BODY_LEFT
+        ? car_lateral_limit_rpm((uint32_t)run.remaining_mm+run.continuation_mm) : 0;
     run_segment_log(leg.mm);
     run_begin_alignment();
     return 1;
@@ -1379,7 +1382,7 @@ static int start_run(uint8_t initial_node)
     number(run.turn_rpm);
     text(initial_node == NODE_C ? "; zone=2 bottom_right; original start position; initial heading=-X toward D/E/F"
                                : "; zone=1 top_right; original start position; initial heading=-X toward D/E/F");
-    text("; start lateral rpm<=" CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; continuous forward/backward; station_auto per configuration\r\n");
+    text("; start lateral rpm<=");number(CAR_LATERAL_MAX_RPM);text("; continuous forward/backward; station_auto per configuration\r\n");
     run_status();
     return 1;
 }
@@ -1392,7 +1395,7 @@ static int start_heading_turn(int16_t relative_degrees, uint16_t rpm)
     HeadingSample sample = heading_snapshot();
     if (run_active || stop_pending || (drive.state != MOTION_IDLE && drive.state != MOTION_DONE)
         || !relative_degrees || relative_degrees < -180 || relative_degrees > 180
-        || rpm < 20 || rpm > CAR_WHEEL_MAX_RPM
+        || rpm < 20 || rpm > CAR_TURN_CLOSED_LOOP_RPM
         || !heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS))
         return 0;
     nav_stop(&nav);
@@ -1430,7 +1433,8 @@ static int start_heading_shift(int32_t mm, uint16_t rpm)
     run.travel_axis = BODY_LEFT;
     run.travel_sign = mm > 0 ? 1 : -1;
     run.remaining_mm = (uint16_t)(mm > 0 ? mm : -mm);
-    run.lateral_rpm = rpm > CAR_LATERAL_MAX_RPM ? CAR_LATERAL_MAX_RPM : rpm;
+    run.lateral_rpm=car_lateral_limit_rpm(run.remaining_mm);
+    if(rpm<run.lateral_rpm)run.lateral_rpm=rpm;
     run.turn_rpm = CAR_TURN_CLOSED_LOOP_RPM;
     if (!heading_control_start(&run.heading_control, sample, 0, clock_ms)) return 0;
     run.state = RUN_PREFLIGHT;
@@ -2071,8 +2075,11 @@ static void run_station_prepare_entry(void)
 static int run_velocity_send(int16_t forward, int16_t left, int16_t turn)
 {
     int16_t wheels[4];
+    int32_t maximum=0;uint16_t limit=run_wheel_limit_rpm();
     uint8_t i, changed = !run.velocity_sent, all_zero = 1;
     heading_control_translate_wheels(forward, left, turn, wheels);
+    for(i=0;i<MOTOR_COUNT;i++)if(abs(wheels[i])>maximum)maximum=abs(wheels[i]);
+    if(maximum>limit)for(i=0;i<MOTOR_COUNT;i++)wheels[i]=(int16_t)((int32_t)wheels[i]*limit/maximum);
     for (i = 0; i < MOTOR_COUNT; i++) {
         if (wheels[i] != run.wheel_rpm[i]) changed = 1;
         if (wheels[i]) all_zero = 0;
@@ -2518,6 +2525,7 @@ static void run_velocity_log(void)
         text(" t_ms="); number(clock_ms);
         text(" v_ref="); signed_number(run.forward_ref_rpm);
         text(" v_cmd="); signed_number(run.forward_cmd_rpm);
+        text(" wheel_limit_rpm=");number(run_wheel_limit_rpm());
         if(run.travel_axis == BODY_LEFT || run.vector_move) {
             text(" left_ref="); signed_number(run.left_ref_rpm);
             text(" left_cmd="); signed_number(run.left_cmd_rpm);
@@ -2629,6 +2637,31 @@ static CornerPoint run_corner_point(float s)
     return p;
 }
 
+/* 连续路径按规划切线和车头识别横移，不因位置/航向反馈噪声跳档。
+ * 同一直线上的逻辑道路合并计长，经过E或接近终点时不把长横移改成短档。 */
+static uint16_t run_wheel_limit_rpm(void)
+{
+    if(run.corner.active) {
+        CornerPoint p=run_corner_point(run.corner.s_mm);
+        float angle=p.yaw_cdeg*0.0001745329252f;
+        float lateral;
+        unsigned first=0,last,i;uint32_t distance=0;
+        while(first+1u<run.corner.leg_count && run.corner.s_mm>=run.corner.legs[first].end_s)first++;
+        lateral=cosf(angle)*run.corner.legs[first].ux+sinf(angle)*run.corner.legs[first].uy;
+        if(fabsf(lateral)<0.001f)return CAR_RUN_RPM;
+        last=first;
+        while(first && run.corner.legs[first-1u].ux*run.corner.legs[first].ux
+            +run.corner.legs[first-1u].uy*run.corner.legs[first].uy>0.5f)first--;
+        while(last+1u<run.corner.leg_count && run.corner.legs[last+1u].ux*run.corner.legs[last].ux
+            +run.corner.legs[last+1u].uy*run.corner.legs[last].uy>0.5f)last++;
+        for(i=first;i<=last;i++)distance+=(uint32_t)lroundf(run.corner.legs[i].length);
+        return car_lateral_limit_rpm(distance);
+    }
+    if(run.turn_only || run.turning || run.station_shift || run.obstacle_phase)return CAR_TURN_CLOSED_LOOP_RPM;
+    return run.travel_axis==BODY_LEFT
+        ? (run.lateral_rpm ? run.lateral_rpm : CAR_LATERAL_MAX_RPM) : CAR_RUN_RPM;
+}
+
 static void run_corner_yaw_record(HeadingSample sample)
 {
     unsigned last=(run.corner.yaw_head+47u)%48u,index=run.corner.yaw_head;
@@ -2675,7 +2708,8 @@ static float run_corner_span_speed(CornerSpan *span)
             if(sample) {
                 float slope=fabsf(next-previous[wheel])/step;
                 float rate=next*previous[wheel]>=0 && fabsf(next)>fabsf(previous[wheel])
-                    ? CAR_ROUTE_ACCEL_RPM_PER_S : CAR_DRIVE_DECEL_RPM_PER_S;
+                    ? (span->dyaw ? CAR_CORNER_WHEEL_ACCEL_RPM_PER_S : CAR_ROUTE_ACCEL_RPM_PER_S)
+                    : (span->dyaw ? CAR_CORNER_WHEEL_DECEL_RPM_PER_S : CAR_DRIVE_DECEL_RPM_PER_S);
                 if(slope*speed*speed>rate*0.8f)speed=sqrtf(rate*0.8f/slope);
             }
             previous[wheel]=next;
@@ -2938,11 +2972,23 @@ static void run_corner_advance(float s,CornerPoint point)
     }
 }
 
+static int run_corner_rotating_span(void)
+{
+    unsigned i;
+    if(!run.corner.active || run.corner.reversing || run.corner.visual_terminal)return 0;
+    for(i=0;i<run.corner.span_count;i++) {
+        CornerSpan *span=&run.corner.spans[i];
+        if(span->dyaw && run.corner.s_mm>=span->s && run.corner.s_mm<span->s+span->length)return 1;
+    }
+    return 0;
+}
+
 static void run_corner_slew(float desired[3],int16_t output[3])
 {
     static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
     uint32_t elapsed=clock_ms-run.corner.command_ms;
-    float maximum=0,scale=1,limit=CAR_WHEEL_MAX_RPM,seconds,accel;
+    float maximum=0,scale=1,limit=run_wheel_limit_rpm(),seconds,accel;
+    float decel=CAR_DRIVE_DECEL_RPM_PER_S;
     unsigned i;
     if(elapsed>CAR_DRIVE_SLEW_MAX_DT_MS)elapsed=CAR_DRIVE_SLEW_MAX_DT_MS;
     if(run.corner.reversing && limit>CAR_OBSTACLE_RETURN_RPM)limit=CAR_OBSTACLE_RETURN_RPM;
@@ -2953,16 +2999,21 @@ static void run_corner_slew(float desired[3],int16_t output[3])
     if(maximum>limit)for(i=0;i<3u;i++)desired[i]*=limit/maximum;
     seconds=elapsed/1000.0f;
     accel=run.corner.reversing ? CAR_DRIVE_DECEL_RPM_PER_S : CAR_ROUTE_ACCEL_RPM_PER_S;
+    /* 提高弯内平移/旋转混控的变化率，不改变直线、退回和终点停车的制动计算。 */
+    if(run_corner_rotating_span() && (desired[0] || desired[1])) {
+        accel=CAR_CORNER_WHEEL_ACCEL_RPM_PER_S;
+        decel=CAR_CORNER_WHEEL_DECEL_RPM_PER_S;
+    }
     for(i=0;i<4u;i++) {
         float previous=fs[i]*run.corner.command[0]+ls[i]*run.corner.command[1]+run.corner.command[2];
         float next=fs[i]*desired[0]+ls[i]*desired[1]+desired[2];
         float change=fabsf(next-previous),step;
-        /* 每轮先按原减速率过零，再用道路加速率升速；三轴仍共同比例推进。 */
+        /* 每轮先按当前路段减速率过零，再升速；三轴仍共同比例推进。 */
         if(previous*next<0) {
-            float stop_seconds=fabsf(previous)/CAR_DRIVE_DECEL_RPM_PER_S;
-            step=seconds<=stop_seconds ? CAR_DRIVE_DECEL_RPM_PER_S*seconds
+            float stop_seconds=fabsf(previous)/decel;
+            step=seconds<=stop_seconds ? decel*seconds
                 : fabsf(previous)+accel*(seconds-stop_seconds);
-        } else step=(fabsf(next)>fabsf(previous) ? accel : CAR_DRIVE_DECEL_RPM_PER_S)*seconds;
+        } else step=(fabsf(next)>fabsf(previous) ? accel : decel)*seconds;
         if(change>step && step/change<scale)scale=step/change;
     }
     for(i=0;i<3u;i++) {
@@ -3015,7 +3066,7 @@ static void run_corner_update(void)
     }
     remaining=run.corner.reversing ? s : run.corner.total_mm-s;
     speed=sqrtf(delay*delay+2*decel*corner_clip(remaining-CAR_DISTANCE_TOLERANCE_MM,0,100000))-delay;
-    speed=corner_clip(speed,0,CAR_WHEEL_MAX_RPM/coefficient);
+    speed=corner_clip(speed,0,run_wheel_limit_rpm()/coefficient);
     if(speed>remaining*CAR_CORNER_TRACK_GAIN_X100/100.0f)speed=remaining*CAR_CORNER_TRACK_GAIN_X100/100.0f;
     if(remaining>CAR_DISTANCE_TOLERANCE_MM && speed<CAR_CORNER_MIN_MM_S)speed=CAR_CORNER_MIN_MM_S;
     if(remaining<=CAR_DISTANCE_TOLERANCE_MM)speed=0;
@@ -3374,7 +3425,7 @@ static void run_velocity_update(void)
         int16_t available;
         left=run_straight_correction(forward,turn,control_due);
         /* 有横向修正时优先保留横移/航向余量，避免单轮限幅稀释纠偏。 */
-        available=(int16_t)(CAR_WHEEL_MAX_RPM-abs(left)-abs(turn));
+        available=(int16_t)(run_wheel_limit_rpm()-abs(left)-abs(turn));
         if(left && abs(forward)>available)forward=forward>0 ? available : -available;
     }
     if (left && !run.vector_move && run.travel_axis==BODY_LEFT) {
@@ -3564,14 +3615,15 @@ static void help(void)
     text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
-    text("turn = IMU closed-loop rotation test | rpm 20.." CAR_STRING_VALUE(CAR_WHEEL_MAX_RPM) "\r\n");
+    text("turn = IMU closed-loop rotation test | rpm 20..");number(CAR_TURN_CLOSED_LOOP_RPM);text("\r\n");
     text("TURN: left90 / right90 / left180 / right180 = IMU relative angle closed-loop\r\n");
     text("runimu obstacle = stop, return by encoder to last tracked node, then wait; no automatic detector\r\n");
     text("test = single-segment calibration | nav = return to navigation (stops)\r\n");
-    text("TEST: dist 50..2000 mm | rpm 20.." CAR_STRING_VALUE(CAR_WHEEL_MAX_RPM) " | f/b/l/r (body directions)\r\n");
-    text("TEST l/r: IMU heading + encoder distance, lateral rpm limited to " CAR_STRING_VALUE(CAR_LATERAL_MAX_RPM) "; fresh IMU required\r\n");
+    text("TEST: dist 50..2000 mm | rpm 20..");number(CAR_TRANSLATION_MAX_RPM);text(" | f/b/l/r (body directions)\r\n");
+    text("TEST l/r: lateral distance tiers <=");number(CAR_LATERAL_SHORT_MM);text("mm:");number(CAR_LATERAL_SHORT_RPM);
+    text("RPM, longer:");number(CAR_LATERAL_LONG_RPM);text("RPM; fresh IMU required\r\n");
     text("Inspect actual stop and reset physical start before the next direction key.\r\n");
-    text("pose A | heading 0..3 (+Y,-X,-Y,+X) | go H | rpm 20.." CAR_STRING_VALUE(CAR_WHEEL_MAX_RPM) " (0=road table)\r\n");
+    text("pose A | heading 0..3 (+Y,-X,-Y,+X) | go H | rpm 20..");number(CAR_TRANSLATION_MAX_RPM);text(" (0=road table)\r\n");
     text("confirm (segment) | node B (actual arrival) | obstacle | return A\r\n");
     text("block 0..11 | unblock 0..11 | progress measured_mm | info | help\r\n");
     text("! = immediate stop request (no Enter); s/z stop after Enter\r\n");
@@ -3620,7 +3672,7 @@ static int command_turn_test(const char *command_text)
     if (drive.state == MOTION_RUNNING || stop_pending)
         return 0;
     if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value)
-        && value >= 20 && value <= CAR_WHEEL_MAX_RPM)
+        && value >= 20 && value <= CAR_TURN_CLOSED_LOOP_RPM)
     {
         turn_rpm = value;
         accepted = 1;
@@ -3648,7 +3700,7 @@ static int command_translation_test(const char *command_text)
         accepted = 1;
     }
     else if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value)
-        && value >= 20 && value <= CAR_WHEEL_MAX_RPM
+        && value >= 20 && value <= CAR_TRANSLATION_MAX_RPM
         && drive.state != MOTION_RUNNING)
     {
         test_rpm = value;
@@ -3859,7 +3911,7 @@ static void command(char *command_text)
     else if (!strncmp(command_text, "go ", 3) && pose_set && parse_node(command_text + 3, &node))
         accepted = nav_start(&nav, node, speed_rpm);
     else if (!strncmp(command_text, "rpm ", 4) && parse_uint(command_text + 4, &value) && (!value || (value >= 20
-        && value <= CAR_WHEEL_MAX_RPM)) && (nav.state == NAV_IDLE || nav.state == NAV_ARRIVED
+        && value <= CAR_TRANSLATION_MAX_RPM)) && (nav.state == NAV_IDLE || nav.state == NAV_ARRIVED
         || nav.state == NAV_STOPPED))
     {
         speed_rpm = value;
@@ -4073,7 +4125,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261025-merge2-r91; chassis RPM limit200\r\n");
+    text("[drive] version=20261025-merge2-r94; faster rotating corners\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

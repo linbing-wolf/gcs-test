@@ -10,7 +10,10 @@
 
 /* 1. 常用速度与加速度，RPM 为电机转速，驱动器加速度档位为200（与下面RPM/s速度斜坡不同）。 */
 #define CAR_TEST_RPM                60       /* test 模式上电默认速度；可用 rpm 命令改。 */
-#define CAR_RUN_RPM                 CAR_WHEEL_MAX_RPM /* runimu前后/横移请求共用底盘200RPM上限。 */
+#define CAR_RUN_RPM                 250      /* 前进/后退上限，RPM；不按距离分档。 */
+#define CAR_LATERAL_SHORT_MM       1200      /* 连续同向横移总长不超过此值使用短档，mm；不随剩余距离切档。 */
+#define CAR_LATERAL_SHORT_RPM        250      /* 短距离左右横移上限，RPM。 */
+#define CAR_LATERAL_LONG_RPM         200      /* 长距离左右横移上限，RPM。 */
 #ifndef CAR_ARM_TRANSLATION_OVERLAP_ENABLED
 #define CAR_ARM_TRANSLATION_OVERLAP_ENABLED 1 /* 1=工位离物净空后索引与车载搬运并行，收拢后末尾旋转可与道路并行；0=原串行取放/平移等旋转。 */
 #endif
@@ -21,10 +24,12 @@
 #define CAR_RUN_CORNER_ENABLED        1       /* 非作业拐角连续通过；到下一作业区需改车头时在弧中转向。0恢复分段走法。 */
 #endif
 #define CAR_CORNER_RADIUS_MM        150       /* 圆角半径上限，mm；短边自动取至相邻边各一半，允许切角。 */
-#define CAR_CORNER_SPEED_MM_S       150       /* 转动车头的弧段参考上限，mm/s；保留当前本地调值。 */
+#define CAR_CORNER_SPEED_MM_S       180       /* 同步转动车头的圆弧参考上限，mm/s；与固定车头及直线分开调。 */
+#define CAR_CORNER_WHEEL_ACCEL_RPM_PER_S 300u /* 仅同步转头圆弧内的轮速上升率，RPM/s。 */
+#define CAR_CORNER_WHEEL_DECEL_RPM_PER_S 300u /* 仅同步转头圆弧内的轮速下降/过零率，RPM/s；终点制动仍用道路减速率。 */
 #define CAR_CORNER_FIXED_YAW_SPEED_MM_S 250  /* 固定车头的前后/横移换向弧段参考上限，mm/s。 */
 #define CAR_CORNER_YAW_GAIN_X100    115       /* 转向前馈(度/秒)/RPM×100，来自主机模型，尚待实测。 */
-#define CAR_CORNER_YAW_MAX_RPM      100       /* 圆角转向分量上限，RPM；仍受单轮200RPM及变化率约束。 */
+#define CAR_CORNER_YAW_MAX_RPM      100       /* 圆角转向分量上限，RPM；仍受当前运动档位及变化率约束。 */
 #define CAR_CORNER_TRACK_GAIN_X100  250       /* 路径横向/终点位置反馈，(mm/s)/mm×100。 */
 #define CAR_CORNER_TRACK_MAX_MM_S    80       /* 路径位置修正速度上限，mm/s。 */
 #define CAR_CORNER_MIN_MM_S        5.2f       /* 末端非零修正约1RPM；避免整数RPM量化后停在距离窗外。 */
@@ -33,7 +38,7 @@
 #define CAR_C_RETURN_BLEND_MM       600       /* C回程：出B弯后，在此前进距离内平滑并入原60mm侧移，余下路程只直行。 */
 #define CAR_START_BLEND_MM          600       /* A/C发车：在首段1030mm的前600mm内平滑完成60mm内移，B->E保持990mm。 */
 #define CAR_ROUTE_VISUAL_WINDOW_MM   50       /* 自动工位近到站窗口初值，mm；进入后残差交视觉，不是实测视野或地面精度。 */
-#define CAR_ROUGH_BRAKE_LOOKAHEAD_MS 200u     /* 仅自动D进站：制动预留由100增至200ms，减速度仍240RPM/s，无固定低速段。 */
+#define CAR_ROUGH_BRAKE_LOOKAHEAD_MS 200u     /* 自动D进站制动预留，ms；减速度沿用CAR_DRIVE_DECEL_RPM_PER_S，无固定低速段。 */
 #if CAR_ROUGH_BRAKE_LOOKAHEAD_MS < 100 || CAR_ROUGH_BRAKE_LOOKAHEAD_MS > 1000
 #error Invalid_rough_brake_lookahead
 #endif
@@ -42,7 +47,11 @@
 #define CAR_RUN_REVISIT_LATERAL_ENABLED 1    /* 本轮完整走过的道路保持当前车头，以左右横移代替90度转向。 */
 #define CAR_RUN_START_LATERAL_ENABLED 1      /* 仅发车A/C->B首段60mm保持初始航向横移。 */
 #define CAR_RUN_RETURN_LATERAL_ENABLED 1     /* 最终H->E->B->A/C保持暂存离站航向，以前后/横移返回。 */
-#define CAR_LATERAL_MAX_RPM          CAR_RUN_RPM /* 横移与前后行驶共用速度上限，RPM。 */
+#define CAR_LATERAL_MAX_RPM          ((CAR_LATERAL_SHORT_RPM > CAR_LATERAL_LONG_RPM) ? CAR_LATERAL_SHORT_RPM : CAR_LATERAL_LONG_RPM)
+static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
+{
+    return distance_mm <= CAR_LATERAL_SHORT_MM ? CAR_LATERAL_SHORT_RPM : CAR_LATERAL_LONG_RPM;
+}
 #define CAR_OBSTACLE_RETURN_RPM      60      /* obstacle触发后沿已走道路退回的速度上限，RPM。 */
 /* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y，暂存H向+X；A/C及B/E不移动。
  * 单位mm。修改后先运行tools/rebuild-route-table.ps1重生成并验证查表，再编译。 */
@@ -65,14 +74,14 @@
 #define CAR_TEST_DISTANCE_MM    1000       /* test 模式上电默认距离；可用 dist 命令改。 */
 
 /* 3. 横移往后偏的预补偿，单位：前移 mm/横移米。正值向前，0 关闭。
- * 43/10 为当前调参；恢复r91后横移闭环叠加该平移前馈，IMU负责车头航向。
+ * 30/10 为当前调参；横移闭环叠加该平移前馈，IMU负责车头航向。
  */
-#define LEFT_FORWARD_MM_PER_M     10 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
+#define LEFT_FORWARD_MM_PER_M     30 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 #define RIGHT_FORWARD_MM_PER_M    10 /* 向右横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 
 /* 原地转向只使用IMU闭环；方向位同时供四轮速度混控使用，不能随旧入口删除。 */
 #define CAR_TURN_RPM                  30       /* turn模式手动定角转向默认速度上限，RPM。 */
-#define CAR_TURN_CLOSED_LOOP_RPM      CAR_WHEEL_MAX_RPM /* runimu原地转向请求共用底盘200RPM上限。 */
+#define CAR_TURN_CLOSED_LOOP_RPM      300      /* 原地转向上限，RPM；保留本轮开始时的现值，与平移档位解耦。 */
 #define CAR_TURN_CCW_DIR               1u      /* 正向旋转的驱动器dir位；IMU左转角应增加。 */
 
 /* 6. runimu航向闭环。现场日志已有新角度，沿用当前开启的USART2接收。
@@ -96,7 +105,8 @@
 #define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
-#define CAR_WHEEL_MAX_RPM            200      /* 底盘单轮指令上限，RPM；平移、转向、混控及人工速度输入共用。 */
+#define CAR_TRANSLATION_MAX_RPM      ((CAR_RUN_RPM > CAR_LATERAL_MAX_RPM) ? CAR_RUN_RPM : CAR_LATERAL_MAX_RPM)
+#define CAR_WHEEL_MAX_RPM            ((CAR_TRANSLATION_MAX_RPM > CAR_TURN_CLOSED_LOOP_RPM) ? CAR_TRANSLATION_MAX_RPM : CAR_TURN_CLOSED_LOOP_RPM) /* 硬上限随各档取最大；最终输出另受当前运动档位限制。 */
 #ifndef CAR_STRAIGHT_HOLD_ENABLED
 #define CAR_STRAIGHT_HOLD_ENABLED      1      /* 普通前进/后退按编码器估计横向位移补偿；不含工位、横移和obstacle。 */
 #endif
@@ -177,7 +187,8 @@
 #if CAR_RUN_CORNER_ENABLED < 0 || CAR_RUN_CORNER_ENABLED > 1 || \
     CAR_C_RETURN_BLEND_MM < 1 || CAR_START_BLEND_MM < 1 || CAR_ROUTE_VISUAL_WINDOW_MM < 1 || \
     CAR_CORNER_RADIUS_MM < 50 || CAR_CORNER_RADIUS_MM > 300 || \
-    CAR_CORNER_SPEED_MM_S < 30 || CAR_CORNER_SPEED_MM_S > 150 || \
+    CAR_CORNER_SPEED_MM_S < 30 || CAR_CORNER_SPEED_MM_S > 300 || \
+    CAR_CORNER_WHEEL_ACCEL_RPM_PER_S < 1 || CAR_CORNER_WHEEL_DECEL_RPM_PER_S < 1 || \
     CAR_CORNER_FIXED_YAW_SPEED_MM_S < 30 || CAR_CORNER_FIXED_YAW_SPEED_MM_S > 300 || \
     CAR_CORNER_YAW_GAIN_X100 < 1 || CAR_CORNER_YAW_MAX_RPM < 1 || \
     CAR_CORNER_YAW_MAX_RPM > CAR_WHEEL_MAX_RPM || CAR_CORNER_TRACK_GAIN_X100 < 1 || \

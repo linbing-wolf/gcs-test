@@ -65,11 +65,15 @@ int motion_start(Motion *motion, MotionParameters parameters, uint32_t now_ms)
     float wheel_signed[4];
     uint32_t wheel_pulses[4], max_pulses = 0;
     if (!motion || (motion->state != MOTION_IDLE && motion->state != MOTION_DONE)
-        || (unsigned) parameters.axis > BODY_LEFT || rpm < 20 || rpm > CAR_WHEEL_MAX_RPM)
+        || (unsigned) parameters.axis > BODY_LEFT || rpm < 20 || rpm > CAR_TRANSLATION_MAX_RPM)
         return 0;
     distance_mm = parameters.mm < 0 ? - (int) parameters.mm : parameters.mm;
     if (!distance_mm || distance_mm > 2000)
         return 0;
+    if(parameters.axis==BODY_LEFT && rpm>car_lateral_limit_rpm((uint32_t)distance_mm))
+        rpm=car_lateral_limit_rpm((uint32_t)distance_mm);
+    if(parameters.axis==BODY_FORWARD && rpm>CAR_RUN_RPM)rpm=CAR_RUN_RPM;
+    parameters.rpm=rpm;
     wheel_family = parameters.axis == BODY_FORWARD ? motion->config.forward_family : motion->config.left_family;
     direction_sign = parameters.axis == BODY_FORWARD ? motion->config.forward_sign : motion->config.left_sign;
     if (parameters.mm < 0)
