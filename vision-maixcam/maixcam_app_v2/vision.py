@@ -352,7 +352,96 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
     return pts
 
 
-def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
+def _circle_from_3(p1, p2, p3):
+    """三点定圆（外接圆），退化返回 None。"""
+    (x1, y1), (x2, y2), (x3, y3) = p1, p2, p3
+    d = 2.0 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2))
+    if abs(d) < 1e-6:
+        return None
+    a = x1 * x1 + y1 * y1
+    b = x2 * x2 + y2 * y2
+    c = x3 * x3 + y3 * y3
+    ux = (a * (y2 - y3) + b * (y3 - y1) + c * (y1 - y2)) / d
+    uy = (a * (x3 - x2) + b * (x1 - x3) + c * (x2 - x1)) / d
+    r = math.hypot(x1 - ux, y1 - uy)
+    return ux, uy, r
+
+
+def rim_scan_points(img, x_step=16, y0=24, y_step=3, dy=4, min_drop=25.0):
+    """先验无关的全图粗扫盘缘：逐列找「亮→暗」最强的下降沿。
+
+    盘缘是一条明显的暗线（实测亮→暗落差 50~150），桌面上没有这么强的边，
+    所以这个扫描能在盘横向偏移很大（先验已经偏出搜索带）时，仍给出粗圆心的依据。
+    返回 [(x, y), ...]；图像没有像素接口时返回 []。
+
+    注意：板端 get_pixel 约 15µs/次，本函数是「贵」操作（~200ms），
+    find_disc_arc 只在「配置先验那轮不可信」时才调用它（惰性）。
+    """
+    if not hasattr(img, "get_pixel"):
+        return []
+    pts = []
+    w, h = img.width(), img.height()
+    ys = max(1, int(y_step))
+    for x in range(int(x_step), int(w) - 1, int(x_step)):
+        best_g, by = -1.0, None
+        y = int(y0)
+        while y + dy < h:
+            va = _pixel_luma(img, x, y)
+            vb = _pixel_luma(img, x, y + dy)
+            if va is not None and vb is not None:
+                g = va - vb
+                if g > best_g:
+                    best_g, by = g, y + dy // 2
+            y += ys
+        if by is not None and best_g >= float(min_drop):
+            pts.append((x, by))
+    return pts
+
+
+def coarse_disc_prior(img, pts=None, iters=120, tol=8.0, min_inliers=12,
+                      r_min=60.0, r_max=900.0, seed=12345,
+                      x_step=16, y0=24, y_step=3):
+    """粗定位盘（先验无关）：边缘点 + RANSAC 圆拟合 → (cx, cy, r, ninl) 或 None。
+
+    只用圆做「粗」定位（RANSAC 抗离群：中间黑条/夹具/线缆/桌面边）；
+    后续仍由 find_disc_arc 用椭圆模型在它附近精修。
+    """
+    if pts is None:
+        pts = rim_scan_points(img, x_step=x_step, y0=y0, y_step=y_step)
+    n = len(pts)
+    if n < max(4, int(min_inliers)):
+        return None
+    try:
+        import random
+        rnd = random.Random(int(seed))
+    except Exception:
+        return None
+    best = None
+    for _ in range(max(10, int(iters))):
+        i1, i2, i3 = rnd.sample(range(n), 3)
+        fit = _circle_from_3(pts[i1], pts[i2], pts[i3])
+        if fit is None:
+            continue
+        cx, cy, r = fit
+        if not (float(r_min) <= r <= float(r_max)):
+            continue
+        k = 0
+        for (x, y) in pts:
+            if abs(math.hypot(x - cx, y - cy) - r) <= float(tol):
+                k += 1
+        if best is None or k > best[3]:
+            best = (cx, cy, r, k)
+    if best is None or best[3] < int(min_inliers):
+        return None
+    cx, cy, r, k = best
+    inl = [p for p in pts if abs(math.hypot(p[0] - cx, p[1] - cy) - r) <= float(tol)]
+    f2 = precision.fit_circle(inl)
+    if f2 is not None:
+        return f2[0], f2[1], f2[2], len(inl)
+    return cx, cy, r, k
+
+
+def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
                   min_grad=None, arc_deg=None, meta=None):
     """物料盘下弧检测：从粗圆心沿下半弧找边缘点，迭代拟合「轴对齐椭圆」。
 
@@ -441,10 +530,110 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
             ea = eb = None
             if meta is not None:
                 meta["model"] = "circle"
+                meta["rms"] = round(_circle_rms(pts, cx, cy, r), 2)
+                meta["npts"] = len(pts)
     if meta is not None:
         meta["reason"] = "ok(%s,npts=%d)" % (meta.get("model", "?"),
                                              meta.get("npts", 0))
     return cx, cy, r
+
+
+def _circle_rms(pts, cx, cy, r):
+    s = 0.0
+    for (x, y) in pts:
+        s += (math.hypot(x - cx, y - cy) - r) ** 2
+    return math.sqrt(s / len(pts)) if pts else 1e9
+
+
+def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
+                  min_grad=None, arc_deg=None, meta=None):
+    """物料盘下弧检测（对外入口）：粗定位 + 多先验尝试 + 质量闸门。
+
+    为什么这么做（现场实测）：H 的配置先验是固定的，但盘相对车会**横向偏移很大**
+    （用户拍的 other_0422~0444）。先验一旦偏出搜索带（±PLATE_SEARCH_BANDS[0]），
+    算法会沿旧弧扫到桌面/夹具/线缆，拟出**假圆**（rms 6~11 却照样回 DISC）并驱动
+    错误的 MOVEXY。所以：
+
+      1) 先验无关的**粗定位**（rim_scan_points + RANSAC 圆）→ 抗横向大偏移；
+      2) 粗定位先验与配置先验**各试一轮**，取「可信且 rms 最小」的那个；
+      3) **质量闸门**（rms>PLATE_MAX_RMS 或 npts<PLATE_MIN_PTS）→ 判不可信，
+         返回 None（上层回 NONE,H，让上位机重摆），绝不回假圆。
+
+    实测 35 张真实图：可信拟合 rms ≤ 3.0 / npts ≥ 44；假圆 rms ≥ 5.96。闸门取
+    rms ≤ 4.0（判据干净）＋ npts ≥ 30（只防退化）。
+
+    参数 cx/cy/r 是配置先验（圆心可为负）。返回 (cx, cy, r)，其中 r 在椭圆模型下
+    是**竖直半轴 b**：盘最低点 = (cx, cy + r)。meta 写入 model/a/b/k/rms/npts/
+    coarse/prior_used/tries，供绘制与调试使用。
+    """
+    if not hasattr(img, "get_pixel"):
+        if meta is not None:
+            meta["reason"] = "no-pixel-api"
+        return None
+    cx0, cy0, r0 = float(cx), float(cy), float(r)
+    d = {} if meta is None else meta
+    gate = bool(getattr(config, "PLATE_QUALITY_GATE", True))
+    max_rms = float(getattr(config, "PLATE_MAX_RMS", 4.0))
+    min_pts = int(getattr(config, "PLATE_MIN_PTS", 30))
+    tries = []
+
+    def _try(tag, px, py, pr):
+        """试一轮：返回 (rank, rms, tag, res, meta_of_this_try)；失败返回 None。"""
+        m2 = {}
+        res = _fit_arc_once(img, px, py, pr, bands, rays, step, min_grad,
+                            arc_deg, m2)
+        if res is None:
+            tries.append({"prior": tag, "reason": str(m2.get("reason", ""))[:40]})
+            return None
+        rms = float(m2.get("rms", 0.0))
+        npts = int(m2.get("npts", 0))
+        credible = (not gate) or (rms <= max_rms and npts >= min_pts)
+        tries.append({"prior": tag, "rms": rms, "npts": npts,
+                      "credible": bool(credible),
+                      "low": [round(res[0], 1), round(res[1] + res[2], 1)]})
+        return (0 if credible else 1, rms, tag, res, m2)
+
+    # ① 先试「配置先验」——正常位姿走这条，零额外开销
+    best = _try("config", cx0, cy0, r0)
+    # ② 只有当配置先验那轮不可信时，才做「先验无关的粗定位」补救（贵，惰性）
+    if (best is None or best[0] != 0) and bool(getattr(config, "PLATE_COARSE_LOCATE", True)):
+        cp = coarse_disc_prior(
+            img,
+            iters=int(getattr(config, "PLATE_COARSE_ITERS", 120)),
+            tol=float(getattr(config, "PLATE_COARSE_TOL", 8.0)),
+            min_inliers=int(getattr(config, "PLATE_COARSE_MIN_INLIERS", 12)),
+            r_min=float(getattr(config, "PLATE_COARSE_R_MIN", 150.0)),
+            r_max=float(getattr(config, "PLATE_COARSE_R_MAX", 560.0)),
+            x_step=int(getattr(config, "PLATE_COARSE_X_STEP", 16)),
+            y0=int(getattr(config, "PLATE_COARSE_Y0", 24)),
+            y_step=int(getattr(config, "PLATE_COARSE_Y_STEP", 3)))
+        lo = r0 * float(getattr(config, "PLATE_COARSE_R_RATIO_MIN", 0.55))
+        hi = r0 * float(getattr(config, "PLATE_COARSE_R_RATIO_MAX", 1.60))
+        if cp is not None and lo <= cp[2] <= hi:
+            d["coarse"] = [round(cp[0], 1), round(cp[1], 1), round(cp[2], 1),
+                           int(cp[3])]
+            e2 = _try("coarse", float(cp[0]), float(cp[1]), float(cp[2]))
+            if e2 is not None and (best is None or
+                                   (e2[0], e2[1]) < (best[0], best[1])):
+                best = e2
+        else:
+            d["coarse_reject"] = ("none" if cp is None
+                                  else "r=%.0f 不在 %.0f~%.0f" % (cp[2], lo, hi))
+    d["tries"] = tries
+    if best is None:
+        d["reason"] = "no-fit"
+        return None
+    rank, rms, tag, res, m2 = best
+    if gate and rank != 0:
+        d["reason"] = "reject(最好 rms=%.2f npts=%d)" % (rms, m2.get("npts", 0))
+        d["rejected"] = True
+        return None
+    for k, v in m2.items():
+        d[k] = v
+    d["prior_used"] = tag
+    d["reason"] = "ok(%s,npts=%d,prior=%s)" % (d.get("model", "?"),
+                                               d.get("npts", 0), tag)
+    return res
 
 
 def refine_disc_center(img, cx, cy, r, rays=None, band=None, step=None,

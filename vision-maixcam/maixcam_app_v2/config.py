@@ -384,6 +384,28 @@ PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见�
 PLATE_ARC_MODEL     = "ellipse"
 PLATE_ARC_ROBUST    = True     # 拟合后剔除径向残差大的边缘点（中间黑条/夹具/阴影）再拟合
 PLATE_ARC_OUTLIER_PX = 6.0     # 离群剔除半径阈值(px)；实际用 max(它, 2×rms)
+# ---- 粗定位（先验无关）：盘横向偏移很大时，配置先验会偏出搜索带 → 先全图粗找盘 ----
+#   逐列扫「亮→暗」最强下降沿（盘缘暗线）→ RANSAC 圆拟合 → 当粗圆心，
+#   再由椭圆模型在它附近精修。抗中间黑条/夹具/线缆/桌面边等离群。
+PLATE_COARSE_LOCATE      = True
+PLATE_COARSE_X_STEP      = 20    # 粗扫列间隔(px)
+PLATE_COARSE_Y0          = 24    # 从 y 多少开始扫
+PLATE_COARSE_Y_STEP      = 3     # 粗扫纵向步长(px)：越大越快、越可能漏
+# ★ 粗定位是「贵」操作（板端 ~150~200ms，get_pixel 约 15µs/次），
+#   只在「配置先验那轮不可信」时才跑（惰性），正常位姿零额外开销。
+PLATE_COARSE_ITERS       = 120   # RANSAC 采样次数
+PLATE_COARSE_TOL         = 8.0   # RANSAC 内点阈值(px)
+PLATE_COARSE_MIN_INLIERS = 12    # 至少多少内点才算找到盘
+PLATE_COARSE_R_MIN       = 150.0 # 粗圆半径绝对范围
+PLATE_COARSE_R_MAX       = 560.0
+PLATE_COARSE_R_RATIO_MIN = 0.55  # 又要在「配置先验半径 × 这个比例」范围内，防认错圆
+PLATE_COARSE_R_RATIO_MAX = 1.60
+# ---- 质量闸门：拟合不可信就不回假圆（宁回 NONE，让上位机重摆）----
+#   实测 35 张真实图：可信拟合 rms ≤ 3.0 / npts ≥ 44；假圆 rms ≥ 5.96。
+#   判据以 rms 为主（区分干净），npts 只防退化（粗定位找回的小弧点数会偏少）。
+PLATE_QUALITY_GATE  = True
+PLATE_MAX_RMS       = 4.0      # 拟合残差上限(px)，超了判不可信
+PLATE_MIN_PTS       = 30       # 有效边缘点下限，少了判不可信
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
 PLATE_ELLIPSE_K_MAX = 1.05
 PLATE_ELLIPSE_K_STEP = 0.01

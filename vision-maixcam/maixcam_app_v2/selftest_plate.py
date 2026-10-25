@@ -462,6 +462,56 @@ check("触发文件生效：config=direct 也回读（x≈%d 而非 350）" % _p
 (config.ALIGN_VERIFY_TRIGGER_FILE, config.ALIGN_DIRECT_TRIGGER_FILE,
  config.ALIGN_MODE_CACHE_MS, config.ALIGN_REPLY_MODE) = _old
 
+# ---------------- 8) 假圆防护：粗定位 + 质量闸门 ----------------
+print("\n== 假圆防护（粗定位 + 质量闸门）==")
+_old_g = (config.PLATE_MAX_RMS, config.PLATE_QUALITY_GATE,
+          config.PLATE_COARSE_LOCATE)
+
+# (a) 质量闸门：把残差上限压到极小 → 任何拟合都判不可信（回 None，不发假 MOVEXY）
+config.PLATE_COARSE_LOCATE = False
+config.PLATE_QUALITY_GATE = True
+config.PLATE_MAX_RMS = 0.001
+m = {}
+r = vision.find_disc_arc(FakeArcImage(310.0, -55.0, 330.0), 310.0, -55.0, 330.0,
+                         meta=m)
+check("闸门：残差超限 → 判不可信回 None",
+      r is None and m.get("rejected") is True, str(m.get("reason")))
+config.PLATE_MAX_RMS = 4.0
+m = {}
+r = vision.find_disc_arc(FakeArcImage(310.0, -55.0, 330.0), 310.0, -55.0, 330.0,
+                         meta=m)
+check("阈值正常时同一张图能通过",
+      r is not None and not m.get("rejected"), str(m.get("reason")))
+
+# (b) 粗定位：盘横向偏移 250px（远超搜索带 ±60）
+_img_far = FakeArcImage(560.0, -55.0, 330.0, kb=0.92)
+_true_low_y = -55.0 + 330.0 * 0.92
+_cp = vision.coarse_disc_prior(_img_far)
+check("粗定位：横向偏 250px 也能找到盘（且比配置先验更接近真值）",
+      _cp is not None and
+      math.hypot(_cp[0] - 560.0, _cp[1] + 55.0) <
+      math.hypot(310.0 - 560.0, -32.0 + 55.0),
+      "coarse=%s（真值 560,-55；配置先验 310,-32）" % (_cp,))
+config.PLATE_COARSE_LOCATE = True
+config.PLATE_QUALITY_GATE = True
+config.PLATE_MAX_RMS = 4.0
+m2 = {}
+r_co = vision.find_disc_arc(_img_far, 310.0, -32.0, 330.0, meta=m2)
+if r_co is not None:
+    _err = math.hypot(r_co[0] - 560.0, (r_co[1] + r_co[2]) - _true_low_y)
+    check("横向偏移 250px 仍能拟合到真盘（最低点 err=%.1fpx）" % _err, _err <= 6.0,
+          "low=(%.0f,%.0f) prior=%s rms=%s"
+          % (r_co[0], r_co[1] + r_co[2], m2.get("prior_used"), m2.get("rms")))
+else:
+    check("横向偏移 250px 仍能拟合到真盘", False, str(m2.get("reason")))
+config.PLATE_COARSE_LOCATE = False
+m3 = {}
+vision.find_disc_arc(_img_far, 310.0, -32.0, 330.0, meta=m3)
+check("关掉粗定位后不再有 coarse 记录", "coarse" not in m3, str(m3.get("coarse")))
+
+(config.PLATE_MAX_RMS, config.PLATE_QUALITY_GATE,
+ config.PLATE_COARSE_LOCATE) = _old_g
+
 print()
 if FAILED:
     print("[FAILED] %d 项未通过: %s" % (len(FAILED), FAILED))
