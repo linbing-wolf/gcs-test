@@ -156,6 +156,17 @@ def frame_str(b):
     return str(b).strip("\r\n")
 
 
+def _post_move_x(x0=350.0):
+    """预测 one-shot 之后最低点 x（假机构 ArcLink 按 −step 移动）。
+
+    与 config 解耦：改 PLATE_TARGET_X / PLATE_GAIN 后这里自动跟着变。
+    """
+    dx0 = x0 - config.PLATE_TARGET_X + config.PLATE_DX_OFFSET
+    step = tasks._axis_step(dx0, config.PLATE_GAIN, config.ALIGN_STEP_MIN, 0,
+                            1.0, config.PLATE_INVERT_X)
+    return int(round(x0 - step))
+
+
 # ---------------- 1) find_disc_arc（圆模型）----------------
 print("\n== find_disc_arc：合成正圆下弧 → 圆模型恢复圆心/半径 ==")
 config.PLATE_ARC_MODEL = "circle"
@@ -210,8 +221,9 @@ check("返回 DISC 帧", out.startswith("DISC,"), out)
 check("超差时发过 MOVEXY", any(s.startswith("MOVEXY,") for s in link.sent),
       str(link.sent))
 check("DISC 带 5 个字段", len(parts) == 5, out)
-check("direct：回动作前的值 (x=350, dx=350-311+2=41)",
-      len(parts) == 5 and int(parts[1]) == 350 and int(parts[3]) == 41, out)
+_exp_dx = int(round(350.0 - config.PLATE_TARGET_X + config.PLATE_DX_OFFSET))
+check("direct：回动作前的值 (x=350, dx=350−TARGET_X+DX_OFFSET=%d)" % _exp_dx,
+      len(parts) == 5 and int(parts[1]) == 350 and int(parts[3]) == _exp_dx, out)
 
 # --- verify：回读后用调整后的值 ---
 config.ALIGN_REPLY_MODE = "verify"
@@ -219,8 +231,8 @@ cam = FakeArcCam(cx=350.0, cy=-55.0, r=330.0)
 link = ArcLink(cam)
 out = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(link)))
 parts = out.split(",")
-check("verify：回调整后的值（≈325）",
-      len(parts) == 5 and abs(int(parts[1]) - 325) <= 6, out)
+check("verify：回调整后的值（x≈%d）" % _post_move_x(350.0),
+      len(parts) == 5 and abs(int(parts[1]) - _post_move_x(350.0)) <= 6, out)
 
 # ---------------- 4) task_plate 闭环收敛 ----------------
 print("\n== task_plate：闭环（多轮，带透视椭圆）==")
@@ -442,8 +454,9 @@ out_v = frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(ArcLink(cam
 os.remove(vf)
 check("对照：无触发文件时回动作前的 x=350",
       out.startswith("DISC,") and int(out.split(",")[1]) == 350, out)
-check("触发文件生效：config=direct 也回读（x≈323 而非 350）",
-      out_v.startswith("DISC,") and abs(int(out_v.split(",")[1]) - 323) <= 6, out_v)
+check("触发文件生效：config=direct 也回读（x≈%d 而非 350）" % _post_move_x(350.0),
+      out_v.startswith("DISC,") and abs(int(out_v.split(",")[1]) - _post_move_x(350.0)) <= 6,
+      out_v)
 
 # 还原
 (config.ALIGN_VERIFY_TRIGGER_FILE, config.ALIGN_DIRECT_TRIGGER_FILE,

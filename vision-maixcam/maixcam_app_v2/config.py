@@ -387,7 +387,9 @@ PLATE_ARC_OUTLIER_PX = 6.0     # 离群剔除半径阈值(px)；实际用 max(�
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
 PLATE_ELLIPSE_K_MAX = 1.05
 PLATE_ELLIPSE_K_STEP = 0.01
-PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定）
+PLATE_TARGET_X      = 291.0    # 目标最低点 x（对外口径，现场标定）
+# 现场反馈「定位后车往右偏」→ 目标 x 左移 20px：311 → 291（有效目标 x = 291−2 = 289）。
+# 注意方向：目标 x 往左 → 车最终停更靠右；要「纠正车往右偏」应把 x 右移。
 # 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点整体上移，
 # 故下调同步修正（实测 12 张真实图 圆low−椭low 平均 4.2px，范围 0.3~7.4px）。
 # 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
