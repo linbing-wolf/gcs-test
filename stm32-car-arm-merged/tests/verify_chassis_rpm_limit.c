@@ -80,7 +80,8 @@ static void moving_entry_tests(void)
 int main(void)
 {
     CHECK(CAR_RUN_RPM==200 && CAR_LATERAL_MAX_RPM==200 && CAR_TURN_CLOSED_LOOP_RPM==200 && CAR_WHEEL_MAX_RPM==200);
-    CHECK(CAR_DRIVE_DECEL_RPM_PER_S==240 && CAR_DRIVE_BRAKE_LOOKAHEAD_MS==200 && CAR_ROUGH_BRAKE_LOOKAHEAD_MS==200);
+    CHECK(CAR_DRIVE_DECEL_RPM_PER_S==200 && CAR_DRIVE_BRAKE_LOOKAHEAD_MS==200 && CAR_ROUGH_BRAKE_LOOKAHEAD_MS==200);
+    CHECK(LEFT_FORWARD_MM_PER_M==43 && RIGHT_FORWARD_MM_PER_M==10);
     input_and_position_tests();mixed_output_tests();moving_entry_tests();
     printf("PASS chassis RPM limit: %u assertions; software command limits only, no physical tracking acceptance\n",assertions);
     return 0;

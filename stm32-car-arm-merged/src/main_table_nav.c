@@ -212,10 +212,10 @@ typedef struct
     struct {
         int64_t previous[4], latest[4];
         uint32_t previous_ms[4], latest_ms[4], sample_ms;
-        int32_t lateral_mm, forward_mm, command_mrpm;
+        int32_t lateral_mm, command_mrpm;
         int16_t command_rpm;
         uint8_t valid;
-    } straight_hold; /* 同时刻编码器投影；前后行驶观测左右，横移观测前后，均相对本直行串起点。 */
+    } straight_hold; /* 同时刻编码器投影；相对本直行串起点的车身横向位移，不是地面绝对位置。 */
     int32_t progress_mm;
     int32_t encoder_offset_mm; /* 同一直行串内已通过的段长；不中断编码器基线。 */
     uint16_t continuation_mm, blocked_roads;
@@ -2271,7 +2271,7 @@ static int16_t run_vector_slew(uint8_t axis,int16_t desired,uint8_t due)
 
 static int run_straight_hold_enabled(void)
 {
-    return CAR_STRAIGHT_HOLD_ENABLED && !run.corner.active
+    return CAR_STRAIGHT_HOLD_ENABLED && run.travel_axis==BODY_FORWARD
         && !run.vector_move && !run.station_shift && !run.obstacle_phase;
 }
 
@@ -2305,36 +2305,30 @@ static void run_straight_observe(void)
         if(!span || span>CAR_VELOCITY_FEEDBACK_MS || offset>span)return;
         position=run.straight_hold.previous[i]
             +(run.straight_hold.latest[i]-run.straight_hold.previous[i])*offset/span;
-        /* encoder_sign按主轴归一；乘travel_sign恢复车身符号。
-         * 前后与横移的混控符号之比相同，此投影也可提取横移时的前后位移。 */
+        /* 单轴encoder_sign把本段前/后运动都归一为正；恢复车身左右符号要乘travel_sign。 */
         sum+=(position-run.encoder_start[i])*run.encoder_sign[i]*projection[i]*run.travel_sign;
     }
-    if(run.travel_axis==BODY_LEFT)
-        run.straight_hold.forward_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
-            /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_Y));
-    else
-        run.straight_hold.lateral_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
-            /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X));
+    run.straight_hold.lateral_mm=(int32_t)((float)sum*CAR_POSITION_PULSES_PER_REV
+        /(4.0f*CAR_ENCODER_COUNTS_PER_REV*CALIBRATED_PPM_X));
     run.straight_hold.sample_ms=common_ms;run.straight_hold.valid=1;
 }
 
-/* 主轴仍运动时同步纠偏；主轴归零即结束，不新增到站后的独立回位动作。 */
-static int16_t run_straight_correction(int16_t primary,int16_t turn,uint8_t due)
+/* 只在主轴仍前进/后退时纠偏，不新增到站后的独立横移或改变距离完成条件。 */
+static int16_t run_straight_correction(int16_t forward,int16_t turn,uint8_t due)
 {
-    int32_t error=run.travel_axis==BODY_LEFT ? run.straight_hold.forward_mm : run.straight_hold.lateral_mm;
-    int32_t target=0,limit,change;
-    if(!primary || !run_straight_hold_enabled() || !run.straight_hold.valid
+    int32_t error=run.straight_hold.lateral_mm,target=0,limit,change;
+    if(!forward || !run_straight_hold_enabled() || !run.straight_hold.valid
         || (uint32_t)(clock_ms-run.straight_hold.sample_ms)>CAR_VELOCITY_FEEDBACK_MS) {
         run.straight_hold.command_mrpm=run.straight_hold.command_rpm=0;return 0;
     }
-    limit=abs(primary)-abs(turn)-1;
+    limit=abs(forward)-abs(turn)-1;
     if(limit<0)limit=0;
     if(limit>CAR_STRAIGHT_HOLD_MAX_RPM)limit=CAR_STRAIGHT_HOLD_MAX_RPM;
     if(abs(error)>CAR_STRAIGHT_HOLD_DEADBAND_MM) {
         target=(abs(error)-CAR_STRAIGHT_HOLD_DEADBAND_MM)*CAR_STRAIGHT_HOLD_KP_X100/100;
         if(target<1)target=1;
         if(target>limit)target=limit;
-        if(error>0)target=-target; /* 前后行驶：左偏补右；横移：前偏补后，后偏补前。 */
+        if(error>0)target=-target; /* 左偏为正，补向右；后退沿用同一车身符号。 */
     }
     if(due) {
         uint32_t elapsed=clock_ms-run.control_ms;
@@ -2531,8 +2525,7 @@ static void run_velocity_log(void)
         text(" turn_ref="); signed_number(run.turn_ref_rpm);
         text(" turn_cmd="); signed_number(run.turn_cmd_rpm);
         if(run_straight_hold_enabled()) {
-            if(run.travel_axis==BODY_LEFT)text(" cross_axis=forward");
-            text(" cross_mm=");signed_number(run.travel_axis==BODY_LEFT ? run.straight_hold.forward_mm : run.straight_hold.lateral_mm);
+            text(" cross_mm=");signed_number(run.straight_hold.lateral_mm);
             text(" cross_rpm=");signed_number(run.straight_hold.command_rpm);
             text(" cross_valid=");number(run.straight_hold.valid);
         }
@@ -3384,19 +3377,12 @@ static void run_velocity_update(void)
         available=(int16_t)(CAR_WHEEL_MAX_RPM-abs(left)-abs(turn));
         if(left && abs(forward)>available)forward=forward>0 ? available : -available;
     }
-    if (!run.vector_move && run.travel_axis==BODY_LEFT) {
-        if(run_straight_hold_enabled()) {
-            int16_t available;
-            forward=run_straight_correction(left,turn,control_due);
-            available=(int16_t)(CAR_WHEEL_MAX_RPM-abs(forward)-abs(turn));
-            if(forward && abs(left)>available)left=left>0 ? available : -available;
-        } else if(left) {
-            int16_t per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
-            /* 未启用位置纠偏的既有路径保留经验前移；闭环时不叠加固定前移。 */
-            float trim = (float)(left > 0 ? left : -left) * per_m * CALIBRATED_PPM_Y
-                         / (1000.0f * CALIBRATED_PPM_X);
-            forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
-        }
+    if (left && !run.vector_move && run.travel_axis==BODY_LEFT) {
+        int16_t per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
+        /* 沿用前移mm/米的经验补偿，换算为轮速；此项不是位置观测。 */
+        float trim = (float)(left > 0 ? left : -left) * per_m * CALIBRATED_PPM_Y
+                     / (1000.0f * CALIBRATED_PPM_X);
+        forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
     }
     if (run.travel_axis == BODY_LEFT) run.forward_ref_rpm = forward;
     if (control_due) {
@@ -4087,7 +4073,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261025-merge2-r92; lateral forward-position hold; RPM limit200\r\n");
+    text("[drive] version=20261025-merge2-r91; chassis RPM limit200\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

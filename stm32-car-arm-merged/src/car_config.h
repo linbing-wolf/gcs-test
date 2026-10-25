@@ -65,9 +65,9 @@
 #define CAR_TEST_DISTANCE_MM    1000       /* test 模式上电默认距离；可用 dist 命令改。 */
 
 /* 3. 横移往后偏的预补偿，单位：前移 mm/横移米。正值向前，0 关闭。
- * 20/8 是待实测的初值；普通横移启用位置纠偏时由实际偏移闭环接替，其他原路径仍沿用。
+ * 43/10 为当前调参；恢复r91后横移闭环叠加该平移前馈，IMU负责车头航向。
  */
-#define LEFT_FORWARD_MM_PER_M     43 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
+#define LEFT_FORWARD_MM_PER_M     10 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 #define RIGHT_FORWARD_MM_PER_M    10 /* 向右横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 
 /* 原地转向只使用IMU闭环；方向位同时供四轮速度混控使用，不能随旧入口删除。 */
@@ -98,11 +98,11 @@
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
 #define CAR_WHEEL_MAX_RPM            200      /* 底盘单轮指令上限，RPM；平移、转向、混控及人工速度输入共用。 */
 #ifndef CAR_STRAIGHT_HOLD_ENABLED
-#define CAR_STRAIGHT_HOLD_ENABLED      1      /* 普通前后行驶纠正横向偏移，左右横移纠正前后偏移；不含工位、MOVEXY、连续路径和obstacle。 */
+#define CAR_STRAIGHT_HOLD_ENABLED      1      /* 普通前进/后退按编码器估计横向位移补偿；不含工位、横移和obstacle。 */
 #endif
-#define CAR_STRAIGHT_HOLD_KP_X100     50      /* 垂直行进方向的位置误差增益，RPM/mm x100；前后/横移共用，须实车标定。 */
-#define CAR_STRAIGHT_HOLD_DEADBAND_MM  2      /* 编码器估计位置死区，mm；不是地面精度保证。 */
-#define CAR_STRAIGHT_HOLD_MAX_RPM     20      /* 垂直行进方向的补偿上限，RPM；低速时进一步限制，保持四轮原行驶方向。 */
+#define CAR_STRAIGHT_HOLD_KP_X100     50      /* 横向误差比例增益，RPM/mm x100；初值须实车标定。 */
+#define CAR_STRAIGHT_HOLD_DEADBAND_MM  2      /* 编码器估计横向位移死区，mm；不是地面精度保证。 */
+#define CAR_STRAIGHT_HOLD_MAX_RPM     20      /* 横向补偿上限，RPM；低速时进一步限制，保持四轮原行驶方向。 */
 /* 直行保持航向独立于原地转向：沿用PD增益初值，小角度仍保留角速度阻尼。 */
 #define CAR_DRIVE_HEADING_KP_X100    120       /* RPM/度 ×100，尚待本车实测调节。 */
 #define CAR_DRIVE_HEADING_KD_X100     30       /* RPM/(度/秒) ×100。 */
@@ -113,7 +113,7 @@
 #define CAR_MOVEXY_MIN_RPM             1       /* 双轴最后几毫米允许降到1RPM；不沿用普通平移3RPM下限覆盖末端制动结果。 */
 #define CAR_DRIVE_ACCEL_RPM_PER_S    150u      /* 速度指令上升率RPM/s；原120，起步提高25%；减速及制动距离沿用120。 */
 #define CAR_ROUTE_ACCEL_RPM_PER_S    240u      /* 普通道路及连续路径的起步/再加速，RPM/s；工位微调与返回障碍起点不使用。 */
-#define CAR_DRIVE_DECEL_RPM_PER_S    200u      /* 操作者指定减速240 RPM/s，正常减速和制动距离计算共用；与驱动器200档位独立。 */
+#define CAR_DRIVE_DECEL_RPM_PER_S    200u      /* 回退r91时按操作者确认保留减速200 RPM/s；正常减速和制动距离计算共用。 */
 #define CAR_DRIVE_BRAKE_LOOKAHEAD_MS 200u      /* 减速计算预留控制/反馈延迟的初值，需现场确认。 */
 #define CAR_DRIVE_SLEW_MAX_DT_MS      50u      /* 吸收正常日志开销；长时间延迟最多推进50ms的斜坡。 */
 #define CAR_VELOCITY_CONTROL_MS      25u      /* 目标控制周期；只采用新IMU样本更新角度。 */
