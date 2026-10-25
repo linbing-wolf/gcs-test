@@ -113,60 +113,6 @@ def _align_movexy_mode():
         "movexy", "xy", "combined")
 
 
-_VERIFY_CACHE = {"t": None, "ov": None, "src": ""}
-
-
-def _align_verify_mode_from_config():
-    """仅看 config.ALIGN_REPLY_MODE：True=verify（回读），False=direct（去回读）。"""
-    return str(getattr(config, "ALIGN_REPLY_MODE", "direct")).strip().lower() == "verify"
-
-
-def _scan_verify_override():
-    """扫触发文件，返回 (override, src)；override ∈ (True=强制回读, False=强制去回读, None=无覆盖)。
-
-    触发文件给现场诊断用：SSH 上 `touch /tmp/align_verify` 就能让 D/E/F/H
-    临时回读一次、拿到「移动后偏差」，用完 `rm` 即恢复 config 默认，免重编包。
-    """
-    try:
-        vf = getattr(config, "ALIGN_VERIFY_TRIGGER_FILE", "")
-        df = getattr(config, "ALIGN_DIRECT_TRIGGER_FILE", "")
-        if vf and os.path.exists(vf):
-            return True, vf
-        if df and os.path.exists(df):
-            return False, df
-    except Exception:
-        pass
-    return None, ""
-
-
-def _align_verify_on():
-    """发完 MOVEXY 后是否回读一次再回复。
-
-    True  = 回读，用调整后的 x/y/dx 回复（准但慢）
-    False = 去回读，立即回动作前的 x/y/dx（快）
-
-    优先级：触发文件 > config.ALIGN_REPLY_MODE。config 每次即时生效；
-    触发文件的扫描结果按 ALIGN_MODE_CACHE_MS 缓存，避免在逐帧循环里频繁 stat。
-    """
-    c = _VERIFY_CACHE
-    now = ticks_ms()
-    ttl = int(getattr(config, "ALIGN_MODE_CACHE_MS", 500))
-    if c["t"] is None or ttl <= 0 or now < c["t"] or now - c["t"] >= ttl:
-        ov, src = _scan_verify_override()
-        if (ov, src) != (c["ov"], c["src"]):
-            if ov is None:
-                log("[ALIGN] 无触发文件，回复模式按 config：%s"
-                    % ("verify 回读" if _align_verify_mode_from_config()
-                       else "direct 去回读"))
-            else:
-                log("[ALIGN] 触发文件 %s → 强制 %s"
-                    % (src, "verify 回读" if ov else "direct 去回读"))
-        c["ov"], c["src"], c["t"] = ov, src, now
-    if c["ov"] is None:
-        return _align_verify_mode_from_config()
-    return c["ov"]
-
-
 _BIAS_CACHE = {"t": None, "vals": None, "sig": "", "src": "config"}
 
 
@@ -175,7 +121,6 @@ def _plate_bias():
 
     覆盖文件逐行 `KEY=VALUE`（见 config.PLATE_BIAS_FILE / PLATE_BIAS_KEYS），
     只写要改的项即可；文件不存在/解析失败的行 → 该键仍用 config 默认。
-    返回 {"PLATE_TARGET_X": float, ..., "PLATE_DX_OFFSET": int, ...}。
     结果按 PLATE_BIAS_CACHE_MS 缓存，避免逐帧读文件。
     """
     c = _BIAS_CACHE
@@ -207,7 +152,7 @@ def _plate_bias():
             src = path
     except Exception:
         pass
-    for k in keys:                      # 偏置按整数用（与原来 int(getattr(...)) 一致）
+    for k in keys:                      # 偏置按整数用
         if k.endswith("_OFFSET"):
             vals[k] = int(round(vals[k]))
     sig = ",".join("%s=%s" % (k, vals[k]) for k in keys)
@@ -248,59 +193,6 @@ def _actions_sent_x(actions):
 
 def _actions_sent_y(actions):
     return _actions_sent_axis(actions, "y")
-
-
-def _wait_stable_post(cam, ctl, detect, initial_ms, max_ms, tol, need,
-                      baseline=None, require_x=False, require_y=False):
-    """one-shot 后只读等待：先等 initial_ms，再等到目标连续 need 帧基本不动。
-
-    baseline=(x,y) 是动作前中心；require_x/require_y=True 时，对应轴必须
-    相对 baseline 真的移动过，不能把“还没开始动”误判成“已经停稳”。
-    detect(img) → (cx, cy, meta) 或 None；本函数绝不发 MOVE/MOVEY。
-    """
-    t_start = ticks_ms()
-    while ticks_ms() - t_start < max(0, int(initial_ms)):
-        if app.need_exit() or (ctl is not None and not ctl.tick()):
-            return None
-        sleep_ms(20)
-
-    last = None
-    stable = 0
-    moved_x = moved_y = False
-    base_x = base_y = None
-    if baseline is not None:
-        base_x, base_y = float(baseline[0]), float(baseline[1])
-    deadline = ticks_ms() + max(0, int(max_ms))
-    while ticks_ms() < deadline:
-        if app.need_exit() or (ctl is not None and not ctl.tick()):
-            break
-        img = cam.read()
-        r = detect(img)
-        if r is None:
-            stable = 0
-            sleep_ms(50)
-            continue
-        cx, cy, meta = r
-        if base_x is None:
-            base_x, base_y = cx, cy
-        if abs(cx - base_x) > tol:
-            moved_x = True
-        if abs(cy - base_y) > tol:
-            moved_y = True
-        if last is not None and abs(cx - last["cx"]) <= tol and abs(cy - last["cy"]) <= tol:
-            stable += 1
-        else:
-            stable = 1
-        last = {"cx": cx, "cy": cy, "meta": meta, "img": img,
-                "stable": False, "elapsed_ms": ticks_ms() - t_start,
-                "moved_x": moved_x, "moved_y": moved_y}
-        if (stable >= max(1, int(need))
-                and (moved_x or not require_x)
-                and (moved_y or not require_y)):
-            last["stable"] = True
-            return last
-        sleep_ms(50)
-    return last
 
 
 def _frame_sig(img, cols=24, rows=18):
@@ -1019,65 +911,13 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                 sx_out, sy_out = P.smooth(tag, cx, cy)
                 ok = 1  # 回复 ok 固定为 1
                 reply_x, reply_y, reply_dx = sx_out, sy_out, dx
-                log("[%s] 一次性模式：已发 %s，%s"
-                    % (tag, " ".join(parts),
-                       "回读调整后值再回 DISC" if _align_verify_on()
-                       else "去回读：直接回动作前偏差"))
+                log("[%s] 一次性模式：已发 %s，去回读：直接回动作前偏差 dx=%+d"
+                    % (tag, " ".join(parts), dx))
                 if rec:
                     rec.snap(img, dict(f, action="move_oneshot",
                                        steps=[s for _, s, _ in actions]),
                              "final_oneshot", force=True)
 
-                # ALIGN_REPLY_MODE="verify" 时才回读；"direct" 直接回动作前的值。
-                if _align_verify_on():
-                    def detect_post(pimg):
-                        pmeta = {}
-                        pc = vision.find_disc_center(
-                            pimg, droi, r_min, r_max, refine=refine,
-                            ring_fallback=ring_fb, prefer=None, meta=pmeta)
-                        if pc is None:
-                            return None
-                        pcx, pcy = P.point(pc[0], pc[1])
-                        return pcx, pcy, {"c": pc, "meta": pmeta}
-
-                    expect_x = _actions_sent_x(actions)
-                    expect_y = _actions_sent_y(actions)
-                    post = _wait_stable_post(
-                        cam, ctl, detect_post,
-                        int(getattr(config, "ONE_SHOT_VERIFY_MS", 1200)),
-                        int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 4000)),
-                        int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
-                        int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
-                        baseline=(cx, cy),
-                        require_x=expect_x, require_y=expect_y)
-                    if post is not None:
-                        pc = post["meta"]["c"]
-                        pmeta = post["meta"]["meta"]
-                        pcx, pcy = post["cx"], post["cy"]
-                        pdx = pcx - center_x + dx_offset
-                        pdy = pcy - center_y + dy_offset
-                        reply_x, reply_y, reply_dx = pcx, pcy, pdx
-                        if post["stable"]:
-                            stop = "已停稳"
-                        elif expect_y and not post.get("moved_y"):
-                            stop = "未检测到垂直位移"
-                        else:
-                            stop = "未停稳(超时)"
-                        log("[%s] 调整后偏差 dx=%+d dy=%+d 中心=(%d,%d) %s（%dms，回传此值，不再发 MOVE）"
-                            % (tag, pdx, pdy, pcx, pcy, stop,
-                               int(post["elapsed_ms"])))
-                        if rec:
-                            pf = fields_of(
-                                pc, pcx, pcy, pdx, pdy, pmeta,
-                                {"action": "post_move",
-                                 "post_dx": int(pdx), "post_dy": int(pdy),
-                                 "post_src": pmeta.get("src", "?"),
-                                 "post_stable": bool(post["stable"]),
-                                 "post_moved_x": bool(post.get("moved_x")),
-                                 "post_moved_y": bool(post.get("moved_y"))})
-                            rec.snap(post["img"], pf, "final_post", force=True)
-                    else:
-                        log("[%s] 调整后偏差：未检测到目标，回传移动前值" % tag)
                 return finish(pack_disc(reply_x, reply_y, reply_dx, ok))
             if settle:
                 sleep_ms(settle)
@@ -1172,13 +1012,6 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
         cx, cy, r = c
         lx, ly = P.point(cx, cy + r)        # 检测域最低点 → 对外口径（含去畸变）
         return lx, ly, {"c": c, "meta": meta}
-
-    def _detect_plain(img):
-        """给 _wait_stable_post 用的版本：返回 (最低点x, 最低点y, 原始 meta)。"""
-        r = _detect(img)
-        if r is None:
-            return None
-        return r[0], r[1], r[2]["meta"]
 
     # ---- 调试抓图：每次 H 在 PLATE_DEBUG_DIR 下建一个任务目录 ----
     rec = None
@@ -1363,26 +1196,7 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
             if oneshot:
                 rx, ry, rdx = flx, fly, dx
                 post_meta = imeta
-                if _align_verify_on():
-                    # 只读回读：先等一会，再等最低点连续 N 帧基本不动；绝不补发
-                    post = _wait_stable_post(
-                        cam, ctl, _detect_plain,
-                        int(getattr(config, "ONE_SHOT_VERIFY_MS", 600)),
-                        int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 2500)),
-                        int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
-                        int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
-                        baseline=(lx, ly),
-                        require_x=x_out, require_y=y_out)
-                    if post is not None:
-                        rx, ry = post["cx"], post["cy"]
-                        post_meta = post.get("meta") or imeta
-                        rdx = int(round(rx - tx + dx_offset))
-                        log("[H] 调整后最低点 (%d,%d) dx=%+d（回传此值，不再发 MOVEXY）"
-                            % (rx, ry, rdx))
-                    else:
-                        log("[H] 调整后偏差：未检测到目标，回传移动前值")
-                else:
-                    log("[H] 去回读：直接回动作前偏差 dx=%+d" % dx)
+                log("[H] 去回读：直接回动作前偏差 dx=%+d" % dx)
                 if rec is not None:
                     rec.snap(img, dbg_fields(info["c"], rx, ry, rdx, dy, post_meta,
                                              {"action": "final_oneshot"}),
@@ -1740,90 +1554,11 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
             if bool(getattr(config, "ALIGN_ONE_SHOT", False)):
                 sx_out, sy_out = P.smooth("F", cx, cy)
                 reply_x, reply_y, reply_dx = sx_out, sy_out, dx
-                log("[F] 一次性模式：已发 %s，%s"
-                    % (" ".join(parts),
-                       "回读调整后值再回 STACK" if _align_verify_on()
-                       else "去回读：直接回动作前偏差"))
+                log("[F] 一次性模式：已发 %s，去回读：直接回动作前偏差 dx=%+d"
+                    % (" ".join(parts), dx))
                 if disp:
                     disp.show(img)
 
-                # ALIGN_REPLY_MODE="verify" 时才回读；"direct" 直接回动作前的值。
-                if _align_verify_on():
-                    def detect_post(pimg):
-                        if color_code:
-                            pit = vision.find_stack_base(clf, pimg, roi, color_code, ai)
-                            psrc = pit["src"] if pit else None
-                        else:
-                            pit = vision.find_stack_top(clf, pimg, roi,
-                                                       P.area(config.MIN_PIXELS))
-                            psrc = "base" if pit else None
-                        if pit is None:
-                            return None
-                        pcx, pcy = P.point(pit["cx"], pit["cy"])
-                        # 每次回读都留一张校准照片，便于复盘 F 的跳点/过冲
-                        if rec is not None:
-                            pdx = pcx - center_x + dx_offset
-                            pdy = pcy - center_y + dy_offset
-                            rec.snap(
-                                pimg,
-                                {"cx": int(pcx), "cy": int(pcy),
-                                 "dx": int(pdx), "dy": int(pdy),
-                                 "src": psrc, "color": color_code,
-                                 "code": pit.get("code"),
-                                 "r": pit.get("r"),
-                                 "ai_cx": pit.get("ai_cx"),
-                                 "ai_cy": pit.get("ai_cy"),
-                                 "ai_prob": pit.get("ai_prob"),
-                                 "ai_tiles": pit.get("ai_tiles"),
-                                 "action": "post_frame"},
-                                "post_frame")
-                        return pcx, pcy, {"it": pit, "src": psrc}
-
-                    expect_x = _actions_sent_x(actions)
-                    expect_y = _actions_sent_y(actions)
-                    post = _wait_stable_post(
-                        cam, ctl, detect_post,
-                        int(getattr(config, "ONE_SHOT_VERIFY_MS", 1200)),
-                        int(getattr(config, "ONE_SHOT_VERIFY_MAX_MS", 4000)),
-                        int(getattr(config, "ONE_SHOT_STOP_TOL", 3)),
-                        int(getattr(config, "ONE_SHOT_STOP_FRAMES", 3)),
-                        baseline=(cx, cy),
-                        require_x=expect_x, require_y=expect_y)
-                    if post is not None:
-                        pit = post["meta"]["it"]
-                        psrc = post["meta"]["src"]
-                        pcx, pcy = post["cx"], post["cy"]
-                        pdx = pcx - center_x + dx_offset
-                        pdy = pcy - center_y + dy_offset
-                        reply_x, reply_y, reply_dx = pcx, pcy, pdx
-                        if post["stable"]:
-                            stop = "已停稳"
-                        elif expect_y and not post.get("moved_y"):
-                            stop = "未检测到垂直位移"
-                        else:
-                            stop = "未停稳(超时)"
-                        log("[F] 调整后偏差 dx=%+d dy=%+d 中心=(%d,%d) %s（%dms，回传此值，不再发 MOVE）"
-                            % (pdx, pdy, pcx, pcy, stop, int(post["elapsed_ms"])))
-                        if rec is not None:
-                            rec.snap(
-                                post["img"],
-                                {"cx": int(pcx), "cy": int(pcy),
-                                 "dx": int(pdx), "dy": int(pdy),
-                                 "src": psrc, "color": color_code,
-                                 "code": pit.get("code"),
-                                 "r": pit.get("r"),
-                                 "ai_cx": pit.get("ai_cx"),
-                                 "ai_cy": pit.get("ai_cy"),
-                                 "ai_prob": pit.get("ai_prob"),
-                                 "ai_tiles": pit.get("ai_tiles"),
-                                 "action": "post_move",
-                                 "post_dx": int(pdx), "post_dy": int(pdy),
-                                 "post_stable": bool(post["stable"]),
-                                 "post_moved_x": bool(post.get("moved_x")),
-                                 "post_moved_y": bool(post.get("moved_y"))},
-                                "final_post", force=True)
-                    else:
-                        log("[F] 调整后偏差：未检测到目标，回传移动前值")
                 return finish(pack_stack(reply_x, reply_y, reply_dx, 1))
             if settle:
                 sleep_ms(settle)

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 config.py —— 新流程（智能搬运赛项）视觉端配置（唯一参数来源）
 
@@ -178,7 +178,7 @@ DISC_TEMPLATE_ROI_DX    = 0      # 窗口中心相对候选圆心的偏移
 DISC_TEMPLATE_ROI_DY    = 0
 
 # ---- D/E 调试抓图（现场分析用；正式比赛可关）----
-DISC_DEBUG_SAVE          = True   # True=每次 D/E 保存关键帧 + 逐帧检测数据
+DISC_DEBUG_SAVE          = False   # True=每次 D/E 保存关键帧 + 逐帧检测数据
 DISC_DEBUG_DIR           = "/root/yyb_mover_data/disc_debug"  # 放在 APP 目录外，升级不丢
 DISC_DEBUG_MAX_FRAMES    = 24     # 单次任务最多存多少张图（数据行不受限）
 DISC_DEBUG_QUALITY       = 85     # JPEG 质量 1~100
@@ -197,27 +197,10 @@ ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（中心稳�
 ALIGN_MODE        = "movexy"  # movexy=MOVEXY,dx,dy 双轴并行；split=MOVE + MOVEY
 ALIGN_ONE_SHOT    = True    # True = 只发一轮 MOVEXY（或 MOVE/MOVEY）就回复
 ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定为 1
-# one-shot 后回读一次：回复改用调整后的 x/y/dx（dy 仅写日志），
-# 但绝不再发 MOVE/MOVEY。会增加 ONE_SHOT_VERIFY_MS 的回复延迟。
-# ---- 对齐回复模式（D/E、F、H 发完 MOVEXY 之后怎么回）----
-#   "direct" = 【去回读】发完 MOVEXY 立即返回「动作前」的 x/y/dx（快，省掉 0.6~2.5s 回读）
-#   "verify" = 回读一次，用调整后（动作后）的 x/y/dx 回复（更准但慢）
-# STM32 若自己知道移动了多少、只想快速拿到偏差，就用 "direct"。
-ALIGN_REPLY_MODE     = "direct"
-# ---- 运行时切换对齐回复模式（现场诊断用，免重编包）----
-#   SSH 上 `touch /tmp/align_verify` → D/E/F/H 临时改 verify（回读，拿「移动后偏差」）；
-#   `rm /tmp/align_verify` → 恢复 config 默认；也可 `touch /tmp/align_direct` 反向覆盖。
-#   触发文件优先级高于 ALIGN_REPLY_MODE；结果按 ALIGN_MODE_CACHE_MS 缓存（免逐帧 stat）。
-#   切换时会打印一行 [ALIGN]（"触发文件 ... 强制 ..."），日志里能确认当次走没走回读。
-ALIGN_VERIFY_TRIGGER_FILE = "/tmp/align_verify"
-ALIGN_DIRECT_TRIGGER_FILE = "/tmp/align_direct"
-ALIGN_MODE_CACHE_MS  = 500
-ONE_SHOT_VERIFY      = True
-ONE_SHOT_VERIFY_MS   = 600    # 先等至少这么久，再开始判断是否停稳（加速：1200→600）
-ONE_SHOT_VERIFY_MAX_MS = 2500 # 停稳判断最多再等这么久（加速：4000→2500）
-ONE_SHOT_STOP_TOL    = 3      # 相邻两帧中心变化 <= 3px 视为在停止
-ONE_SHOT_STOP_FRAMES = 3      # 连续 3 帧满足才认定停稳
-ONE_SHOT_VERIFY_TRIES = 8     # 兼容旧配置；当前使用停稳判断
+# ---- 回复策略：回读已彻底移除 ----
+#   现在 D/E、F、H 发完 MOVE/MOVEY/MOVEXY 立即返回「动作前」的 x/y/dx，绝不再回读。
+#   理由：回读要等机构停稳（ONE_SHOT_VERIFY 0.6~2.5s），是为诊断而生的功能；
+#   比赛/现场只要最快响应，移动是否正确由上位机自己按刚发的步长推算。
 ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 5px
 ALIGN_GAIN        = 0.65    # 比例系数：按实测 k≈1.48 取 1/k；先走大部分，第二轮只补残差
 ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 0
@@ -380,8 +363,8 @@ PLATE_INIT_CX       = 310.0    # 粗圆心 x（对外 640x480 口径）
 # （先验低点 = cy+r ≈ 298，±60 覆盖 238~358；现落点 313 在其中）。
 PLATE_INIT_CY       = -32.0
 PLATE_INIT_R        = 330.0    # 粗半径（像素）
-PLATE_SEARCH_BANDS  = (60.0, 28.0, 16.0)  # 迭代搜索带半径(px)：大→小逐步精修，容忍盘移动
-PLATE_RAYS          = 140      # 下半弧采样射线数（越大越准、越慢）
+PLATE_SEARCH_BANDS  = (36.0, 14.0)  # 迭代搜索带半径(px)：小→更小（提速；大偏移交给粗定位）
+PLATE_RAYS          = 120      # 下半弧采样射线数（120≈3°一条，精度与耗时平衡）
 PLATE_STEP          = 2.0      # 径向采样步长(px)
 PLATE_MIN_GRAD      = 8.0      # 边缘最小亮度梯度（抗噪）
 PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见下弧
@@ -392,7 +375,7 @@ PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见�
 #   SKIP_BOTTOM_ALT = 备用尝试跳过的角度；SKIP_ALT_ON 控制是否启用备用尝试。
 PLATE_ARC_SKIP_BOTTOM_DEG = 0.0
 PLATE_ARC_SKIP_BOTTOM_ALT = 30.0
-PLATE_ARC_SKIP_ALT_ON     = True
+PLATE_ARC_SKIP_ALT_ON     = False   # 最简版：不做备用尝试（省一轮拟合）
 # ---- 弧模型：盘是平面圆，镜头斜视 → 投影是「轴对齐椭圆」而不是圆 ----
 #   实测 12 张真实下弧图：边缘半径随角度极差约 12px（底部最小、±45° 最大），
 #   圆拟合残差 ~3~4px，最低点比真实低 ~3.5px，且绿圆在两侧明显翘离盘缘。
@@ -438,7 +421,7 @@ PLATE_GEOM_B_RATIO_MAX  = 2.00
 PLATE_LOWCONF_STEP_MAX = 0
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
 PLATE_ELLIPSE_K_MAX = 1.05
-PLATE_ELLIPSE_K_STEP = 0.01
+PLATE_ELLIPSE_K_STEP = 0.02
 PLATE_TARGET_X      = 291.0    # 目标最低点 x（对外口径，现场标定）
 # 现场反馈「定位后车往右偏」→ 目标 x 左移 20px：311 → 291（有效目标 x = 291−2 = 289）。
 # 注意方向：目标 x 往左 → 车最终停更靠右；要「纠正车往右偏」应把 x 右移。
@@ -480,7 +463,7 @@ PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
 PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
 PLATE_INVERT_Y      = False    # 垂直方向反了置 True
 # ---- H 调试抓图（关键帧 + meta.jsonl，放在 APP 目录外，升级不丢）----
-PLATE_DEBUG_SAVE    = True     # True=每次 H 存关键帧（含画的椭圆/最低点）到 PLATE_DEBUG_DIR
+PLATE_DEBUG_SAVE    = False     # True=每次 H 存关键帧（含画的椭圆/最低点）到 PLATE_DEBUG_DIR
 PLATE_DEBUG_DIR     = "/root/yyb_mover_data/plate_debug"
 PLATE_DEBUG_MAX_FRAMES = 16    # 单次 H 最多存多少张图
 PLATE_DEBUG_QUALITY = 85

@@ -92,17 +92,11 @@ touch /tmp/run_stack_move
 - 判定用画面的 32×24 降采样灰度签名，纯 `get_pixel`，无 cv2 依赖
 - 想回到旧行为（固定等待）：`SCENE_SETTLE_ON = False`
 
-### 对齐回复模式：回读 / 去回读
+### 对齐回复：一律「去回读」（最快）
 
-D/E、F、H 发完 `MOVEXY` 之后怎么回复，由 `ALIGN_REPLY_MODE` 决定：
-
-- `"direct"`（默认，**去回读**）：发完 `MOVEXY` 立即返回**动作前**的 `x/y/dx`，
-  省掉 0.6~2.5s 回读；STM32 自己知道移动了多少时用这个最快
-- `"verify"`：回读一次，用**调整后**的 `x/y/dx` 回复（更准但慢）
-
-```python
-ALIGN_REPLY_MODE = "direct"   # "direct"=去回读 | "verify"=回读后再回
-```
+D/E、F、H 发完 `MOVEXY` **立即**返回**动作前**的 `x/y/dx`，**不再回读**。
+（回读要等机构停稳 0.6~2.5s，只适合诊断；3.9.64 起已彻底移除 `verify` 模式、
+`ONE_SHOT_VERIFY_*` 与 `/tmp/align_verify` 触发文件。）
 
 ### 串口日志与运行信息
 
