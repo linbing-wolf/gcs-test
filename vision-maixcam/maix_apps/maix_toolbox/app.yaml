@@ -1,17 +1,18 @@
 id: maix_toolbox
 name: Maix Toolbox
 name[zh]: Maix 工具集
-version: 1.0.2
+version: 1.0.3
 icon: assets/icon.png
 author: YYB Team
-desc: "On-device toolbox: checkerboard calibration capture, dataset capture, disable Maix comm protocol (free UART4), and device diagnostics."
-desc[zh]: "板上工具集 APP：标定拍图 / 数据集采集 / 关闭 Maix 通信协议(让出 UART4) / 设备自检。"
+desc: "On-device toolbox: checkerboard calibration capture, dataset capture (with fill-light toggle), disable Maix comm protocol (free UART4), and device diagnostics."
+desc[zh]: "板上工具集 APP：标定拍图 / 数据集采集（可开关补光灯）/ 关闭 Maix 通信协议(让出 UART4) / 设备自检。"
 
 files:
   - app.yaml
   - assets
   - main.py
   - ui.py
+  - light.py
   - tool_calib.py
   - tool_color.py
   - tool_dataset.py

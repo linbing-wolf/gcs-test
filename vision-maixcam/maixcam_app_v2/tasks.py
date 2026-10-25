@@ -12,6 +12,7 @@ from maix import image, app
 from timing import ticks_ms, sleep_ms
 import os
 import config
+import cam_light
 import precision
 import vision
 import disc_debug
@@ -1112,13 +1113,24 @@ def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
 # 任务 H：物料盘下弧对齐（盘太大只见下弧，以「最低点」为基准）
 # ======================================================================
 def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
-    """任务 H：把物料盘的「最低点」对齐到目标位置。
+    """任务 H：把物料盘的「最低点」对齐到目标位置（H 期间打开补光灯）。
 
-    识别：vision.find_disc_arc 从粗圆心沿下弧找边缘 → 最小二乘拟合圆 → 最低点 (cx, cy+r)。
+    识别：vision.find_disc_arc 从粗圆心沿下弧找边缘 → 拟合轴对齐椭圆 → 最低点。
     对齐：与 D/E 同一套，发 MOVEXY,dx,dy 微调（ALIGN_MODE="split" 时退回 MOVE+MOVEY）。
     回复：DISC,x,y,dx,1（x,y = 盘最低点，dx = 水平偏差；dy 只随 MOVEXY 下发）
-          NONE,H  连续 PLATE_LOST_FRAMES 帧看不到下弧 / 超时
+          NONE,H  连续 PLATE_LOST_FRAMES 帧看不到下弧（且几何上不可能）/ 超时
+
+    补光灯：现场要求「只给 H 加灯」→ 进来点亮、退出（含中断/超时/异常）关掉。
     """
+    light_on = bool(getattr(config, "PLATE_LIGHT_ON", True)) and cam_light.on()
+    try:
+        return _task_plate_impl(cam, disp, timeout_ms, p, ctl)
+    finally:
+        if light_on:
+            cam_light.off()
+
+
+def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
     P = _pipeline(p)
     link = getattr(ctl, "link", None) if ctl is not None else None
     align_on = bool(getattr(config, "PLATE_ON", True)) and link is not None

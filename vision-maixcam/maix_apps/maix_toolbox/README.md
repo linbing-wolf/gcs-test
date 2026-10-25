@@ -14,6 +14,15 @@ MaixCAM 标准 APP（`id: maix_toolbox`）——**一个 APP 干四件事**，�
 
 点每个工具里的 **BACK** 回菜单；按设备 **FUNC** 键退出整个 APP。
 
+## 补光灯（闪光灯）
+
+主菜单右上角有 **`LIGHT ON / LIGHT OFF`** 按钮，**Dataset Capture** 顶栏左侧也有一个
+（采集时随手开关，状态全局共享、切页面不丢）。
+
+- MaixCAM2 板载照明 LED = **B25 / GPIOB25**，高电平点亮。
+- 采集颜色样本时**建议打开**，保证与比赛现场光照一致（主程序 `yyb_mover` 启动时也会自动点亮）。
+- 没用 PWM6 调亮度：官方文档说明 PWM6 与 A30(UART1) 二选一，会和 Maix 通信协议抢引脚。
+
 ## 每个工具怎么用
 
 ### Calib Capture
@@ -30,6 +39,7 @@ MaixCAM 标准 APP（`id: maix_toolbox`）——**一个 APP 干四件事**，�
 底部类别按钮：`red / yellow / blue / green / background / other`，点选当前类别；
 点画面区域存一帧到该类别。**存 `/maixapp/share/picture/dataset/<类别>/`**（不可写退回 `/root/dataset/<类别>/`）。
 **顶栏 `AUTO` 键切换**：`AUTO ON` 时自动连拍到当前类别（**`-`/`+` 调间隔 0.1~2.0s，默认 1.0s**；换物料前先 BACK 或切类别）。
+**顶栏 `LIGHT` 键**：开/关补光灯（重新采集颜色样本时建议打开，见上一节）。
 
 ### Disable Maix Comm
 点 **APPLY** 关闭系统通信协议、让出 UART4。

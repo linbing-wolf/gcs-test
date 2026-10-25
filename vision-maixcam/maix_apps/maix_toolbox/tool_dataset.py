@@ -3,7 +3,8 @@
 
 ⚠️ 保存的是【干净帧】：先 save 原始画面，再画预览叠加层（顶栏/类别按钮不进保存的图）。
 
-顶栏：AUTO 键(MANUAL⇄AUTO ON) · `-`/`+` 调速(0.1~2.0s，默认1.0s) · BACK 回菜单
+顶栏：AUTO 键(MANUAL⇄AUTO ON) · `-`/`+` 调速(0.1~2.0s，默认1.0s)
+      LIGHT 键(补光灯开关，采集时建议打开以保证亮度一致) · BACK 回菜单
 保存目录：优先 /maixapp/share/picture/dataset/<类别>，否则退回 /root/dataset/<类别>
 """
 import os
@@ -11,6 +12,7 @@ import time
 
 from maix import image, app
 
+import light
 from ui import hit, topbar
 
 MIN_IV, MAX_IV, STEP = 0.1, 2.0, 0.1
@@ -69,6 +71,7 @@ def run(cam, disp, touch, w, h):
     auto_r = [w - 240, y, 112, 36]
     plus_r = [w - 286, y, 40, 36]
     minus_r = [w - 330, y, 40, 36]
+    light_r = [8, y, 118, 36]
     counts = {c: _next_index(os.path.join(root, c), c) for c in CLASSES}
     saved = {c: _count_existing(os.path.join(root, c), c) for c in CLASSES}
     cur = CLASSES[0]
@@ -86,6 +89,8 @@ def run(cam, disp, touch, w, h):
         if clicked:
             if hit(ix, iy, exit_r):
                 return
+            elif hit(ix, iy, light_r):
+                light.toggle()
             elif hit(ix, iy, auto_r):
                 auto = not auto
                 last = 0.0
@@ -133,6 +138,9 @@ def run(cam, disp, touch, w, h):
         for r, txt in ((minus_r, "-"), (plus_r, "+")):
             img.draw_rect(r[0], r[1], r[2], r[3], image.COLOR_WHITE, 2)
             img.draw_string(r[0] + 15, r[1] + 8, txt, image.COLOR_WHITE, 2)
+        lc = image.COLOR_YELLOW if light.is_on() else image.COLOR_GRAY
+        img.draw_rect(light_r[0], light_r[1], light_r[2], light_r[3], lc, 2)
+        img.draw_string(light_r[0] + 8, light_r[1] + 12, light.label(), lc, 1)
         img.draw_rect(exit_r[0], exit_r[1], exit_r[2], exit_r[3], image.COLOR_RED, 2)
         img.draw_string(exit_r[0] + 20, exit_r[1] + 8, "BACK", image.COLOR_RED, 2)
         for c, r in btns.items():
