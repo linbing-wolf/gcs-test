@@ -278,6 +278,71 @@ config.PLATE_DEBUG_SAVE = _old_save
 config.PLATE_DEBUG_DIR = _old_dbgdir
 shutil.rmtree(_dbgdir, ignore_errors=True)
 
+# ---------------- 4c) 运行时可调偏差（PLATE_BIAS_FILE）----------------
+print("\n== _plate_bias：运行时覆盖 > config ==")
+_biasf = os.path.join(tempfile.gettempdir(), "selftest_plate_bias")
+try:
+    os.remove(_biasf)
+except OSError:
+    pass
+_old_bias = (config.PLATE_BIAS_FILE, config.PLATE_BIAS_CACHE_MS)
+config.PLATE_BIAS_FILE = _biasf
+config.PLATE_BIAS_CACHE_MS = 0        # 关缓存，改完立即生效
+
+b = tasks._plate_bias()
+check("无文件 → 用 config 默认",
+      b["PLATE_TARGET_Y"] == config.PLATE_TARGET_Y and
+      b["PLATE_DY_OFFSET"] == config.PLATE_DY_OFFSET, str(b))
+
+with open(_biasf, "w") as f:
+    f.write("# 现场调落点\nPLATE_DY_OFFSET=5\nPLATE_TARGET_Y=343.5\n")
+b = tasks._plate_bias()
+check("覆盖 PLATE_DY_OFFSET=5", b["PLATE_DY_OFFSET"] == 5, str(b))
+check("覆盖 PLATE_TARGET_Y=343.5",
+      abs(b["PLATE_TARGET_Y"] - 343.5) < 1e-6, str(b))
+check("未写的项仍用 config", b["PLATE_TARGET_X"] == config.PLATE_TARGET_X, str(b))
+check("偏置按 int 处理", isinstance(b["PLATE_DY_OFFSET"], int),
+      str(type(b["PLATE_DY_OFFSET"])))
+
+with open(_biasf, "w") as f:
+    f.write("PLATE_DY_OFFSET=abc\n未知键=1\nPLATE_DX_OFFSET = 7  # 注释\n")
+b = tasks._plate_bias()
+check("非法数值行忽略（仍用 config）",
+      b["PLATE_DY_OFFSET"] == config.PLATE_DY_OFFSET, str(b))
+check("'=' 两侧空格/行内注释可用", b["PLATE_DX_OFFSET"] == 7, str(b))
+
+os.remove(_biasf)
+b = tasks._plate_bias()
+check("删除文件 → 恢复 config",
+      b["PLATE_DY_OFFSET"] == config.PLATE_DY_OFFSET, str(b))
+
+# E2E：覆盖文件把落点抬高 → H 发的 MOVEXY dy 随之变化
+def _last_movey(lk):
+    for s in reversed(lk.sent):
+        if s.startswith("MOVEXY,"):
+            return int(s.split(",")[2])
+    return None
+
+config.ALIGN_ONE_SHOT = True
+config.ALIGN_REPLY_MODE = "direct"
+cam = FakeArcCam(cx=340.0, cy=-58.0, r=330.0, kb=0.92)
+lk = ArcLink(cam)
+frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(lk)))
+dy0 = _last_movey(lk)
+with open(_biasf, "w") as f:
+    f.write("PLATE_DY_OFFSET=%d\n" % (config.PLATE_DY_OFFSET + 30))
+cam = FakeArcCam(cx=340.0, cy=-58.0, r=330.0, kb=0.92)
+lk2 = ArcLink(cam)
+frame_str(tasks.task_plate(cam, None, p=P, ctl=tasks.TaskCtl(lk2)))
+dy1 = _last_movey(lk2)
+want = round(30 * float(getattr(config, "PLATE_GAIN", 0.65)))
+check("覆盖生效：MOVEXY dy 变化 ≈30×gain",
+      dy0 is not None and dy1 is not None and abs((dy1 - dy0) - want) <= 2,
+      "dy %s → %s（期望 +%d）" % (dy0, dy1, want))
+
+os.remove(_biasf)
+config.PLATE_BIAS_FILE, config.PLATE_BIAS_CACHE_MS = _old_bias
+
 # ---------------- 5) 画面稳定判定 ----------------
 print("\n== _wait_scene_settle：画面稳定后提前开始 ==")
 

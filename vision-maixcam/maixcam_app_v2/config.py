@@ -368,8 +368,8 @@ OBST_TIMEOUT_MS = 3000                 # 兜底超时，超时按无障碍回
 PLATE_ON            = True
 PLATE_INIT_CX       = 310.0    # 粗圆心 x（对外 640x480 口径）
 # 粗圆心 y：先验「盘大致在哪」，决定第一轮搜索带扫哪里（带内 ±PLATE_SEARCH_BANDS[0]）。
-# 落点目标下移后（PLATE_TARGET_Y=333），把先验收在「旧落点 263 ~ 新落点 333」中间，
-# 保证两种位置都在搜索带内（先验低点 = cy+r ≈ 298，±60 覆盖 238~358）。
+# 落点目标调过之后，把先验收在「旧落点 ~ 现落点」中间，保证都在搜索带内
+# （先验低点 = cy+r ≈ 298，±60 覆盖 238~358；现落点 313 在其中）。
 PLATE_INIT_CY       = -32.0
 PLATE_INIT_R        = 330.0    # 粗半径（像素）
 PLATE_SEARCH_BANDS  = (60.0, 28.0, 16.0)  # 迭代搜索带半径(px)：大→小逐步精修，容忍盘移动
@@ -391,8 +391,10 @@ PLATE_TARGET_X      = 311.0    # 目标最低点 x（对外口径，现场标定
 # 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点整体上移，
 # 故下调同步修正（实测 12 张真实图 圆low−椭low 平均 4.2px，范围 0.3~7.4px）。
 # 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
-# 现场要求「落点大幅下移」：263 → 333（再下移 70px）。
-PLATE_TARGET_Y      = 333.0
+# 现场要求「落点大幅下移」：263 → 333（再下移 70px）；
+# 之后又反馈「车不那么靠前一点」→ 落点抬高 20px：333 → 313。
+# 有效目标 y = PLATE_TARGET_Y − PLATE_DY_OFFSET；y 越大=落点越低=车越靠前。
+PLATE_TARGET_Y      = 313.0
 # 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款）
 #   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
 #   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
@@ -401,6 +403,16 @@ PLATE_TARGET_Y      = 333.0
 #   故 40→0：有效目标 y 由 223 变成 263，净下移 40px（想只下移 35px 就填 5）。
 PLATE_DX_OFFSET     = 2
 PLATE_DY_OFFSET     = 0
+# ---- 运行时可调偏差 / 落点（现场调，免重编包）----
+# 文件存在时逐行 KEY=VALUE 覆盖下面的项（只写要改的那几行即可，其余仍用 config）：
+#   PLATE_TARGET_X / PLATE_TARGET_Y / PLATE_DX_OFFSET / PLATE_DY_OFFSET
+#   ssh root@<板子> "printf 'PLATE_DY_OFFSET=5\n' > /tmp/plate_bias"   # 生效
+#   ssh root@<板子> "rm -f /tmp/plate_bias"                            # 恢复默认
+# 支持 # 注释、空行；数值不合法的行忽略。H 启动日志会打印实际生效值与来源。
+PLATE_BIAS_FILE     = "/tmp/plate_bias"
+PLATE_BIAS_CACHE_MS = 500     # 文件检查缓存(ms)，避免逐帧 stat
+PLATE_BIAS_KEYS     = ("PLATE_TARGET_X", "PLATE_TARGET_Y",
+                       "PLATE_DX_OFFSET", "PLATE_DY_OFFSET")
 PLATE_TOL_X         = 6        # 水平容差(px)
 PLATE_TOL_Y         = 6        # 垂直容差(px)
 PLATE_STABLE_FRAMES = 3        # 进入容差后连续 N 帧稳定才回 ok=1

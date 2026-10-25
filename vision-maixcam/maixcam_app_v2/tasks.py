@@ -166,6 +166,56 @@ def _align_verify_on():
     return c["ov"]
 
 
+_BIAS_CACHE = {"t": None, "vals": None, "sig": "", "src": "config"}
+
+
+def _plate_bias():
+    """H 的目标/偏置：config 默认值，可被运行时文件覆盖（现场调落点，免重编包）。
+
+    覆盖文件逐行 `KEY=VALUE`（见 config.PLATE_BIAS_FILE / PLATE_BIAS_KEYS），
+    只写要改的项即可；文件不存在/解析失败的行 → 该键仍用 config 默认。
+    返回 {"PLATE_TARGET_X": float, ..., "PLATE_DX_OFFSET": int, ...}。
+    结果按 PLATE_BIAS_CACHE_MS 缓存，避免逐帧读文件。
+    """
+    c = _BIAS_CACHE
+    now = ticks_ms()
+    ttl = int(getattr(config, "PLATE_BIAS_CACHE_MS", 500))
+    if c["t"] is not None and ttl > 0 and now >= c["t"] and now - c["t"] < ttl:
+        return c["vals"]
+    keys = tuple(getattr(config, "PLATE_BIAS_KEYS",
+                          ("PLATE_TARGET_X", "PLATE_TARGET_Y",
+                           "PLATE_DX_OFFSET", "PLATE_DY_OFFSET")))
+    vals = {k: float(getattr(config, k, 0.0)) for k in keys}
+    src = "config"
+    path = str(getattr(config, "PLATE_BIAS_FILE", "") or "")
+    try:
+        if path and os.path.exists(path):
+            with open(path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, _, v = line.partition("=")
+                    k = k.strip()
+                    if k not in vals:
+                        continue
+                    try:
+                        vals[k] = float(v.split("#")[0].strip())
+                    except ValueError:
+                        continue
+            src = path
+    except Exception:
+        pass
+    for k in keys:                      # 偏置按整数用（与原来 int(getattr(...)) 一致）
+        if k.endswith("_OFFSET"):
+            vals[k] = int(round(vals[k]))
+    sig = ",".join("%s=%s" % (k, vals[k]) for k in keys)
+    if c["t"] is None or sig != c["sig"] or src != c["src"]:
+        log("[H] 落点参数（%s）：%s" % (src, sig))
+    c["vals"], c["sig"], c["src"], c["t"] = vals, sig, src, now
+    return vals
+
+
 def _make_align_actions(x_out, y_out, sx_step, sy_step):
     """按当前模式组装指令；返回 (name, step, payload) 列表。"""
     if _align_movexy_mode():
@@ -1079,10 +1129,11 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
     init_r = float(getattr(config, "PLATE_INIT_R", 330.0)) / sx
     bands = getattr(config, "PLATE_SEARCH_BANDS", (60.0, 28.0, 16.0))
     bands = tuple(float(b) / sx for b in bands)
-    tx = float(getattr(config, "PLATE_TARGET_X", 311.0))
-    ty = float(getattr(config, "PLATE_TARGET_Y", 267.0))
-    dx_offset = int(getattr(config, "PLATE_DX_OFFSET", 0))
-    dy_offset = int(getattr(config, "PLATE_DY_OFFSET", 0))
+    bias = _plate_bias()
+    tx = float(bias.get("PLATE_TARGET_X", 311.0))
+    ty = float(bias.get("PLATE_TARGET_Y", 267.0))
+    dx_offset = int(bias.get("PLATE_DX_OFFSET", 0))
+    dy_offset = int(bias.get("PLATE_DY_OFFSET", 0))
     tol_x = int(getattr(config, "PLATE_TOL_X", 6))
     tol_y = int(getattr(config, "PLATE_TOL_Y", 6))
     need_stable = max(1, int(getattr(config, "PLATE_STABLE_FRAMES", 3)))
@@ -1148,11 +1199,12 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
             f.update(extra)
         return f
 
-    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f → 有效 %.0f,%.0f | 容差 ±%d/±%d | %s | 模型 %s | 超时 %dms）"
+    log("[H] 物料盘下弧对齐（粗圆心 %.0f,%.0f r=%.0f | 目标最低点 %.0f,%.0f → 有效 %.0f,%.0f | 容差 ±%d/±%d | %s | 模型 %s | 落点来源 %s | 超时 %dms）"
         % (init_cx, init_cy, init_r, tx, ty, tx - dx_offset, ty - dy_offset,
            tol_x, tol_y,
            "MOVEXY 双轴" if _align_movexy_mode() else "MOVE+MOVEY",
-           getattr(config, "PLATE_ARC_MODEL", "ellipse"), timeout_ms))
+           getattr(config, "PLATE_ARC_MODEL", "ellipse"),
+           _BIAS_CACHE.get("src", "config"), timeout_ms))
 
     # 收到 H 后等画面稳定（上限 PLATE_START_DELAY_MS）再读第一帧
     start_delay = max(0, int(getattr(config, "PLATE_START_DELAY_MS", 0)))
