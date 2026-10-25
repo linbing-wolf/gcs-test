@@ -587,8 +587,33 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     min_pts = int(getattr(config, "PLATE_MIN_PTS", 30))
     tries = []
 
+    # ---- 几何硬校验（与「准不准」无关）：最低点跑出画面 / 半径离谱 → 直接作废 ----
+    _W, _H = img.width(), img.height()
+    geom_on = bool(getattr(config, "PLATE_GEOM_CHECK", True))
+    _ly_lo = float(getattr(config, "PLATE_LOW_Y_MIN_RATIO", 0.25)) * _H
+    _ly_hi = _H - 1.0
+    _lxr = float(getattr(config, "PLATE_LOW_X_EDGE_RATIO", 0.05))
+    _b_lo = r0 * float(getattr(config, "PLATE_GEOM_B_RATIO_MIN", 0.40))
+    _b_hi = r0 * float(getattr(config, "PLATE_GEOM_B_RATIO_MAX", 2.00))
+
+    def _geom_ok(res):
+        if not geom_on:
+            return True, ""
+        cx_, cy_, b_ = float(res[0]), float(res[1]), float(res[2])
+        low_y = cy_ + b_
+        if not (_ly_lo <= low_y <= _ly_hi):
+            return False, "low_y=%.0f 不在 %.0f~%.0f" % (low_y, _ly_lo, _ly_hi)
+        if not (_lxr * _W <= cx_ <= (1.0 - _lxr) * _W):
+            return False, "low_x=%.0f 越界" % cx_
+        if not (_b_lo <= b_ <= _b_hi):
+            return False, "b=%.0f 不在 %.0f~%.0f" % (b_, _b_lo, _b_hi)
+        return True, ""
+
     def _try(tag, px, py, pr, skip=None):
-        """试一轮：返回 (rank, rms, tag, res, meta_of_this_try)；失败返回 None。"""
+        """试一轮：返回 (rank, rms, tag, res, meta_of_this_try)；失败返回 None。
+
+        rank: 0=可信且几何合理；1=低置信但几何合理；2=几何不合理（不可用）。
+        """
         m2 = {}
         res = _fit_arc_once(img, px, py, pr, bands, rays, step, min_grad,
                             arc_deg, m2, skip_bottom_deg=skip)
@@ -599,10 +624,13 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
         rms = float(m2.get("rms", 0.0))
         npts = int(m2.get("npts", 0))
         credible = (not gate) or (rms <= max_rms and npts >= min_pts)
+        g_ok, g_why = _geom_ok(res)
         tries.append({"prior": label, "rms": rms, "npts": npts,
-                      "credible": bool(credible),
-                      "low": [round(res[0], 1), round(res[1] + res[2], 1)]})
-        return (0 if credible else 1, rms, label, res, m2)
+                      "credible": bool(credible), "geom": g_ok,
+                      "low": [round(res[0], 1), round(res[1] + res[2], 1)],
+                      **({} if g_ok else {"geom_why": g_why})})
+        rank = 0 if (credible and g_ok) else (1 if g_ok else 2)
+        return (rank, rms, label, res, m2)
 
     base_skip = float(getattr(config, "PLATE_ARC_SKIP_BOTTOM_DEG", 0.0))
     alt_skip = float(getattr(config, "PLATE_ARC_SKIP_BOTTOM_ALT", 30.0))
@@ -651,6 +679,12 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     d["tries"] = tries
     if best is None:
         d["reason"] = "no-fit"
+        return None
+    if best[0] == 2:
+        # 几何不合理（最低点跑出画面/半径离谱）→ 任何模式都不执行
+        d["reason"] = "geom-reject(最好 rms=%.2f low=%s)" % (
+            best[1], tries[-1].get("low") if tries else None)
+        d["rejected"] = True
         return None
     rank, rms, tag, res, m2 = best
     for k, v in m2.items():

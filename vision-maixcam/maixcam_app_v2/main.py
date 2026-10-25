@@ -257,6 +257,34 @@ def ui_run_job(code):
     return None
 
 
+def camera_light(on=None):
+    """摄像头补光灯（MaixCAM2 板载照明 LED，B25/GPIOB25，高电平点亮）。
+
+    注意：官方文档说照明 LED 也能用 PWM6 调亮度，但 PWM6 与 A30(UART1) 二选一，
+    会和 Maix 通信协议抢引脚，所以这里只用普通 GPIO 开关。
+    失败只打印告警，不影响主流程。
+    """
+    if on is None:
+        on = bool(getattr(config, "CAM_LIGHT_ON", False))
+    if not on:
+        return False
+    pin = str(getattr(config, "CAM_LIGHT_PIN", "B25"))
+    func = str(getattr(config, "CAM_LIGHT_FUNC", "GPIOB25"))
+    try:
+        from maix import gpio, pinmap
+        try:
+            pinmap.set_pin_function(pin, func)
+        except Exception:
+            pass
+        led = gpio.GPIO(func, gpio.Mode.OUT)
+        led.value(1)
+        log("[灯] 补光灯已打开（%s→%s=1）" % (pin, func))
+        return True
+    except Exception as e:
+        log("[灯] 补光灯打开失败: %s" % e)
+        return False
+
+
 def main():
     preflight()
     log("=" * 56)
@@ -268,6 +296,8 @@ def main():
     log("命令: A=启停区 T=任务码 C=原料区 D/E=圆盘 F=码垛 G=障碍物 H=物料盘 R=复位 Z=结束")
     log("握手: 下位机发 R → READY；任务中收到 R 立即中断，收到其它命令回 BUSY")
     log("=" * 56)
+
+    camera_light()
 
     reply(pack_ready())
     log("已发送 READY")

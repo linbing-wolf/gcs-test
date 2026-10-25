@@ -520,6 +520,20 @@ m3 = {}
 vision.find_disc_arc(_img_far, 310.0, -32.0, 330.0, meta=m3)
 check("关掉粗定位后不再有 coarse 记录", "coarse" not in m3, str(m3.get("coarse")))
 
+# (c) 几何硬校验：半径允许范围压到极小 → 任何模式都作废（即使 report 也要拦）
+_old_geom = (config.PLATE_GEOM_B_RATIO_MAX, config.PLATE_GEOM_CHECK,
+             config.PLATE_GATE_MODE)
+config.PLATE_GEOM_CHECK = True
+config.PLATE_GATE_MODE = "report"
+config.PLATE_GEOM_B_RATIO_MAX = 0.05
+m = {}
+r = vision.find_disc_arc(FakeArcImage(310.0, -55.0, 330.0), 310.0, -55.0, 330.0,
+                         meta=m)
+check("几何校验：半径越界 → report 模式也作废（不回假圆）",
+      r is None and m.get("rejected") is True, str(m.get("reason")))
+(config.PLATE_GEOM_B_RATIO_MAX, config.PLATE_GEOM_CHECK,
+ config.PLATE_GATE_MODE) = _old_geom
+
 (config.PLATE_MAX_RMS, config.PLATE_QUALITY_GATE,
  config.PLATE_COARSE_LOCATE) = _old_g
 

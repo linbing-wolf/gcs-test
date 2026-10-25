@@ -290,6 +290,12 @@ FRAME_TIMEOUT_MS = 200
 
 # ============================== 调试开关 ==============================
 SHOW_PREVIEW = True         # 屏幕显示 + MaixVision 预览
+# ---- 摄像头补光灯（MaixCAM2 板载照明 LED）----
+#   B25 = 照明 LED（高电平点亮）。别用 PWM6 调亮度：PWM6 与 A30(UART1) 二选一，
+#   会和 Maix 通信协议抢引脚。启动时自动点亮（main.camera_light）。
+CAM_LIGHT_ON   = True
+CAM_LIGHT_PIN  = "B25"
+CAM_LIGHT_FUNC = "GPIOB25"
 VERBOSE = True              # 打印识别过程
 TOUCH_UI = False            # 【默认关】True=触屏调试模式（会旁路串口命令！）
 TOUCH_UI_SEND_UART = False  # 触屏触发的任务是否也发给 STM32（默认否，避免野数据）
@@ -418,6 +424,14 @@ PLATE_QUALITY_GATE  = True
 PLATE_GATE_MODE     = "report"
 PLATE_MAX_RMS       = 4.0      # 拟合残差上限(px)，超了算低置信
 PLATE_MIN_PTS       = 30       # 有效边缘点下限，少了算低置信
+# ---- 几何硬校验（与「准不准」无关，任何模式都生效）----
+#   现场出现过 low_y=613（画面只有 480 高）+ MOVEXY dy=195 的离谱拟合，
+#   这种「几何上不可能」的结果必须无条件作废，不能因为"要执行"就放行。
+PLATE_GEOM_CHECK        = True
+PLATE_LOW_Y_MIN_RATIO   = 0.25   # 最低点 y 必须 ≥ 0.25×画面高（且 < 画面高）
+PLATE_LOW_X_EDGE_RATIO  = 0.05   # 最低点 x 必须在 [0.05W, 0.95W]
+PLATE_GEOM_B_RATIO_MIN  = 0.40   # 竖直半轴 b 必须在「先验 r × 0.40~2.00」
+PLATE_GEOM_B_RATIO_MAX  = 2.00
 # 低置信时把单次步长限幅（0=不限）；防止一次错拟合把车甩太远。
 PLATE_LOWCONF_STEP_MAX = 0
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
@@ -430,9 +444,10 @@ PLATE_TARGET_X      = 291.0    # 目标最低点 x（对外口径，现场标定
 # 故下调同步修正（实测 12 张真实图 圆low−椭low 平均 4.2px，范围 0.3~7.4px）。
 # 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
 # 现场要求「落点大幅下移」：263 → 333（再下移 70px）；
-# 之后又反馈「车不那么靠前一点」→ 落点抬高 20px：333 → 313。
+# 之后又反馈「车不那么靠前一点」→ 落点抬高 20px：333 → 313；
+# 再反馈「车可以再往后一点」→ 再抬高 10px：313 → 303。
 # 有效目标 y = PLATE_TARGET_Y − PLATE_DY_OFFSET；y 越大=落点越低=车越靠前。
-PLATE_TARGET_Y      = 313.0
+PLATE_TARGET_Y      = 303.0
 # 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款）
 #   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
 #   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
