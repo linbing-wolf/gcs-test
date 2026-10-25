@@ -307,7 +307,8 @@ def _reject_by_ellipse(pts, cx, cy, a, b, tol):
     return out
 
 
-def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
+def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
+                     skip_bottom_deg=0.0):
     """沿 a0..a1 的圆弧射线，在 r±band 内找亮度梯度最大的点（边缘点）。
 
     和 _radial_edge_points 的区别：只采样指定角度范围（物料盘只有下半弧可见），
@@ -315,6 +316,9 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
 
     r 为标量时是正圆；为 (a, b) 二元组时是轴对齐椭圆（水平半轴 a、竖直半轴 b），
     每条射线按该方向上的椭圆半径采样——不然用单一半径去搜椭圆盘缘，两侧会搜不到。
+
+    skip_bottom_deg>0 时跳过「正下方 ±该角度」的射线：现场盘最低点常被夹具/阴影
+    遮挡（实测拟合被拉低 30px），跳过它、用两侧弧外推反而更准。
     """
     if isinstance(r, (tuple, list)) and len(r) == 2:
         ea, eb = float(r[0]), float(r[1])
@@ -325,8 +329,11 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1):
     rays = max(8, int(rays))
     step = max(0.5, float(step))
     span = a1 - a0
+    skip = math.radians(max(0.0, float(skip_bottom_deg)))
     for i in range(rays):
         a = a0 + span * i / (rays - 1)
+        if skip > 0.0 and abs(a - math.pi / 2.0) <= skip:
+            continue
         ca, sa = math.cos(a), math.sin(a)
         rc = ea if ea == eb else _ellipse_radius(ea, eb, ca, sa)
         r0 = max(2.0, rc - float(band))
@@ -442,7 +449,8 @@ def coarse_disc_prior(img, pts=None, iters=120, tol=8.0, min_inliers=12,
 
 
 def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
-                  min_grad=None, arc_deg=None, meta=None):
+                  min_grad=None, arc_deg=None, meta=None,
+                  skip_bottom_deg=None):
     """物料盘下弧检测：从粗圆心沿下半弧找边缘点，迭代拟合「轴对齐椭圆」。
 
     为什么需要：物料盘（白色带孔大圆盘）常常只拍得到下半弧，圆心落在画面外，
@@ -482,12 +490,14 @@ def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
     k_max = float(getattr(config, "PLATE_ELLIPSE_K_MAX", 1.15))
     k_step = float(getattr(config, "PLATE_ELLIPSE_K_STEP", 0.01))
     use_ellipse = model in ("ellipse", "ellip", "conic")
+    skip_bottom = float(skip_bottom_deg if skip_bottom_deg is not None
+                        else getattr(config, "PLATE_ARC_SKIP_BOTTOM_DEG", 0.0))
     cx, cy, r = float(cx), float(cy), float(r)
     ea = eb = None
     for band in bands:
         shape = (ea, eb) if (use_ellipse and ea is not None) else r
         pts = _arc_edge_points(img, cx, cy, shape, float(band), rays, step,
-                               min_grad, a0, a1)
+                               min_grad, a0, a1, skip_bottom)
         if meta is not None:
             meta["npts"] = len(pts)
         if len(pts) < 12:
@@ -577,25 +587,44 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     min_pts = int(getattr(config, "PLATE_MIN_PTS", 30))
     tries = []
 
-    def _try(tag, px, py, pr):
+    def _try(tag, px, py, pr, skip=None):
         """试一轮：返回 (rank, rms, tag, res, meta_of_this_try)；失败返回 None。"""
         m2 = {}
         res = _fit_arc_once(img, px, py, pr, bands, rays, step, min_grad,
-                            arc_deg, m2)
+                            arc_deg, m2, skip_bottom_deg=skip)
+        label = tag if not skip else "%s/skip%g" % (tag, skip)
         if res is None:
-            tries.append({"prior": tag, "reason": str(m2.get("reason", ""))[:40]})
+            tries.append({"prior": label, "reason": str(m2.get("reason", ""))[:40]})
             return None
         rms = float(m2.get("rms", 0.0))
         npts = int(m2.get("npts", 0))
         credible = (not gate) or (rms <= max_rms and npts >= min_pts)
-        tries.append({"prior": tag, "rms": rms, "npts": npts,
+        tries.append({"prior": label, "rms": rms, "npts": npts,
                       "credible": bool(credible),
                       "low": [round(res[0], 1), round(res[1] + res[2], 1)]})
-        return (0 if credible else 1, rms, tag, res, m2)
+        return (0 if credible else 1, rms, label, res, m2)
+
+    base_skip = float(getattr(config, "PLATE_ARC_SKIP_BOTTOM_DEG", 0.0))
+    alt_skip = float(getattr(config, "PLATE_ARC_SKIP_BOTTOM_ALT", 30.0))
+    skips = [base_skip]
+    if bool(getattr(config, "PLATE_ARC_SKIP_ALT_ON", True)) and alt_skip > base_skip:
+        skips.append(alt_skip)
+
+    def _best_of(priors):
+        """按优先级试若干 (tag, cx, cy, r) × skips，返回可信且 rms 最小的候选。"""
+        out = None
+        for (tag, px, py, pr) in priors:
+            for sk in skips:
+                e = _try(tag, px, py, pr, sk)
+                if e is not None and (out is None or (e[0], e[1]) < (out[0], out[1])):
+                    out = e
+                if out is not None and out[0] == 0:
+                    return out        # 已经可信 → 不再试（省耗时）
+        return out
 
     # ① 先试「配置先验」——正常位姿走这条，零额外开销
-    best = _try("config", cx0, cy0, r0)
-    # ② 只有当配置先验那轮不可信时，才做「先验无关的粗定位」补救（贵，惰性）
+    best = _best_of([("config", cx0, cy0, r0)])
+    # ② 仍不可信时才做「先验无关的粗定位」补救（贵，惰性）
     if (best is None or best[0] != 0) and bool(getattr(config, "PLATE_COARSE_LOCATE", True)):
         cp = coarse_disc_prior(
             img,
@@ -612,7 +641,7 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
         if cp is not None and lo <= cp[2] <= hi:
             d["coarse"] = [round(cp[0], 1), round(cp[1], 1), round(cp[2], 1),
                            int(cp[3])]
-            e2 = _try("coarse", float(cp[0]), float(cp[1]), float(cp[2]))
+            e2 = _best_of([("coarse", float(cp[0]), float(cp[1]), float(cp[2]))])
             if e2 is not None and (best is None or
                                    (e2[0], e2[1]) < (best[0], best[1])):
                 best = e2

@@ -1255,8 +1255,13 @@ def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
         dy = int(round(fly - ty + dy_offset))
         ok_xy = abs(dx) <= tol_x and abs(dy) <= tol_y
 
-        # 画出拟合形状（椭圆/圆）+ 最低点 + 目标十字（调试抓图/预览都看得到）
+        # 先存一张「干净帧」（画线之前），供离线复现；再存画了标注的版本
         imeta = info["meta"]
+        if rec is not None:
+            rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
+                                     {"action": "detect_raw"}),
+                     "detect_raw")
+        # 画出拟合形状（椭圆/圆）+ 最低点 + 目标十字（调试抓图/预览都看得到）
         is_ell = str(imeta.get("model", "circle")).lower() == "ellipse"
         try:
             if is_ell:
