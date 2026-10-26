@@ -25,7 +25,7 @@ try {
         $settleHashes[$settleFile]=(Get-FileHash -LiteralPath $settleFile -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;exitCode=$settleExit;sourceHashes=$settleHashes;hardwareAccessed=$false;
-        scope='Recorded terminal command replay,12 inertia cases,late CPOS phase changes,25ms/subcycle slew,station/vision/obstacle exclusions,normal90/180deg turns,drive yaw damping; no physical acceptance';
+        scope='Recorded terminal command replay,12 inertia cases,late CPOS phase changes,25ms/subcycle slew,nonvisual index/unmarked vector/obstacle exclusions,normal90/180deg turns,drive yaw damping; no physical acceptance';
         lateralDistanceWindowMm=1;headingWindowCdeg=80;output=$settleText} |
         ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $settleOut 'result.json')
     $settleText | Select-Object -Last 4

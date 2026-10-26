@@ -8,6 +8,8 @@ int arm_enabled(void);
 int arm_parked(void);
 /* 高位收回后，仅末尾云台/载物台回正尚在插值，可与离站预检和转弯重叠。 */
 int arm_departure_rotation_active(void);
+/* 平台已松爪，末尾升降/平推收回及回正仍在进行，可与离站并行。 */
+int arm_departure_return_active(void);
 /* 当前动作两轴已实际到135/0且不会再移动，只剩末尾旋转；可衔接底盘平移。 */
 int arm_translation_overlap_ready(void);
 /* 地面取放后的抬升已通过原有实际净空判据；仅供已编排的工位索引衔接。 */

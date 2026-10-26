@@ -76,7 +76,7 @@ static void fine_boundary_and_scope_tests(void)
     uint32_t deadline;
     prepare_vision_debug();imu_period_ms=20;
     send_line("vision debug F 2");wait_debug_request(1);
-    peer_reply("MOVEXY,18,-11",0);
+    peer_reply("MOVEXY,80,-60",0); /* 本组隔离行驶中的低速静噪边界，保持在末端10mm之外。 */
     deadline=clock_ms+10000;
     while(clock_ms<deadline && !(run.vector_move && run.velocity_phase==VELOCITY_FORWARD
         && run.encoder_ready==15))plant_step();
@@ -183,7 +183,7 @@ static void terminal_profile_tests(void)
 #if MOVEXY_TERMINAL_BASELINE
                 CHECK(rpm==sign*3 && abs(rpm)>braking);
 #else
-                CHECK(rpm==sign && abs(rpm)<=braking);
+                CHECK(rpm==sign && abs(rpm)<=fmaxf(CAR_MOVEXY_MIN_RPM,braking));
 #endif
             }
 #if !MOVEXY_TERMINAL_BASELINE

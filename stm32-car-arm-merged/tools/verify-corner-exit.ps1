@@ -31,7 +31,7 @@ try {
         $exitHashes[$exitFile]=(Get-FileHash -LiteralPath $exitFile -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;exitCode=0;sourceHashes=$exitHashes;variants=@(0,1);hardwareAccessed=$false;
-        scope='R94 off/current on: progressive exit reference with5..15deg residual;108 independent plant cases and both full eight-job routes per variant; model only'} |
+        scope='Blend off/current on: late geometric5deg recovery,150..450RPM/s by actual yaw,5deg post-exit slowdown threshold;108 independent plant cases including actual cross-track error and A/C full routes; model only'} |
         ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath ($exitOut+'/result.json')
     Write-Output $exitOut
 } finally {$env:PATH=$exitOldPath;Pop-Location}

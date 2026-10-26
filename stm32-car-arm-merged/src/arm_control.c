@@ -11,7 +11,7 @@
 #endif
 
 enum { ARM_IDLE, ARM_PREFLIGHT, ARM_SUBMIT, ARM_MOVING, ARM_FAULT, ARM_YAW_TEST };
-enum { SLIDE = 1, LIFT = 2, YAW = 4, CLAW = 8, PLATFORM = 16, AFTER_CLEARANCE = 32, CUP_EXIT_DELAY = 64 };
+enum { SLIDE = 1, LIFT = 2, YAW = 4, CLAW = 8, PLATFORM = 16, AFTER_CLEARANCE = 32, CUP_EXIT_DELAY = 64, PLATFORM_PLACE = 128 };
 typedef struct { int slide, lift; float yaw, claw, platform; uint8_t mask; } ArmStep;
 typedef struct {
     int64_t position, baseline;
@@ -300,6 +300,21 @@ int arm_departure_rotation_active(void)
         && arm.slide==ARM_SLIDE_HOME_MM && arm.lift==ARM_LIFT_HOME_MM
         && arm.target.yaw==ARM_YAW_HOME_DEG && arm.target.platform==ARM_PLATFORM_FIRST_DEG;
 }
+int arm_departure_return_active(void)
+{
+    if(!arm.enabled || !arm.referenced || !arm.platform_known || !arm_busy()
+        || arm.claw!=ARM_CLAW_OPEN_DEG)return 0;
+    if(arm.sequence==6 && arm.step+1u==arm.count && (arm.target.mask&(YAW|PLATFORM))
+        && arm.slide==ARM_SLIDE_HOME_MM && arm.lift==ARM_LIFT_HOME_MM
+        && arm.target.yaw==ARM_YAW_HOME_DEG && arm.target.platform==ARM_PLATFORM_FIRST_DEG)return 1;
+    if(!(arm.target.mask&(LIFT|SLIDE)) || arm.target.slide!=ARM_SLIDE_HOME_MM
+        || arm.target.lift!=ARM_LIFT_HOME_MM)return 0;
+    if(arm.sequence==6 && arm.step+2u==arm.count)
+        return load1_steps[arm.step+1u].yaw==ARM_YAW_HOME_DEG
+            && load1_steps[arm.step+1u].platform==ARM_PLATFORM_FIRST_DEG;
+    return arm.sequence==0 && arm.target.yaw==ARM_YAW_HOME_DEG
+        && arm.target.platform==ARM_PLATFORM_FIRST_DEG;
+}
 int arm_translation_overlap_ready(void)
 {
     return arm.enabled && arm.referenced && arm.platform_known && arm.state==ARM_MOVING
@@ -568,6 +583,8 @@ int arm_transfer_to(int slide,int lift,float yaw,uint8_t slot,uint32_t now)
     step.slide=slide;step.lift=lift;step.yaw=yaw;
     /* 原料、粗加工抓回及车载杯：带物转移统一升顶，110 mm起转，到顶延时后下降。 */
     if(loaded_transfer)step.mask|=CUP_EXIT_DELAY;
+    if(slide==ARM_PLACE_SLIDE_MM && lift==ARM_PLACE_LIFT_MM && yaw==ARM_PLACE_YAW_DEG)
+        step.mask|=PLATFORM_PLACE;
     if(slot){step.platform=platform_angle_of(slot);step.mask|=PLATFORM;}
     start_single(step,now);
     return arm_busy() && !arm_failed();
@@ -611,7 +628,7 @@ static int build_load_one(uint8_t last)
     /* 放到车载载物台当前杯位。 */
 #if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
     /* 原料夹紧后连续升至最高，实际110 mm放行转向/平推，到顶延时后才降到平台。 */
-    if (!append_step(ARM_PLACE_SLIDE_MM, ARM_PLACE_LIFT_MM, ARM_PLACE_YAW_DEG, 0, 0, SLIDE|LIFT|YAW|CUP_EXIT_DELAY)) return 0;
+    if (!append_step(ARM_PLACE_SLIDE_MM, ARM_PLACE_LIFT_MM, ARM_PLACE_YAW_DEG, 0, 0, SLIDE|LIFT|YAW|CUP_EXIT_DELAY|PLATFORM_PLACE)) return 0;
 #else
 #if ARM_LIFT_PARALLEL_ENABLED
     if (!append_step(ARM_SLIDE_HOME_MM, ARM_LIFT_HOME_MM, ARM_PLACE_YAW_DEG, 0, 0, LIFT|SLIDE|YAW|AFTER_CLEARANCE)) return 0;
@@ -627,7 +644,7 @@ static int build_load_one(uint8_t last)
     /* 升高离开杯壁、收齿条；末块直接回车头，其余回抓取角，均并行换杯。 */
 #if ARM_LIFT_PARALLEL_ENABLED
     if(last) {
-        /* 末块仍保留纯回正步骤，实际收拢后继续与离站转弯重叠。 */
+        /* 末块保留纯回正步骤；平台松爪后的收回和回正均可与离站并行。 */
         if (!append_step(ARM_SLIDE_HOME_MM, ARM_LIFT_HOME_MM, 0, 0, 0, LIFT|SLIDE|AFTER_CLEARANCE)) return 0;
         if (!append_step(0, 0, ARM_YAW_HOME_DEG, 0, next, YAW|PLATFORM)) return 0;
     } else if (!append_step(ARM_SLIDE_HOME_MM, ARM_LIFT_HOME_MM, ARM_PICK_YAW_DEG, 0, next,
@@ -929,8 +946,9 @@ void arm_update(uint32_t now)
             && (uint32_t)(now-arm.platform_start_ms)<ARM_SERVO_TIME_MS)complete=0;
         if(arm.claw_settling && (arm.claw_settling!=2u
             || (uint32_t)(now-arm.claw_closed_ms)<ARM_CLAW_CLOSE_HOLD_MS))complete=0;
+        /* 放回车载杯位时，目标PWM已写入且轴到位即可接松爪；其他动作保留云台保持。 */
         if(arm.yaw_settling && (arm.yaw_settling!=2u
-            || (uint32_t)(now-arm.yaw_target_ms)<ARM_YAW_SETTLE_MS))complete=0;
+            || (!(arm.target.mask&PLATFORM_PLACE) && (uint32_t)(now-arm.yaw_target_ms)<ARM_YAW_SETTLE_MS)))complete=0;
         for(i=0;i<2;i++){
             ArmAxis *a=&arm.axis[i];
             if(!a->ack && elapsed>ARM_ACK_TIMEOUT_MS)arm_warning("position ACK missing; completion uses measured position/arrived",now);

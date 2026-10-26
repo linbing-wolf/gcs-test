@@ -31,8 +31,9 @@
 #define CAR_CORNER_EXIT_BLEND_ENABLED 1     /* 转头尾段先温和升速，再随车头对正恢复原加速度；0恢复r94。 */
 #endif
 #define CAR_CORNER_EXIT_YAW_CDEG   1500      /* 圆弧结束后，实际车头距最终方向不超过15度时进入出弯衔接。 */
-#define CAR_CORNER_EXIT_ALIGNED_CDEG 500     /* 距最终方向不超过5度时恢复道路加速度，不等待零误差。 */
-#define CAR_CORNER_EXIT_ACCEL_RPM_PER_S 90u /* 出弯尚未对正时平移升速率起值，RPM/s；不降低旋转纠偏变化率。 */
+#define CAR_CORNER_EXIT_ALIGNED_CDEG 800     /* 几何转向剩5度起恢复；实际偏差≤5度时用出弯最大升速率并解除比例折速。 */
+#define CAR_CORNER_EXIT_ACCEL_RPM_PER_S 150u /* 出弯尚未对正时平移升速率起值，RPM/s。 */
+#define CAR_CORNER_EXIT_MAX_ACCEL_RPM_PER_S 450u /* 车头基本对正后的出弯升速率，RPM/s；不改变其他直线及停车减速率。 */
 #define CAR_CORNER_FIXED_YAW_SPEED_MM_S 250  /* 固定车头的前后/横移换向弧段参考上限，mm/s。 */
 #define CAR_CORNER_YAW_GAIN_X100    115       /* 转向前馈(度/秒)/RPM×100，来自主机模型，尚待实测。 */
 #define CAR_CORNER_YAW_MAX_RPM      100       /* 圆角转向分量上限，RPM；仍受当前运动档位及变化率约束。 */
@@ -108,7 +109,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
 #define CAR_HEADING_KP_X100          250       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
 #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
-#define CAR_HEADING_MIN_RPM           10       /* 误差超容差时的最低转向修正，RPM。 */
+#define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
 #define CAR_TRANSLATION_MAX_RPM      ((CAR_RUN_RPM > CAR_LATERAL_MAX_RPM) ? CAR_RUN_RPM : CAR_LATERAL_MAX_RPM)
@@ -203,6 +204,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
     CAR_CORNER_EXIT_BLEND_ENABLED < 0 || CAR_CORNER_EXIT_BLEND_ENABLED > 1 || \
     CAR_CORNER_EXIT_ALIGNED_CDEG < 1 || CAR_CORNER_EXIT_YAW_CDEG <= CAR_CORNER_EXIT_ALIGNED_CDEG || \
     CAR_CORNER_EXIT_YAW_CDEG > 9000 || CAR_CORNER_EXIT_ACCEL_RPM_PER_S < 1 || \
+    CAR_CORNER_EXIT_MAX_ACCEL_RPM_PER_S < CAR_CORNER_EXIT_ACCEL_RPM_PER_S || \
     CAR_CORNER_FIXED_YAW_SPEED_MM_S < 30 || CAR_CORNER_FIXED_YAW_SPEED_MM_S > 300 || \
     CAR_CORNER_YAW_GAIN_X100 < 1 || CAR_CORNER_YAW_MAX_RPM < 1 || \
     CAR_CORNER_YAW_MAX_RPM > CAR_WHEEL_MAX_RPM || CAR_CORNER_TRACK_GAIN_X100 < 1 || \
@@ -212,7 +214,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 
 /* 4. 通信与等待参数。通常先看故障回传，不靠加大超时掩盖通信问题。 */
 #define CAR_DEBUG_UART_BAUD              115200
-/* 开始按钮：PC9，按下高电平；消抖后请求runimu C，长按不重复，上电按住不启动。 */
+/* 开始按钮：PC9内部上拉，按钮接GND，按下低电平；长按不重复，上电按住不启动。 */
 #define CAR_START_BUTTON_GPIO                GPIOC
 #define CAR_START_BUTTON_GPIO_CLOCK          RCC_AHB1Periph_GPIOC
 #define CAR_START_BUTTON_PIN                 GPIO_Pin_9

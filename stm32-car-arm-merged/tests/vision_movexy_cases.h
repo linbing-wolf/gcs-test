@@ -163,6 +163,8 @@ static void movexy_station_tests(void)
             if(area==2)serve_peer(&offset);
             plant_step();
         }
+        /* F现在可早于固定索引完成发出；端点位移从该索引结束处计算。 */
+        while(station_chassis_busy() && clock_ms<deadline)plant_step();
         CHECK(clock_ms<deadline);x=field_x;y=field_y;positions=arm_positions;
         peer_reply("MOVEXY,+40,-25",0);peer_reply(area==2 ? "STACK,700,-50,620,1" : "DISC,700,-50,620,1",0);
         while(clock_ms<deadline && run.state!=RUN_FAULT && !finished) {

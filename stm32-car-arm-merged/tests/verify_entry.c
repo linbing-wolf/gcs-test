@@ -36,7 +36,7 @@ static uint8_t simulate_uart_cost;
 static uint32_t uart_fraction_us;
 static uint8_t status_auto_reply,position_ack_enabled,bus_off;
 static uint8_t simulated_start_button;
-uint8_t entry_host_start_button_pressed(void) {return simulated_start_button;}
+uint8_t entry_host_start_button_level(void) {return simulated_start_button ? 0u : 1u;}
 static uint8_t scanner_sent[256], scanner_can_tx, scanner_can_complete;
 static unsigned scanner_sent_count;
 static uint32_t scanner_initialized_baud,scanner_init_calls;

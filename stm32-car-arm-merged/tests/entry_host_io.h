@@ -4,7 +4,7 @@
 #include <stdbool.h>
 /* 仅电脑行为测试使用；ARM 构建不启用 NAV_ENTRY_HOST_TEST。 */
 void entry_host_send_byte(uint8_t value);
-uint8_t entry_host_start_button_pressed(void);
+uint8_t entry_host_start_button_level(void);
 void entry_host_scanner_init(uint32_t baud);
 int entry_host_scanner_tx_ready(void);
 int entry_host_scanner_tx_complete(void);

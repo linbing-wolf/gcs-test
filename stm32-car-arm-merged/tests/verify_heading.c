@@ -231,7 +231,7 @@ static void plant_step(void)
         }
         CHECK(planned_x==point.x && planned_y==point.y);
         /* 切角通过B时只访问圆弧出口(2040,1200)，不宣称经过B几何顶点。 */
-        if(node==NODE_B && run.corner.active && !run.corner.scan_fallback)point.x=2040;
+        if(node==NODE_B && run.corner.active)point.x=2040;
         if(node==NODE_F || node==NODE_D || node==NODE_H) {
             unsigned i;
             int desired_heading=node==NODE_F ? 1 : node==NODE_D ? 3 : 0;

@@ -35,12 +35,14 @@ static struct {
     uint32_t step_ms;
     uint32_t align_ms;
     uint8_t align_moving, stack_moving, approach_preissued;
+    uint8_t vision_preissued, vision_cursor, align_terminal_handed;
+    uint32_t vision_ms;
     uint32_t approach_ms;
     uint32_t align_travel, warning_ms;
     uint8_t warning_seen;
     uint8_t index_phase, index_ring; /* 0无索引，1等离物净空，2等底盘启动，3索引执行中。 */
     int16_t index_mm;
-    uint8_t departure_phase; /* 1粗加工最后抓回/暂存最后放下，等实际离物；2道路与机构收尾并行。 */
+    uint8_t departure_phase; /* 2末块已松爪，允许道路与机构收尾并行。 */
     int16_t departure_mm;
     char reason[192]; /* 中文UTF-8故障原因。 */
 } stn;
@@ -165,7 +167,7 @@ static void push_take_from_platform(uint8_t slot,int lift_mm,uint8_t next_slot)
     (void)next_slot;
 }
 /* 粗加工放回原盘，只抬高收回，不回车头或自动换盘。 */
-static void push_place_on_platform(uint8_t slot,uint8_t departing)
+static void push_place_on_platform(uint8_t slot,uint8_t departing,int departure_mm)
 {
 #if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
     push_transfer(ARM_PLACE_SLIDE_MM,ARM_PLACE_LIFT_MM,ARM_PLACE_YAW_DEG,slot);
@@ -174,6 +176,7 @@ static void push_place_on_platform(uint8_t slot,uint8_t departing)
 #endif
     push(SS_LIFT, ARM_PLACE_LIFT_MM);
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+    if(departing)push(SS_DEPART_BEGIN,departure_mm);
     push_retract_work(departing ? ARM_YAW_HOME_DEG : station_align_yaw(),departing ? 1u : 0u);
 }
 static void push_release_contact(const StationPose *pose,uint8_t next_slot)
@@ -298,14 +301,13 @@ static int build_rough(void)
         push_grip_at(&stn_rough_grip,i+1u);
 #if STN_ROUGH_THROUGH_ENABLED
         if(i==2u) {
-            push(SS_DEPART_BEGIN,(2-(int)ring)*STN_ROUGH_INDEX_SIGN*STN_ROUGH_INDEX_MM);
-            push_place_on_platform(i+1u,1);
+            push_place_on_platform(i+1u,1,(2-(int)ring)*STN_ROUGH_INDEX_SIGN*STN_ROUGH_INDEX_MM);
             continue;
         }
 #endif
         target=i<2u ? task_rings[stn.batch][i+1u] : 2u;
         if(!push_parallel_index(target,&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_MM))return 0;
-        push_place_on_platform(i+1u,0);
+        push_place_on_platform(i+1u,0,0);
     }
 #if !STN_ROUGH_THROUGH_ENABLED
     push(SS_INDEX_WAIT,0);
@@ -322,7 +324,7 @@ static int build_rough(void)
         target = task_rings[stn.batch][i];
         if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
         push_grip_at(&stn_rough_grip,i+1u);
-        push_place_on_platform(i+1u,0);
+        push_place_on_platform(i+1u,0,0);
         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
     }
     if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
@@ -492,6 +494,7 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
     stn.batch = batch_of_job(job);
     stn.cursor = stn.count = stn.issued = 0;
     stn.index_phase=0;
+    stn.vision_preissued=stn.align_terminal_handed=0;
     stn.departure_phase=0;
     stn.reason[0] = 0;
     if (job == 7u) { /* 启停区没有机构动作。 */
@@ -592,6 +595,10 @@ static int issue_step(uint32_t now)
     int ok = 1;
     stn.step_ms = now;
     line[0] = 0;
+    if(stn.vision_preissued && stn.vision_cursor==stn.cursor) {
+        stn.vision_preissued=0;stn.step_ms=stn.vision_ms;
+        return 1; /* F/C已在上一移动末段发出，保留提前到达的回包，不重复请求。 */
+    }
     switch (s->kind) {
     case SS_ALIGN: {
         int slide,lift;float yaw;
@@ -602,6 +609,7 @@ static int issue_step(uint32_t now)
         }
         stn.align_ms=now;stn.align_travel=0;
         stn.align_moving=0;
+        stn.align_terminal_handed=0;
         vision_request_align(command,(uint8_t)s->value,now);
         {
             char message[112];
@@ -737,6 +745,43 @@ static void station_approach_overlap(uint32_t now,int terminal_ready)
     stn_text("[station approach overlap] final station move within " CAR_STRING_VALUE(STN_APPROACH_OVERLAP_MM) "mm/" CAR_STRING_VALUE(STN_APPROACH_OVERLAP_RPM) "RPM; approach started; grip waits for chassis completion\r\n");
 }
 
+static int station_vision_pose_ready(void)
+{
+    int slide,lift;float yaw;
+    if(!arm_ready())return 0;
+    arm_pose_now(&slide,&lift,&yaw,NULL);
+    return slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM && yaw==station_align_yaw();
+}
+
+static void station_preissue_vision(uint8_t cursor,uint32_t now)
+{
+    const StationStep *s=&program[cursor];
+    stn.vision_preissued=1;stn.vision_cursor=cursor;stn.vision_ms=now;
+    if(s->kind==SS_STACK)vision_request_stack((uint8_t)s->value,now);
+    else vision_request_pick((uint8_t)s->value,now);
+    stn_text("[station vision early] next request sent before chassis stop confirmation\r\n");
+}
+
+static void station_vision_early_update(uint32_t now)
+{
+    const StationStep *s=&program[stn.cursor];
+    uint8_t next=(uint8_t)(stn.cursor+1u);
+    if(stn.vision_preissued || !station_chassis_vision_early() || !station_vision_pose_ready())return;
+    if((s->kind==SS_ALIGN || s->kind==SS_STACK || s->kind==SS_VISION) && !stn.issued) {
+        stn.issued=1;(void)issue_step(now);
+        stn_text("[station vision early] entry request sent before chassis stop confirmation\r\n");return;
+    }
+    if(next>=stn.count)return;
+    if(s->kind==SS_ALIGN && raw_job() && stn.issued && program[next].kind==SS_VISION
+        && vision_align_state()==VISION_PICK_READY && !vision_motion_peek_xy(NULL,NULL,NULL)) {
+        /* H的末条位移已交底盘执行，缓存终包；新C清视觉会话时不能丢失H完成依据。 */
+        stn.align_terminal_handed=1;station_preissue_vision(next,now);return;
+    }
+    if(program[next].kind==SS_STACK
+        && ((s->kind==SS_INDEX_WAIT && (stn.index_phase==0u || stn.index_phase==3u))
+            || (s->kind==SS_CHASSIS && stn.issued)))station_preissue_vision(next,now);
+}
+
 /* H/D/E只执行上位机给出的离散位移；终包先到也要等全部位移执行完成。 */
 static void station_align_update(uint8_t ring, uint32_t now)
 {
@@ -746,7 +791,7 @@ static void station_align_update(uint8_t ring, uint32_t now)
     if ((uint32_t)(now-stn.align_ms) >= STN_ALIGN_TIMEOUT_MS) {
         stn_warning("alignment deadline exceeded; wait for actual DISC",now);stn.align_ms=now;
     }
-    state=vision_align_state();
+    state=stn.align_terminal_handed ? VISION_PICK_READY : vision_align_state();
     if (state==VISION_PICK_FAULT || state==VISION_PICK_TIMEOUT) {
         stn_warning("vision reply unavailable; wait for actual DISC",now);return;
     }
@@ -758,7 +803,8 @@ static void station_align_update(uint8_t ring, uint32_t now)
     if (!vision_motion_peek_xy(&px,&py,0)) {
         if (state==VISION_PICK_READY) {
             char line[80];
-            vision_cancel_pick();
+            if(!stn.align_terminal_handed)vision_cancel_pick();
+            stn.align_terminal_handed=0;
             if(raw_job())snprintf(line,sizeof(line),"[station raw aligned] job=%u H moves complete; start C/PICK\r\n",(unsigned)stn.job);
             else snprintf(line,sizeof(line),"[station aligned] job=%u ring=%u DISC confirmed\r\n",(unsigned)stn.job,(unsigned)ring);
             stn_text(line);step_finished();
@@ -845,10 +891,11 @@ void station_update(uint32_t now)
         return;
     }
     station_parallel_index_update(now);
-    if(stn.departure_phase==1u && arm_station_clearance_ready(now))stn.departure_phase=2;
+    if(stn.phase!=ST_RUN)return;
+    station_vision_early_update(now);
     if(stn.phase!=ST_RUN)return;
     s = &program[stn.cursor];
-    /* 进站末段只提前转向/张空爪和保持高位收回；视觉请求与抓取等底盘原判据完成。 */
+    /* 只提前请求并接收视觉回包；纠偏、完成处理和取放仍等底盘原汇合。 */
     if(station_chassis_entry_busy()
         && s->kind!=SS_YAW
         && !(s->kind==SS_CLAW && s->value==(int)(ARM_CLAW_OPEN_DEG*10.0f))
@@ -860,7 +907,8 @@ void station_update(uint32_t now)
         step_finished();return;
     }
     if(s->kind==SS_DEPART_BEGIN) {
-        stn.departure_mm=s->value;stn.departure_phase=1;
+        /* 最后一块已完成松爪，离站不再等抬升/回正；机构内部仍按原净空顺序收臂。 */
+        stn.departure_mm=s->value;stn.departure_phase=2;
         step_finished();return;
     }
     if(s->kind==SS_INDEX_WAIT) {
@@ -931,11 +979,11 @@ int station_through_departure(int16_t *return_mm)
 int station_departure_ready(void)
 {
     const StationStep *s;
-    if(stn.phase!=ST_RUN || !stn.issued || stn.cursor+1u!=stn.count
-        || !arm_departure_rotation_active())return 0;
+    if(stn.phase!=ST_RUN || !stn.issued || stn.cursor+1u!=stn.count)return 0;
     s=&program[stn.cursor];
-    return (s->kind==SS_PLATFORM_YAW && s->platform_slot==1u && !s->value)
-        || (s->kind==SS_LOAD1 && s->value);
+    return (s->kind==SS_PLATFORM_YAW && s->platform_slot==1u && !s->value && arm_departure_rotation_active())
+        || (s->kind==SS_LOAD1 && s->value && (arm_departure_rotation_active()
+            || (CAR_ARM_TRANSLATION_OVERLAP_ENABLED && arm_departure_return_active())));
 }
 int station_failed(void) { return stn.phase == ST_FAULT; }
 void station_clear_task(void)
@@ -945,7 +993,7 @@ void station_clear_task(void)
     memset(task_rings, 0, sizeof(task_rings));
 }
 
-void station_abort(void) { if(stn.phase!=ST_FAULT)stn.phase = ST_IDLE; stn.cursor = stn.count = stn.index_phase = stn.departure_phase = 0;vision_cancel_pick();station_clear_task(); }
+void station_abort(void) { if(stn.phase!=ST_FAULT)stn.phase = ST_IDLE; stn.cursor = stn.count = stn.index_phase = stn.departure_phase = stn.vision_preissued = stn.align_terminal_handed = 0;vision_cancel_pick();station_clear_task(); }
 
 void station_init(void)
 {

@@ -23,7 +23,7 @@ int station_start(uint8_t node, uint8_t job_index, uint32_t now);
 int station_start_vision_debug(char command,uint8_t color,uint32_t now);
 void station_update(uint32_t now);
 int station_active(void);
-/* 最后仅剩高位收回后的云台/载物台回正，可提前开始离站预检和转弯。 */
+/* 原料末块在平台松爪后可并行收臂离站；其他作业保留末尾回正放行。 */
 int station_departure_ready(void);
 /* 粗加工最后抓回/暂存最后放下并通过实际净空后，从当前环经过2环接入下一道路；mm为车身前向回2环距离。 */
 int station_through_departure(int16_t *return_mm);
@@ -43,7 +43,9 @@ int station_chassis_lateral_start(int32_t delta_mm);
 int station_chassis_xy_start(int32_t forward_mm,int32_t left_mm);
 /* 视觉/固定索引末段：满足剩余距离、速度和新鲜反馈时登记靠近并行。 */
 int station_chassis_approach_begin(void);
-/* 进站平移或最后朝向修正期间：只允许准备姿态，不能请求视觉或抓取。 */
+/* 进入原到位/末段位置窗口，可先发视觉请求；不代表下位机已确认停稳。 */
+int station_chassis_vision_early(void);
+/* 进站平移或最后朝向修正期间；视觉可提前请求，动作仍等待原汇合。 */
 int station_chassis_entry_busy(void);
 int station_chassis_busy(void);
 int station_chassis_failed(void);
