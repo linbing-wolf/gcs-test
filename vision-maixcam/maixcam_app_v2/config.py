@@ -96,6 +96,7 @@ STACK_AI_BLUE_MIN_PROB = 0.90   # 蓝色(3)单独提高阈值，压掉蓝色误�
 STACK_AI_BLUE_MAX_TILES = 12    # 蓝色命中块上限；新模型对物料边缘块也会命中，实测约 9~10 块
 STACK_AI_BLUE_MAX_CY    = 240   # 蓝色中心必须在画面上半部；下半部多为车体/电控
 STACK_AI_MIN_TILES   = 2       # 至少多少个相邻块命中才认可
+STACK_AI_SINGLE_TILE_PROB = 0.90  # 只有 1 块命中时，置信度≥它也算命中（物料常只压住一块）
 STACK_AI_DEBUG       = True    # True = 日志打印 AI 命中块/置信度/中心
 # ---- AI 粗定位后，用经典 CV 在 AI 框内找物料顶部圆心（精定位）----
 STACK_CV_FINE        = True    # True = AI 粗中心 + CV 精修
@@ -427,6 +428,26 @@ PLATE_GEOM_B_RATIO_MAX  = 2.00
 # ---- 拟合提速：抽稀拟合点（点越多越慢，40~48 点足够）+ 鲁棒重拟合轮数 ----
 PLATE_FIT_MAX_PTS   = 0        # >0 时抽稀拟合点（实测会掉精度，默认 0=不抽稀）
 PLATE_ROBUST_ROUNDS = 1        # 离群剔除后重拟合轮数（1 足够；0=不重拟合）
+# ---- 底点交叉校验（局部直测 vs 椭圆外推）----
+# 全局拟合里 cy 与 b 强相关，只见下弧时更病态；局部直测是另一条独立路线。
+# 两者差太多 → 这一帧拟合可疑，标 low_conf（report 模式照样执行）。
+PLATE_LOW_CHECK     = True
+PLATE_LOW_USE_DIRECT = False   # True=直接用直测值（会改变落点口径，要重新标定！）
+PLATE_LOW_CHECK_DX  = 15.0     # 两个估计的 x 差超过它 → 判可疑
+PLATE_LOW_CHECK_DY  = 12.0     # 两个估计的 y 差超过它 → 判可疑
+PLATE_LOW_HALF_W    = 26       # 直测横向半窗(px)：±26 内底边近似直线
+PLATE_LOW_UP        = 26       # 直测竖向扫描：预期底点往上(px)
+PLATE_LOW_DOWN      = 10       # 直测竖向扫描：往下(px)
+PLATE_LOW_MIN_GRAD  = 8.0      # 直测底边缘最小亮度梯度
+PLATE_LOW_MIN_PTS   = 18       # 直测至少多少列测到底边才采信
+PLATE_LOW_MAX_DX    = 45.0     # PLATE_LOW_USE_DIRECT 时的接受上限
+PLATE_LOW_MAX_DY    = 25.0
+# ---- 底部加密采样（最低点就在这段弧上，点密了 cx/b 才被钉住）----
+PLATE_RAYS_BOTTOM   = 60       # 最低点附近额外加的射线数（0=不加密）
+PLATE_BOTTOM_DEG    = 25.0     # 加密角度范围：90°±该值
+# 亚像素边缘定位：更准，但会整体偏移约 1~1.6px（现场落点是用旧口径标定的），
+# 默认关闭；要开就在现场重新微调 PLATE_TARGET_Y。
+PLATE_SUBPIXEL      = False
 
 # 低置信时把单次步长限幅（0=不限）；防止一次错拟合把车甩太远。
 PLATE_LOWCONF_STEP_MAX = 0
@@ -476,7 +497,7 @@ PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
 PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
 PLATE_INVERT_Y      = False    # 垂直方向反了置 True
 # ---- H 调试抓图（关键帧 + meta.jsonl，放在 APP 目录外，升级不丢）----
-PLATE_DEBUG_SAVE    = False     # True=每次 H 存关键帧（含画的椭圆/最低点）到 PLATE_DEBUG_DIR
+PLATE_DEBUG_SAVE    = True      # 临时打开：采集真实 H 帧，用来标定底点（采够后关掉）
 PLATE_DEBUG_DIR     = "/root/yyb_mover_data/plate_debug"
 PLATE_DEBUG_MAX_FRAMES = 16    # 单次 H 最多存多少张图
 PLATE_DEBUG_QUALITY = 85

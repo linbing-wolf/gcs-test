@@ -1051,7 +1051,9 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
         if c is not None:
             f["cx"], f["cy"], f["r"] = int(c[0]), int(c[1]), int(c[2])
         if meta:
-            for k in ("model", "a", "b", "k", "rms", "npts", "reason"):
+            for k in ("model", "a", "b", "k", "rms", "npts", "reason",
+                      "low_ellipse", "low_direct", "low_delta", "low_check",
+                      "low_used", "low_conf"):
                 if k in meta:
                     f[k] = meta[k]
         if extra:
@@ -1116,6 +1118,13 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
 
         # 先存一张「干净帧」（画线之前），供离线复现；再存画了标注的版本
         imeta = info["meta"]
+        if imeta.get("low_delta") is not None:
+            _le = imeta.get("low_ellipse") or [0, 0]
+            _ld = imeta.get("low_direct") or [0, 0]
+            _ldx, _ldy = imeta.get("low_delta") or [0, 0]
+            log("[H] 底点校验：椭圆=(%.1f,%.1f) 直测=(%.1f,%.1f) Δ=(%+.1f,%+.1f) %s"
+                % (_le[0], _le[1], _ld[0], _ld[1], _ldx, _ldy,
+                   imeta.get("low_check", "?")))
         if rec is not None:
             rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
                                      {"action": "detect_raw"}),

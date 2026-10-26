@@ -337,7 +337,15 @@ def _gray_np(img):
 
 def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
                         skip_bottom_deg=0.0):
-    """`_arc_edge_points` 的 numpy 向量化版本（语义一致，快 ~20 倍）。"""
+    """`_arc_edge_points` 的 numpy 向量化版本（语义一致，快 ~20 倍）。
+
+    精度上的两点改进（都是为了「最低点更准」）：
+      1) **亚像素**：找到最大梯度后用相邻梯度做抛物线插值，不再量化到整像素
+         （整像素量化带来的 0.3~0.5px 抖动会直接进最低点）；
+      2) **底部加密**：在最低点附近（90°±PLATE_BOTTOM_DEG）额外加射线。
+         盘最低点就是这段弧的切点，这里点密了，cx 与 b 才被「钉住」，
+         而不会被两侧被物料挡住的点带偏。
+    """
     import numpy as np
     h, w = gray.shape
     rays = max(8, int(rays))
@@ -347,6 +355,14 @@ def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
     else:
         ea = eb = float(r)
     ang = a0 + (a1 - a0) * np.arange(rays, dtype=np.float64) / max(1, rays - 1)
+    b_rays = int(getattr(config, "PLATE_RAYS_BOTTOM", 60))
+    b_deg = float(getattr(config, "PLATE_BOTTOM_DEG", 25.0))
+    if b_rays > 0 and b_deg > 0.5:
+        c0 = math.pi / 2.0 - math.radians(b_deg)
+        c1 = math.pi / 2.0 + math.radians(b_deg)
+        add = c0 + (c1 - c0) * np.arange(max(2, b_rays), dtype=np.float64) / max(
+            1, max(2, b_rays) - 1)
+        ang = np.unique(np.concatenate([ang, add]))
     if skip_bottom_deg > 0:
         keep = np.abs(ang - math.pi / 2.0) > math.radians(float(skip_bottom_deg))
         ang = ang[keep]
@@ -369,14 +385,34 @@ def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
     ys_c = np.clip(ys, 0, h - 1)
     vals = np.where(inb, gray[ys_c, xs_c].astype(np.int16), -1)
     both = inb[:, 1:] & inb[:, :-1]
-    grad = np.abs(vals[:, 1:] - vals[:, :-1])
-    grad = np.where(both, grad, -1)
-    idx = np.argmax(grad, axis=1)
-    best = grad[np.arange(grad.shape[0]), idx]
+    grad = np.where(both, vals[:, 1:] - vals[:, :-1], 0).astype(np.float32)
+    ag = np.abs(grad)
+    idx = np.argmax(ag, axis=1)
+    rows = np.arange(ag.shape[0])
+    best = ag[rows, idx]
+    if not bool(getattr(config, "PLATE_SUBPIXEL", False)):
+        # 关闭亚像素 → 与旧版逐像素一致（保住现场已标定的落点口径）
+        pts = []
+        for i in np.nonzero(best >= float(min_grad))[0]:
+            k = int(idx[i]) + 1
+            pts.append((float(xs[i, k]), float(ys[i, k])))
+        return pts
+    # 亚像素插值（抛物线顶点，偏移量在 ±0.5 个采样步长内）
+    il = np.clip(idx - 1, 0, ag.shape[1] - 1)
+    ir = np.clip(idx + 1, 0, ag.shape[1] - 1)
+    gl = grad[rows, il]
+    g0 = grad[rows, idx]
+    gr = grad[rows, ir]
+    den = gl - 2.0 * g0 + gr
+    den = np.where(np.abs(den) < 1e-6, 1e-6, den)
+    sub = np.clip(0.5 * (gl - gr) / den, -0.5, 0.5)
+    sub = np.where((idx > 0) & (idx < ag.shape[1] - 1), sub, 0.0)
     pts = []
     for i in np.nonzero(best >= float(min_grad))[0]:
-        k = int(idx[i]) + 1
-        pts.append((int(xs[i, k]), int(ys[i, k])))
+        k = int(idx[i])
+        ri = float(rr[i, k + 1]) + step * float(sub[i])
+        pts.append((float(cx) + float(ca[i]) * ri,
+                    float(cy) + float(sa[i]) * ri))
     return pts
 
 
@@ -411,8 +447,16 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
     step = max(0.5, float(step))
     span = a1 - a0
     skip = math.radians(max(0.0, float(skip_bottom_deg)))
-    for i in range(rays):
-        a = a0 + span * i / (rays - 1)
+    b_rays = int(getattr(config, "PLATE_RAYS_BOTTOM", 60))
+    b_deg = float(getattr(config, "PLATE_BOTTOM_DEG", 25.0))
+    angles = [a0 + span * i / (rays - 1) for i in range(rays)]
+    if b_rays > 0 and b_deg > 0.5:
+        c0 = math.pi / 2.0 - math.radians(b_deg)
+        c1 = math.pi / 2.0 + math.radians(b_deg)
+        nb = max(2, b_rays)
+        angles += [c0 + (c1 - c0) * i / (nb - 1) for i in range(nb)]
+        angles.sort()
+    for a in angles:
         if skip > 0.0 and abs(a - math.pi / 2.0) <= skip:
             continue
         ca, sa = math.cos(a), math.sin(a)
@@ -421,23 +465,194 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
         r1 = max(r0 + step, rc + float(band))
         rr = r0
         prev = None
-        best_g, best_xy = -1.0, None
+        gs = []          # [(半径, 带符号梯度)]
         while rr <= r1:
             x = int(round(cx + ca * rr))
             y = int(round(cy + sa * rr))
             if 0 <= x < w and 0 <= y < h:
                 v = _pixel_luma(img, x, y)
                 if v is not None and prev is not None:
-                    g = abs(v - prev)
-                    if g > best_g:
-                        best_g, best_xy = g, (x, y)
+                    gs.append((rr, float(v - prev)))
                 prev = v
             else:
                 prev = None
             rr += step
-        if best_xy is not None and best_g >= min_grad:
-            pts.append(best_xy)
+        if not gs:
+            continue
+        bi, bg = 0, -1.0
+        for i, (_, g) in enumerate(gs):
+            if abs(g) > bg:
+                bi, bg = i, abs(g)
+        if bg < min_grad:
+            continue
+        sub = 0.0
+        if 0 < bi < len(gs) - 1 and bool(getattr(config, "PLATE_SUBPIXEL", False)):
+            gl, g0, gr = gs[bi - 1][1], gs[bi][1], gs[bi + 1][1]
+            den = gl - 2.0 * g0 + gr
+            if abs(den) > 1e-6:
+                sub = max(-0.5, min(0.5, 0.5 * (gl - gr) / den))
+        ri = gs[bi][0] + step * sub     # gs[bi][0] 已是「最强梯度那对里靠外」的采样点
+        if not bool(getattr(config, "PLATE_SUBPIXEL", False)):
+            pts.append((float(int(round(cx + ca * ri))),
+                        float(int(round(cy + sa * ri)))))
+        else:
+            pts.append((float(cx) + ca * ri, float(cy) + sa * ri))
     return pts
+
+
+def _fit_bottom_parabola(pts, A, rounds=1):
+    """给定曲率系数 A，最小二乘求底点 (x0, y0)：y = y0 − A·(x−x0)²。
+
+    为什么把 A 固定：盘半径 330px 时，底点 ±26px 内的「拱高」只有 ~1px，
+    自由拟合二次项会让顶点乱跑（三个系数彼此抵消）。A 由椭圆半轴给定
+    （A = b / 2a²，正圆时 A = 1/2r），只留两个未知量 → 稳定得多。
+
+    把 y + A·x² 看成 x 的线性函数：u = p + q·x → x0 = q/(2A)，y0 = p + A·x0²。
+    返回 (x0, y0, npts, rms) 或 None。
+    """
+    A = float(A)
+    if A <= 1e-9 or len(pts) < 6:
+        return None
+    cur = [(float(p[0]), float(p[1])) for p in pts]
+    x0 = y0 = rms = 0.0
+    for rd in range(max(0, int(rounds)) + 1):
+        n = float(len(cur))
+        if n < 6:
+            return None
+        sx = sum(p[0] for p in cur)
+        sxx = sum(p[0] * p[0] for p in cur)
+        su = sum(p[1] + A * p[0] * p[0] for p in cur)
+        sxu = sum((p[1] + A * p[0] * p[0]) * p[0] for p in cur)
+        den = n * sxx - sx * sx
+        if abs(den) < 1e-9:
+            return None
+        q = (n * sxu - sx * su) / den
+        p0 = (su - q * sx) / n
+        x0 = q / (2.0 * A)
+        y0 = p0 + A * x0 * x0
+        rms = math.sqrt(sum((p[1] - (y0 - A * (p[0] - x0) ** 2)) ** 2
+                            for p in cur) / n)
+        if rd >= int(rounds):
+            break
+        keep = [p for p in cur
+                if abs(p[1] - (y0 - A * (p[0] - x0) ** 2)) <= max(1.2, 2.5 * rms)]
+        if len(keep) < 6 or len(keep) >= len(cur):
+            break
+        cur = keep
+    return x0, y0, len(cur), rms
+
+
+def measure_bottom_point(img, cx, cy, a, b, meta=None, gray=None,
+                         half_w=None, up=None, down=None, min_grad=None,
+                         min_pts=None):
+    """直接测盘的**最低点**（不靠椭圆外推 cy+b）。
+
+    为什么需要：全局拟合里 cy 与 b 是强相关的一对（只见下弧时更病态），
+    两者误差会互相抵消一部分，但**底点本身**其实是个局部特征，可以单独测准。
+
+    做法：以椭圆外推的底点为中心，在 ±half_w 列做**竖向**扫描（底边近水平，
+    竖扫最灵敏），取最强向下梯度并做亚像素抛物插值，再按已知曲率 A 拟合
+    抛物线，顶点即 (x0, y0)。返回 (x0, y0, npts, rms) 或 None。
+    """
+    try:
+        W, H = int(img.width()), int(img.height())
+    except Exception:
+        return None
+    if gray is None:
+        gray = _gray_np(img)
+    half_w = int(half_w if half_w is not None
+                 else getattr(config, "PLATE_LOW_HALF_W", 26))
+    up = float(up if up is not None else getattr(config, "PLATE_LOW_UP", 26.0))
+    down = float(down if down is not None else getattr(config, "PLATE_LOW_DOWN", 10.0))
+    min_grad = float(min_grad if min_grad is not None
+                     else getattr(config, "PLATE_LOW_MIN_GRAD", 8.0))
+    min_pts = max(6, int(min_pts if min_pts is not None
+                         else getattr(config, "PLATE_LOW_MIN_PTS", 18)))
+    a = float(a) if a else float(b)
+    b = float(b)
+    if a <= 0.0 or b <= 0.0:
+        return None
+    A = b / (2.0 * a * a)          # 底点附近的曲率系数
+    y_exp = float(cy) + b
+    y_lo = max(1, int(math.floor(y_exp - up)))
+    y_hi = min(H - 2, int(math.ceil(y_exp + down)))
+    x_lo = max(0, int(math.floor(float(cx) - half_w)))
+    x_hi = min(W - 1, int(math.ceil(float(cx) + half_w)))
+    if y_hi - y_lo < 4 or x_hi - x_lo < 8:
+        return None
+
+    pts = []
+    if gray is not None:
+        try:
+            import numpy as np
+            ys = np.arange(y_lo, y_hi + 1)
+            xs = np.arange(x_lo, x_hi + 1)
+            gm = gray[ys - 1][:, xs].astype(np.int32)
+            gp = gray[ys + 1][:, xs].astype(np.int32)
+            grad = gp - gm                       # 向下变亮为正
+            absg = np.abs(grad)
+            idx = np.argmax(absg, axis=0)
+            cols = np.arange(xs.size)
+            ok = (idx > 0) & (idx < ys.size - 1) & (absg[idx, cols] >= min_grad)
+            if int(ok.sum()) >= min_pts:
+                ic = idx[ok]
+                cc = cols[ok]
+                vm = grad[ic - 1, cc].astype(np.float32)
+                v0 = grad[ic, cc].astype(np.float32)
+                vp = grad[ic + 1, cc].astype(np.float32)
+                den = vm - 2.0 * v0 + vp
+                den = np.where(np.abs(den) < 1e-6, 1e-6, den)
+                sub = np.clip(0.5 * (vm - vp) / den, -0.5, 0.5)
+                yy = ys[ic].astype(np.float32) + sub
+                pts = [(float(xs[c]), float(v)) for c, v in zip(cc, yy)]
+        except Exception:
+            pts = []
+
+    if not pts:
+        # 纯 Python 兜底（PC 单测的假图只有 get_pixel）
+        for x in range(x_lo, x_hi + 1):
+            gs = []
+            for y in range(y_lo, y_hi + 1):
+                va = _pixel_luma(img, x, y - 1)
+                vb = _pixel_luma(img, x, y + 1)
+                if va is None or vb is None:
+                    gs.append(None)
+                else:
+                    gs.append(float(vb - va))
+            bi, bg = -1, -1.0
+            for i, g in enumerate(gs):
+                if g is None or not (0 < i < len(gs) - 1):
+                    continue
+                if abs(g) > bg:
+                    bi, bg = i, abs(g)
+            if bi < 0 or bg < min_grad:
+                continue
+            vm = gs[bi - 1] or 0.0
+            v0 = gs[bi] or 0.0
+            vp = gs[bi + 1] or 0.0
+            den = vm - 2.0 * v0 + vp
+            sub = 0.0 if abs(den) < 1e-6 else max(-0.5, min(0.5, 0.5 * (vm - vp) / den))
+            pts.append((float(x), float(y_lo + bi) + sub))
+
+    if len(pts) < min_pts:
+        if meta is not None:
+            meta["low_direct_pts"] = len(pts)
+        return None
+    res = _fit_bottom_parabola(pts, A)
+    if res is None:
+        if meta is not None:
+            meta["low_direct_pts"] = len(pts)
+            meta["low_direct_reason"] = "parabola-degenerate"
+        return None
+    x0, y0, n, rms = res
+    if n < min_pts:
+        if meta is not None:
+            meta["low_direct_pts"] = n
+        return None
+    if meta is not None:
+        meta["low_direct_pts"] = n
+        meta["low_direct_rms"] = round(rms, 2)
+    return x0, y0, n, rms
 
 
 def _circle_from_3(p1, p2, p3):
@@ -531,7 +746,7 @@ def coarse_disc_prior(img, pts=None, iters=120, tol=8.0, min_inliers=12,
 
 def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
                   min_grad=None, arc_deg=None, meta=None,
-                  skip_bottom_deg=None):
+                  skip_bottom_deg=None, gray=None):
     """物料盘下弧检测：从粗圆心沿下半弧找边缘点，迭代拟合「轴对齐椭圆」。
 
     为什么需要：物料盘（白色带孔大圆盘）常常只拍得到下半弧，圆心落在画面外，
@@ -575,7 +790,7 @@ def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
                         else getattr(config, "PLATE_ARC_SKIP_BOTTOM_DEG", 0.0))
     fit_max_pts = int(getattr(config, "PLATE_FIT_MAX_PTS", 48))
     robust_rounds = max(0, int(getattr(config, "PLATE_ROBUST_ROUNDS", 1)))
-    gray = _gray_np(img)          # 一帧只转一次灰度（numpy 路径用）
+    gray = gray if gray is not None else _gray_np(img)   # 一帧只转一次灰度
     cx, cy, r = float(cx), float(cy), float(r)
     ea = eb = None
     for band in bands:
@@ -666,6 +881,7 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
         return None
     cx0, cy0, r0 = float(cx), float(cy), float(r)
     d = {} if meta is None else meta
+    gray_all = _gray_np(img)      # 整帧灰度只转一次（拟合 + 直测底点共用）
     gate = bool(getattr(config, "PLATE_QUALITY_GATE", True))
     max_rms = float(getattr(config, "PLATE_MAX_RMS", 4.0))
     min_pts = int(getattr(config, "PLATE_MIN_PTS", 30))
@@ -700,7 +916,7 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
         """
         m2 = {}
         res = _fit_arc_once(img, px, py, pr, bands, rays, step, min_grad,
-                            arc_deg, m2, skip_bottom_deg=skip)
+                            arc_deg, m2, skip_bottom_deg=skip, gray=gray_all)
         label = tag if not skip else "%s/skip%g" % (tag, skip)
         if res is None:
             tries.append({"prior": label, "reason": str(m2.get("reason", ""))[:40]})
@@ -774,7 +990,51 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     for k, v in m2.items():
         d[k] = v
     d["prior_used"] = tag
-    d["low_conf"] = bool(gate and rank != 0)
+
+    # ---- 底点交叉校验：局部直测 vs 椭圆外推 ----
+    # 两个独立估计（全局拟合 / 局部直测）差得太多，说明这一帧的拟合可疑 →
+    # 标 low_conf（report 模式下仍执行，只是日志里能看到）。
+    # PLATE_LOW_USE_DIRECT=True 时直接用直测值（会改变落点口径，需重新标定）。
+    _mismatch = False
+    if bool(getattr(config, "PLATE_LOW_CHECK", True)):
+        _b = float(res[2])
+        _ea = float(d.get("a") or _b)
+        d["low_ellipse"] = [round(float(res[0]), 1), round(float(res[1]) + _b, 1)]
+        lo = measure_bottom_point(img, float(res[0]), float(res[1]), _ea, _b,
+                                  meta=d, gray=gray_all)
+        if lo is None:
+            d["low_direct"] = None
+        else:
+            x0, y0 = float(lo[0]), float(lo[1])
+            d["low_direct"] = [round(x0, 1), round(y0, 1), int(lo[2]),
+                               round(float(lo[3]), 2)]
+            _dxm = x0 - float(res[0])
+            _dym = y0 - (float(res[1]) + _b)
+            d["low_delta"] = [round(_dxm, 1), round(_dym, 1)]
+            _cx_ = float(getattr(config, "PLATE_LOW_CHECK_DX", 15.0))
+            _cy_ = float(getattr(config, "PLATE_LOW_CHECK_DY", 12.0))
+            if abs(_dxm) > _cx_ or abs(_dym) > _cy_:
+                d["low_check"] = "mismatch"
+                d["low_conf"] = True       # 两个估计不一致 → 可疑（下面会被覆盖）
+                _mismatch = True
+            else:
+                d["low_check"] = "ok"
+                _mismatch = False
+            if bool(getattr(config, "PLATE_LOW_USE_DIRECT", False)):
+                _mx = float(getattr(config, "PLATE_LOW_MAX_DX", 45.0))
+                _my = float(getattr(config, "PLATE_LOW_MAX_DY", 25.0))
+                cand = (x0, float(res[1]), y0 - float(res[1]))
+                _ok2, _why2 = _geom_ok(cand)
+                if abs(_dxm) <= _mx and abs(_dym) <= _my and _ok2:
+                    res = cand
+                    d["low_used"] = "direct"
+                else:
+                    d["low_used"] = "ellipse"
+                    d["low_reject"] = "dx=%.1f dy=%.1f geom=%s%s" % (
+                        abs(_dxm), abs(_dym), _ok2,
+                        "" if _ok2 else ("/" + _why2))
+
+    d["low_conf"] = bool(gate and rank != 0) or bool(_mismatch)
     if gate and rank != 0:
         # 现场要求：不准确也要执行完 → 默认 "report"（只标记低置信，照常返回最佳猜测）
         # 想恢复「不可信就回 NONE」的严格模式：PLATE_GATE_MODE="reject"
@@ -1435,9 +1695,15 @@ def find_stack_color_center_ai(ai, img, roi, color_code,
                              tx, ty))
 
     if len(hits) < min_tiles:
+        # 单块高置信也认可：物料在 96px 网格里经常只压住一个块，
+        # 硬要求 2 块会让「明明认得对」的情况一直未命中（现场 F,1 实测 108 次）。
+        if len(hits) == 1 and hits[0][2] >= float(
+                getattr(config, "STACK_AI_SINGLE_TILE_PROB", 0.90)):
+            min_tiles = 1
+    if len(hits) < min_tiles:
         if getattr(config, "STACK_AI_DEBUG", False):
-            print("[AI][F] 未命中 color=%s hits=%d best=%s" %
-                  (target, len(hits), best[1]))
+            print("[AI][F] 未命中 color=%s hits=%d best=%s prob=%.3f" %
+                  (target, len(hits), best[1] if best[1] else None, best[0]))
         return None
 
     # 相邻命中块聚成一簇；优先块数多的簇，再优先离 ROI 中心近的

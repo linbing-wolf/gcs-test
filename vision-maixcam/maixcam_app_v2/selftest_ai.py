@@ -247,6 +247,40 @@ def main():
     finally:
         config.AI_VETO_OTHER = old_veto
 
+    # ------------------------------------------------------------------
+    print("[N] F 分块找色：只有 1 块命中时，高置信也认可（现场 F,1 曾 108 次未命中）")
+
+    class FakeOneHit(FakeAI):
+        """只有 hit_xy 所在的块判成目标颜色，其余判 background。"""
+
+        def __init__(self, hit_xy, code=CODE_RED, prob=0.97):
+            super().__init__(code=code, prob=prob)
+            self.hit_xy = hit_xy
+            self.want = str(code)
+
+        def classify_label(self, img, roi=None):
+            self.calls += 1
+            x, y, w, h = [int(v) for v in roi]
+            cx, cy = x + w / 2.0, y + h / 2.0
+            if abs(cx - self.hit_xy[0]) < w / 2.0 and abs(cy - self.hit_xy[1]) < h / 2.0:
+                lab = [k for k, v in config.AI_CLASS_TO_COLOR.items()
+                       if v == self.want][0]
+                return lab, self.prob, config.AI_LABELS.index(lab)
+            return "background", 0.99, config.AI_LABELS.index("background")
+
+    imgN = FakeImage([])
+    roiN = [96, 96, 288, 288]
+    hit = (96 + 48, 96 + 48)          # 只压住左上角那一块
+    it = vision.find_stack_color_center_ai(
+        FakeOneHit(hit, prob=0.97), imgN, roiN, vision.COLOR_RED,
+        tile=96, stride=96, min_prob=0.75, min_tiles=2)
+    check("单块 prob=0.97 → 认可", it is not None and it.get("ai_tiles") == 1,
+          str(it))
+    it2 = vision.find_stack_color_center_ai(
+        FakeOneHit(hit, prob=0.80), imgN, roiN, vision.COLOR_RED,
+        tile=96, stride=96, min_prob=0.75, min_tiles=2)
+    check("单块 prob=0.80（<0.90）→ 仍要求 2 块，判未命中", it2 is None)
+
     print()
     if FAILED:
         print("[FAIL] %d 项未通过: %s" % (len(FAILED), FAILED))
