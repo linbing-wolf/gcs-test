@@ -278,7 +278,7 @@ SHOW_PREVIEW = True         # 屏幕显示 + MaixVision 预览
 #   会和 Maix 通信协议抢引脚。
 #   ★ 现状：**只在 D/E、H（近距离对盘）期间点亮**，任务前后自动开关；
 #     其它命令（A/T/C/F/G）、空闲时都不亮。
-DISC_LIGHT_ON  = True      # False = D/E 也不点灯
+DISC_LIGHT_ON  = False     # False = D/E 不点灯（现场要求：D/E 区关灯）
 PLATE_LIGHT_ON = True      # False = H 也不点灯
 CAM_LIGHT_PIN  = "B25"
 CAM_LIGHT_FUNC = "GPIOB25"
