@@ -4,9 +4,11 @@
 #undef CAR_CORNER_SPEED_MM_S
 #undef CAR_CORNER_WHEEL_ACCEL_RPM_PER_S
 #undef CAR_CORNER_WHEEL_DECEL_RPM_PER_S
+#undef CAR_CORNER_EXIT_BLEND_ENABLED
 #define CAR_CORNER_SPEED_MM_S 150
 #define CAR_CORNER_WHEEL_ACCEL_RPM_PER_S 240u
 #define CAR_CORNER_WHEEL_DECEL_RPM_PER_S 200u
+#define CAR_CORNER_EXIT_BLEND_ENABLED 0
 #endif
 #define STATION_TEST_MAIN retained_turning_speed_station_suite
 #include "verify_station_vision.c"
@@ -41,7 +43,7 @@ static void turning_slew_scope_tests(void)
 static void turning_motion_tests(void)
 {
     static const double gains[]={0.6,1.15,1.8},responses[]={0.18,0.30,0.50};
-    unsigned plan,k,g,r,variant,cases=0;double worstyaw=0,worstradial=0;
+    unsigned plan,k,g,r,variant,cases=0,early_rise_samples=0;double worstyaw=0,worstradial=0;
     for(plan=0;plan<2;plan++)for(k=0;k<3;k++)for(g=0;g<3;g++)for(r=0;r<3;r++)for(variant=0;variant<2;variant++) {
         uint32_t start,deadline,arc_ms=0;double maxyaw=0,maxradial=0;unsigned i,seen=0;
         RoadPoint target;double cx=1050,cy=k==2 ? 1050 : 1350;
@@ -54,7 +56,18 @@ static void turning_motion_tests(void)
         run_resume_after_station();checked_job=run.job;start=clock_ms;deadline=clock_ms+60000;
         CHECK(road_point(k==2 ? NODE_F : NODE_H,&target));
         while(run_active && run.state!=RUN_FAULT && clock_ms<deadline) {
+            float previous_ref=run.corner.path_ref_mm_s;
+            uint32_t previous_ms=run.corner.path_ref_ms;
             plant_step();
+            if(CAR_CORNER_EXIT_BLEND_ENABLED) {
+                float yaw_error=0;
+                if(run_corner_exit_pending(&yaw_error) && yaw_error>CAR_CORNER_EXIT_ALIGNED_CDEG
+                    && run.corner.path_ref_ms!=previous_ms && run.corner.path_ref_mm_s>previous_ref) {
+                    float dt=(run.corner.path_ref_ms-previous_ms)/1000.0f;
+                    float rise=(run.corner.path_ref_mm_s-previous_ref)*60*CALIBRATED_PPM_X/CAR_POSITION_PULSES_PER_REV/dt;
+                    CHECK(rise<=CAR_ROUTE_ACCEL_RPM_PER_S+0.1f);early_rise_samples++;
+                }
+            }
             if(run.corner.active) {
                 for(i=0;i<4;i++)CHECK(abs(simulated_wheel_rpm[i])<=run_wheel_limit_rpm());
                 for(i=0;i<run.corner.span_count;i++) {
@@ -81,6 +94,38 @@ static void turning_motion_tests(void)
     }
     printf("TURNING_SUMMARY cases=%u worst_yaw_deg=%.3f worst_radial_mm=%.3f\n",cases,worstyaw,worstradial);
     CHECK(worstyaw<15 && worstradial<35);
+    if(CAR_CORNER_EXIT_BLEND_ENABLED)CHECK(early_rise_samples>0);
+    printf("EXIT_PROFILE early_rise_samples=%u enabled=%u; path reference rises while actual heading remains outside aligned window\n",early_rise_samples,(unsigned)CAR_CORNER_EXIT_BLEND_ENABLED);
+}
+
+static void corner_exit_profile_tests(void)
+{
+    static const int errors[]={1400,1000,600,500};
+    unsigned i,mode;float previous=0;
+    for(i=0;i<4;i++) {
+        float speed,accel;
+        reset_plant(0,1.15);memset(&run,0,sizeof(run));
+        run.corner.active=1;run.corner.span_count=1;run.corner.spans[0].length=200;
+        run.corner.spans[0].dyaw=-9000;run.corner.s_mm=201;
+        run.heading_control.progress_cdeg=-9000-errors[i];
+        run.corner.path_ref_mm_s=100;run.corner.path_ref_ms=clock_ms;clock_ms+=25;
+        speed=run_corner_exit_speed(1000);
+        if(CAR_CORNER_EXIT_BLEND_ENABLED && errors[i]>CAR_CORNER_EXIT_ALIGNED_CDEG) {
+            accel=(speed-100)*60*CALIBRATED_PPM_X/CAR_POSITION_PULSES_PER_REV/0.025f;
+            CHECK(accel>=CAR_CORNER_EXIT_ACCEL_RPM_PER_S-0.01f && accel<CAR_ROUTE_ACCEL_RPM_PER_S);
+            CHECK(accel>previous && speed>100);previous=accel;
+        } else CHECK(speed==1000);
+        CHECK(run_corner_exit_speed(0)==0); /* 减速及整体零速不受新升速斜坡阻碍。 */
+    }
+    for(mode=0;mode<4;mode++) {
+        reset_plant(0,1.15);memset(&run,0,sizeof(run));
+        run.corner.active=1;run.corner.span_count=1;run.corner.spans[0].length=200;
+        run.corner.spans[0].dyaw=mode==1 ? 0 : -9000;run.corner.s_mm=mode==0 ? 190 : 201;
+        run.corner.reversing=(uint8_t)(mode==2);run.corner.visual_terminal=(uint8_t)(mode==3);
+        run.heading_control.progress_cdeg=-10000;run.corner.path_ref_ms=clock_ms;clock_ms+=25;
+        CHECK(run_corner_exit_speed(1000)==1000);
+    }
+    puts("PASS corner exit profile: positive gradual acceleration while5..15deg unaligned; full reference at5deg; braking, arc, fixed-yaw, reverse and visual-terminal scopes retained");
 }
 
 static void turning_whole_route_tests(void)
@@ -109,7 +154,7 @@ int main(int argc,char **argv)
     if(argc>1 && !strcmp(argv[1],"full-route")){turning_whole_route_tests();return 0;}
     CHECK(CAR_RUN_RPM==250 && CAR_LATERAL_SHORT_RPM==250 && CAR_LATERAL_LONG_RPM==200);
     CHECK(CAR_DRIVE_DECEL_RPM_PER_S==200 && CAR_DRIVE_BRAKE_LOOKAHEAD_MS==200 && CAR_ROUGH_BRAKE_LOOKAHEAD_MS==200);
-    turning_slew_scope_tests();turning_motion_tests();
+    turning_slew_scope_tests();corner_exit_profile_tests();turning_motion_tests();
     printf("PASS turning corner speed: %u assertions; host model only, no hardware\n",assertions);
     return 0;
 }

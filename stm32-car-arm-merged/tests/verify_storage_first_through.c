@@ -65,13 +65,17 @@ static void second_storage_tests(void)
         uint32_t deadline;unsigned offset=0;
         prepare_storage(1,"task 134+123+314+231");run.plan=(uint8_t)plan;deadline=clock_ms+150000;
         while(run.job==6 && clock_ms<deadline) {
-            serve_peer(&offset);plant_step();CHECK(!station_through_departure(NULL));
+            serve_peer(&offset);plant_step();
+            if(!STN_STORAGE_SECOND_THROUGH_ENABLED)CHECK(!station_through_departure(NULL));
         }
-        CHECK(clock_ms<deadline && run.job==7 && !run.station_return_mm);
-        CHECK(peer_disc_count==0 && peer_stack_count==3 && (arm_ready() || arm_departure_rotation_active()));
+        CHECK(clock_ms<deadline && run.job==7);
+        CHECK(run.station_return_mm==(STN_STORAGE_SECOND_THROUGH_ENABLED ? 150 : 0));
+        CHECK(peer_disc_count==0 && peer_stack_count==3);
+        CHECK(STN_STORAGE_SECOND_THROUGH_ENABLED ? (station_through_departure(NULL) && arm_busy())
+            : (arm_ready() || arm_departure_rotation_active()));
         stop_request();
     }
-    puts("PASS second storage: three color F requests, no E, no through-prefix, original stacking and return path retained");
+    puts("PASS second storage: three color F requests, no E; configured ring2 through-prefix overlaps retraction, serial fallback retained");
 }
 
 static void measured_clearance_tests(void)

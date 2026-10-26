@@ -174,6 +174,8 @@ typedef struct
         CornerLeg legs[8];
         CornerSpan spans[16];
         float first_mm, second_mm, arc_mm, total_mm, x_mm, y_mm, s_mm, speed_mm_s;
+        float path_ref_mm_s;
+        uint32_t path_ref_ms;
         float vx_mm_s,vy_mm_s,measured_s_mm;
         float command[3], integrated_yaw_cdeg; /* 同一比例限制四轮变化率；上次里程对应的IMU角度。 */
         int32_t heading_target;
@@ -2983,6 +2985,39 @@ static int run_corner_rotating_span(void)
     return 0;
 }
 
+/* 圆弧完成但实测车头尚未摆正时先温和升速；不改变弧内、退回或终点停车。 */
+static int run_corner_exit_pending(float *yaw_error)
+{
+    unsigned i;
+    if(!CAR_CORNER_EXIT_BLEND_ENABLED || !run.corner.active || run.corner.reversing || run.corner.visual_terminal)return 0;
+    for(i=0;i<run.corner.span_count;i++) {
+        CornerSpan *span=&run.corner.spans[i];
+        if(span->dyaw && run.corner.s_mm>=span->s+span->length) {
+            float final_yaw=span->yaw+span->dyaw;
+            *yaw_error=(float)abs(heading_wrap_cdeg(run.corner.heading_target+(int32_t)lroundf(final_yaw)
+                -run.heading_control.progress_cdeg));
+            return *yaw_error<CAR_CORNER_EXIT_YAW_CDEG;
+        }
+    }
+    return 0;
+}
+
+static float run_corner_exit_speed(float speed)
+{
+    float yaw_error=0;int pending=run_corner_exit_pending(&yaw_error);
+    uint32_t elapsed=clock_ms-run.corner.path_ref_ms;
+    if(elapsed>CAR_DRIVE_SLEW_MAX_DT_MS)elapsed=CAR_DRIVE_SLEW_MAX_DT_MS;
+    if(pending && yaw_error>CAR_CORNER_EXIT_ALIGNED_CDEG && speed>run.corner.path_ref_mm_s) {
+        float aligned=corner_clip((CAR_CORNER_EXIT_YAW_CDEG-yaw_error)
+            /(CAR_CORNER_EXIT_YAW_CDEG-CAR_CORNER_EXIT_ALIGNED_CDEG),0,1);
+        float rise=CAR_CORNER_EXIT_ACCEL_RPM_PER_S+(CAR_ROUTE_ACCEL_RPM_PER_S-CAR_CORNER_EXIT_ACCEL_RPM_PER_S)*aligned;
+        float limit=run.corner.path_ref_mm_s+rise*elapsed*CAR_POSITION_PULSES_PER_REV/(60000.0f*CALIBRATED_PPM_X);
+        if(speed>limit)speed=limit;
+    }
+    run.corner.path_ref_mm_s=speed;run.corner.path_ref_ms=clock_ms;
+    return speed;
+}
+
 static void run_corner_slew(float desired[3],int16_t output[3])
 {
     static const int8_t fs[4]={-1,1,1,-1},ls[4]={-1,-1,1,1};
@@ -3083,6 +3118,8 @@ static void run_corner_update(void)
     if(!run.corner.polarity_ready && speed>CAR_ENCODER_LEARN_RPM/coefficient)speed=CAR_ENCODER_LEARN_RPM/coefficient;
     if(abs(run.heading_control.error_cdeg)>CAR_CORNER_SLOW_YAW_CDEG)
         speed*=CAR_CORNER_SLOW_YAW_CDEG/(float)abs(run.heading_control.error_cdeg);
+    /* 只限制沿路径的升速，后面的横向位置反馈及转向纠偏保留原能力。 */
+    speed=run_corner_exit_speed(speed);
     if(run.corner.reversing)speed=-corner_clip(speed,0,CAR_CORNER_RETURN_MM_S);
     ex=point.x-x;ey=point.y-y;
     if(remaining<=CAR_DISTANCE_TOLERANCE_MM) {
@@ -4125,7 +4162,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261025-merge2-r94; faster rotating corners\r\n");
+    text("[drive] version=20261025-merge2-r96; parallel second storage departure\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

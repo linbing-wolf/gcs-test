@@ -224,7 +224,7 @@ static void plant_step(void)
             planned_x=origin.x+(int)lround(cos(a)*leg->x+sin(a)*leg->y);
             planned_y=origin.y+(int)lround(sin(a)*leg->x-cos(a)*leg->y);
         }
-        if(run.departure_overlap==2u && (node==NODE_D || (node==NODE_H && run.job==4u))) {
+        if(run.departure_overlap==2u && (node==NODE_D || (node==NODE_H && (run.job==4u || run.job==7u)))) {
             double a=run.heading*3.141592653589793/2;
             int dx=(int)lround(sin(a)*run.station_return_mm),dy=-(int)lround(cos(a)*run.station_return_mm);
             point.x+=dx;point.y+=dy;planned_x+=dx;planned_y+=dy;

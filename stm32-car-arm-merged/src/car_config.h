@@ -27,6 +27,12 @@
 #define CAR_CORNER_SPEED_MM_S       180       /* 同步转动车头的圆弧参考上限，mm/s；与固定车头及直线分开调。 */
 #define CAR_CORNER_WHEEL_ACCEL_RPM_PER_S 300u /* 仅同步转头圆弧内的轮速上升率，RPM/s。 */
 #define CAR_CORNER_WHEEL_DECEL_RPM_PER_S 300u /* 仅同步转头圆弧内的轮速下降/过零率，RPM/s；终点制动仍用道路减速率。 */
+#ifndef CAR_CORNER_EXIT_BLEND_ENABLED
+#define CAR_CORNER_EXIT_BLEND_ENABLED 1     /* 转头尾段先温和升速，再随车头对正恢复原加速度；0恢复r94。 */
+#endif
+#define CAR_CORNER_EXIT_YAW_CDEG   1500      /* 圆弧结束后，实际车头距最终方向不超过15度时进入出弯衔接。 */
+#define CAR_CORNER_EXIT_ALIGNED_CDEG 500     /* 距最终方向不超过5度时恢复道路加速度，不等待零误差。 */
+#define CAR_CORNER_EXIT_ACCEL_RPM_PER_S 90u /* 出弯尚未对正时平移升速率起值，RPM/s；不降低旋转纠偏变化率。 */
 #define CAR_CORNER_FIXED_YAW_SPEED_MM_S 250  /* 固定车头的前后/横移换向弧段参考上限，mm/s。 */
 #define CAR_CORNER_YAW_GAIN_X100    115       /* 转向前馈(度/秒)/RPM×100，来自主机模型，尚待实测。 */
 #define CAR_CORNER_YAW_MAX_RPM      100       /* 圆角转向分量上限，RPM；仍受当前运动档位及变化率约束。 */
@@ -100,9 +106,9 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_HEADING_STABLE_SAMPLES     3u
 #define CAR_HEADING_SETTLE_MS        100u
 #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
-#define CAR_HEADING_KP_X100          200       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
+#define CAR_HEADING_KP_X100          300       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
 #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
-#define CAR_HEADING_MIN_RPM           5       /* 误差超容差时的最低转向修正，RPM。 */
+#define CAR_HEADING_MIN_RPM           7       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
 #define CAR_TRANSLATION_MAX_RPM      ((CAR_RUN_RPM > CAR_LATERAL_MAX_RPM) ? CAR_RUN_RPM : CAR_LATERAL_MAX_RPM)
@@ -189,6 +195,9 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
     CAR_CORNER_RADIUS_MM < 50 || CAR_CORNER_RADIUS_MM > 300 || \
     CAR_CORNER_SPEED_MM_S < 30 || CAR_CORNER_SPEED_MM_S > 300 || \
     CAR_CORNER_WHEEL_ACCEL_RPM_PER_S < 1 || CAR_CORNER_WHEEL_DECEL_RPM_PER_S < 1 || \
+    CAR_CORNER_EXIT_BLEND_ENABLED < 0 || CAR_CORNER_EXIT_BLEND_ENABLED > 1 || \
+    CAR_CORNER_EXIT_ALIGNED_CDEG < 1 || CAR_CORNER_EXIT_YAW_CDEG <= CAR_CORNER_EXIT_ALIGNED_CDEG || \
+    CAR_CORNER_EXIT_YAW_CDEG > 9000 || CAR_CORNER_EXIT_ACCEL_RPM_PER_S < 1 || \
     CAR_CORNER_FIXED_YAW_SPEED_MM_S < 30 || CAR_CORNER_FIXED_YAW_SPEED_MM_S > 300 || \
     CAR_CORNER_YAW_GAIN_X100 < 1 || CAR_CORNER_YAW_MAX_RPM < 1 || \
     CAR_CORNER_YAW_MAX_RPM > CAR_WHEEL_MAX_RPM || CAR_CORNER_TRACK_GAIN_X100 < 1 || \

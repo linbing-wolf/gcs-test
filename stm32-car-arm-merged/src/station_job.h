@@ -25,7 +25,7 @@ void station_update(uint32_t now);
 int station_active(void);
 /* 最后仅剩高位收回后的云台/载物台回正，可提前开始离站预检和转弯。 */
 int station_departure_ready(void);
-/* 粗加工最后抓回/首次暂存最后放下并通过实际净空后，从当前环经过2环接入下一道路；mm为车身前向回2环距离。 */
+/* 粗加工最后抓回/暂存最后放下并通过实际净空后，从当前环经过2环接入下一道路；mm为车身前向回2环距离。 */
 int station_through_departure(int16_t *return_mm);
 /* 已通过离物净空的固定环位索引；车载取放可继续，下一地面动作等待索引完成。 */
 int station_index_overlap_active(void);

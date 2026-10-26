@@ -32,7 +32,7 @@ try {
         $storageHashes[$storageFile]=(Get-FileHash -LiteralPath $storageFile -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;exitCode=0;variants=@('corner_off','all_on','omni_off','arm_overlap_off');sourceHashes=$storageHashes;hardwareAccessed=$false;
-        scope='First storage last release then measured-clearance retraction and fixed ring2 prefix joins H-E-F without stop/vision; all6 ring orders, A/C, corner disabled fallback; second storage3F unchanged; host model only'} |
+        scope='First storage unchanged: measured-clearance retraction and fixed ring2 prefix joins H-E-F; all6 ring orders, A/C and disabled fallback. Second storage retains3F with configured through-prefix; host model only'} |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $storageOut 'result.json') -Encoding UTF8
     Write-Output $storageOut
 } finally {$env:PATH=$storageOldPath;Pop-Location}
