@@ -1029,10 +1029,13 @@ def _load_templates():
     return _TPL_CACHE
 
 
-def verify_target2(img, cx, cy, meta=None):
+def verify_target2(img, cx, cy, meta=None, max_shift=None):
     """校验候选圆内部确实有数字“2”。
 
     只有模板匹配通过才认为目标有效；模板缺失时返回 True（不阻断旧行为）。
+
+    max_shift: 匹配到的“2”中心离候选圆心超过这个距离就**不算匹配**
+    （环距只有 RING_SPACING_PX=22px，没有这个限制时会锁到旁边别的环上）。
     """
     tpls = _load_templates()
     if not tpls:
@@ -1060,6 +1063,7 @@ def verify_target2(img, cx, cy, meta=None):
         return False
     th = float(getattr(config, "DISC_TEMPLATE_THRESHOLD", 0.65))
     scales = getattr(config, "DISC_TEMPLATE_SCALES", [1.0])
+    far = None
     for i, tpl in enumerate(tpls):
         try:
             r = crop.find_template(tpl, th, step=2)
@@ -1068,14 +1072,28 @@ def verify_target2(img, cx, cy, meta=None):
                 meta["tpl_error"] = str(e)
             continue
         if r:
+            tx = int(r[0]) + x
+            ty = int(r[1]) + y
+            tw, thh = int(r[2]), int(r[3])
+            mx = tx + tw / 2.0
+            my = ty + thh / 2.0
+            if max_shift is not None:
+                d = math.hypot(mx - float(cx), my - float(cy))
+                if d > float(max_shift):
+                    # 离候选圆心太远 → 大概率锁到旁边别的环，换下一个尺度再试
+                    far = [round(mx, 1), round(my, 1), round(d, 1)]
+                    continue
             if meta is not None:
-                meta["tpl"] = [int(r[0]) + x, int(r[1]) + y, int(r[2]), int(r[3])]
+                meta["tpl"] = [tx, ty, tw, thh]
                 meta["tpl_scale"] = float(scales[i]) if i < len(scales) else 1.0
                 meta["tpl_roi"] = roi
+                meta.pop("tpl_far", None)
             return True
     if meta is not None:
         meta["tpl"] = None
         meta["tpl_roi"] = roi
+        if far is not None:
+            meta["tpl_far"] = far
     return False
 
 
@@ -1122,7 +1140,9 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         if not bool(getattr(config, "DISC_TEMPLATE_ON", True)):
             return p
         m2 = {}
-        if verify_target2(img, p[0], p[1], meta=m2):
+        _sh = float(getattr(config, "DISC_TEMPLATE_MAX_SHIFT", 22.0))
+        _lim = min(_sh, max(12.0, 0.35 * float(p[2])))
+        if verify_target2(img, p[0], p[1], meta=m2, max_shift=_lim):
             if meta is not None:
                 meta.update(m2)
             tpl = m2.get("tpl")

@@ -172,10 +172,13 @@ DISC_TEMPLATE_ON        = True
 DISC_TEMPLATE_PATH      = "/maixapp/apps/yyb_mover/assets/target2.png"
 DISC_TEMPLATE_THRESHOLD = 0.55   # NCC 阈值（0~1）；当前物料挡住数字下半部，实测 2 号环 ~0.59，1/3 号环 <0.30
 DISC_TEMPLATE_SCALES    = [0.9, 1.0]  # 0.9 覆盖稍远距离；两个尺度仍然很快
-DISC_TEMPLATE_ROI_W     = 120    # 在候选圆心周围搜“2”的窗口
-DISC_TEMPLATE_ROI_H     = 110
+DISC_TEMPLATE_ROI_W     = 72     # 在候选圆心周围搜“2”的窗口（环距仅 22px，窗口要小）
+DISC_TEMPLATE_ROI_H     = 80
 DISC_TEMPLATE_ROI_DX    = 0      # 窗口中心相对候选圆心的偏移
 DISC_TEMPLATE_ROI_DY    = 0
+# 匹配点必须离候选圆心足够近，否则当作没匹配（防止锁到旁边别的环上）
+#   实际上限 = min(本值, max(12, 0.35×候选半径))
+DISC_TEMPLATE_MAX_SHIFT = 22
 
 # ---- D/E 调试抓图（现场分析用；正式比赛可关）----
 DISC_DEBUG_SAVE          = False   # True=每次 D/E 保存关键帧 + 逐帧检测数据
@@ -427,17 +430,19 @@ PLATE_LOWCONF_STEP_MAX = 0
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长
 PLATE_ELLIPSE_K_MAX = 1.05
 PLATE_ELLIPSE_K_STEP = 0.02
-PLATE_TARGET_X      = 291.0    # 目标最低点 x（对外口径，现场标定）
-# 现场反馈「定位后车往右偏」→ 目标 x 左移 20px：311 → 291（有效目标 x = 291−2 = 289）。
-# 注意方向：目标 x 往左 → 车最终停更靠右；要「纠正车往右偏」应把 x 右移。
+PLATE_TARGET_X      = 316.0    # 目标最低点 x（对外口径，现场标定）
+# 现场反馈「定位后车往右偏」→ 目标 x 左移；之后又要求「车往左」→ 调回并加大：
+# 311 → 291 → 316（有效目标 x = 316 − 2 = 314）。
+# 注意方向：目标 x 往左 → 车最终停更靠右；要「车往左」应把 x 调大。
 # 目标最低点 y：原 267 是「圆模型」标定的，椭圆模型的最低点整体上移，
 # 故下调同步修正（实测 12 张真实图 圆low−椭low 平均 4.2px，范围 0.3~7.4px）。
 # 换回 PLATE_ARC_MODEL="circle" 时应改回 267。
 # 现场要求「落点大幅下移」：263 → 333（再下移 70px）；
 # 之后又反馈「车不那么靠前一点」→ 落点抬高 20px：333 → 313；
-# 再反馈「车可以再往后一点」→ 再抬高 10px：313 → 303。
+# 再反馈「车可以再往后一点」→ 再抬高 10px：313 → 303；
+# 最后现场实测定稿（车往左 + 往下）：x 291 → 316（有效 314）、y 303 → 278（有效 278）。
 # 有效目标 y = PLATE_TARGET_Y − PLATE_DY_OFFSET；y 越大=落点越低=车越靠前。
-PLATE_TARGET_Y      = 303.0
+PLATE_TARGET_Y      = 278.0
 # 固定偏差修正（与 D/E 的 ALIGN_DX_OFFSET_D / ALIGN_DY_OFFSET_D 同款）
 #   dx = 最低点x − PLATE_TARGET_X + PLATE_DX_OFFSET
 #   dy = 最低点y − PLATE_TARGET_Y + PLATE_DY_OFFSET
