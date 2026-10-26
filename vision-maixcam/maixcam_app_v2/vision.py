@@ -1677,18 +1677,42 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
                     meta["ms"] = ticks_ms() - t0
                 return p
 
+    circles = []
     try:
-        # find_circles 的霍夫累加器占用「fast frame buffer stack」，**ROI 越大越吃**。
-        # 现场实测：ROI 放大到 448×400 后日志开始刷
-        #   MemoryError: Out of fast Frame Buffer Stack Memory
-        # 之后进程直接被系统干掉（无 APP EXIT 记录）。所以给霍夫单独限幅，
-        # blob 路径（inner/black）仍用完整大 ROI，不受影响。
-        hroi = _cap_roi(roi)
-        if meta is not None and hroi != roi:
-            meta["hough_roi"] = hroi
-        circles = img.find_circles(roi=hroi if hroi else [], threshold=threshold,
-                                   x_margin=10, y_margin=10, r_margin=10,
-                                   r_min=r_min, r_max=r_max)
+        # 霍夫累加器内存 ∝ ROI 面积。大 ROI 不能整块跑（会耗干 fast frame buffer stack），
+        # 所以：居中窗口优先 → 失败再按 50% 重叠分块铺满；并且用大步长进一步省内存。
+        # 最后一定再补一次「历史默认参数」的中心窗口 → 保证结果只会比旧版多，不会少。
+        _xs, _ys = getattr(config, "DISC_HOUGH_STRIDE", (4, 2))
+        _rs = int(getattr(config, "DISC_HOUGH_R_STEP", 4))
+        _thr = _hough_threshold(threshold)
+        if meta is not None:
+            meta["hough_thr"] = _thr
+        _plans = [(_hr, _thr, int(_xs), int(_ys), _rs)
+                  for _hr in _hough_rois(roi)]
+        _cap = _cap_roi(roi)
+        if _cap:
+            _plans.append((_cap, int(threshold), 2, 1, 2))   # 旧版参数兜底
+        _tried = []
+        for (_hr, _t, _sx, _sy, _sr) in _plans:
+            _tried.append(_hr)
+            try:
+                circles = img.find_circles(roi=_hr if _hr else [], threshold=_t,
+                                           x_stride=_sx, y_stride=_sy,
+                                           x_margin=10, y_margin=10, r_margin=10,
+                                           r_min=r_min, r_max=r_max,
+                                           r_step=_sr)
+            except Exception as e:
+                if meta is not None:
+                    meta["circles_error"] = str(e)[:60]
+                circles = []
+            if circles:
+                if meta is not None:
+                    meta["hough_use"] = "t=%d stride=%d,%d rstep=%d" % (
+                        _t, _sx, _sy, _sr)
+                break
+        if meta is not None and _tried:
+            meta["hough_roi"] = _tried[-1]
+            meta["hough_tries"] = len(_tried)
     except Exception as e:
         # ROI 放大后 find_circles 的累加器缓冲也变大，内存紧张时会抛
         # MemoryError（Out of fast Frame Buffer Stack Memory）——
@@ -1829,6 +1853,65 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
     return None
 
 
+def _hough_threshold(base):
+    """大步长采样会让霍夫幅值按采样比例缩小 → 阈值要同步缩放。
+
+    x_stride 2→4、y_stride 1→2 相当于少采 8 倍点，幅值约降到 1/8，
+    阈值不跟着降就一个圆都检不出来。
+    """
+    try:
+        s = float(getattr(config, "DISC_HOUGH_THR_SCALE", 0.15))
+        return max(60, int(float(base) * s))
+    except Exception:
+        return int(base)
+
+
+def _hough_rois(roi, max_tiles=None):
+    """返回霍夫要依次尝试的 ROI 列表：先「居中限幅窗口」，再按 50% 重叠分块铺满。
+
+    为什么要分块：现场要求 D/E 的 ROI 要大（448×400），但霍夫累加器内存 ∝ ROI 面积，
+    整块跑会把「fast frame buffer stack」耗干（实测会刷 MemoryError 并导致段错误）。
+    分块后**单次调用的 ROI 不超过历史稳定尺寸**，覆盖面却仍然是整个大 ROI。
+    再配合 DISC_HOUGH_STRIDE 的大步长，内存还有富余。
+    """
+    out = []
+    try:
+        cap = _cap_roi(roi)
+        if cap:
+            out.append(cap)
+        if not roi or len(roi) != 4:
+            return out
+        x, y, w, h = [int(v) for v in roi]
+        tw, th = [int(v) for v in getattr(config, "DISC_HOUGH_TILE",
+                                          (340, 320))]
+        if w <= tw and h <= th:
+            return out
+        tiles = []
+        yy = y
+        while True:
+            xx = x
+            while True:
+                tiles.append([xx, yy,
+                              min(tw, x + w - xx), min(th, y + h - yy)])
+                if xx + tw >= x + w:
+                    break
+                xx += max(8, tw // 2)
+            if yy + th >= y + h:
+                break
+            yy += max(8, th // 2)
+        cx0, cy0 = x + w / 2.0, y + h / 2.0
+        tiles.sort(key=lambda t: (t[0] + t[2] / 2.0 - cx0) ** 2
+                   + (t[1] + t[3] / 2.0 - cy0) ** 2)
+        lim = max(1, int(max_tiles if max_tiles is not None
+                         else getattr(config, "DISC_HOUGH_TILE_MAX", 4)))
+        for t in tiles:
+            if t not in out and len(out) < lim + 1:
+                out.append(t)
+    except Exception:
+        pass
+    return out
+
+
 def _cap_roi(roi, max_w=None, max_h=None):
     """把 ROI 居中裁剪到上限尺寸。
 
@@ -1866,9 +1949,12 @@ def find_ring_center(img, roi=None,
     x, y, w, h = roi
     cx0, cy0 = x + w / 2.0, y + h / 2.0
     try:
-        circles = img.find_circles(roi=roi, threshold=threshold,
+        _xs, _ys = getattr(config, "DISC_HOUGH_STRIDE", (4, 2))
+        circles = img.find_circles(roi=roi, threshold=_hough_threshold(threshold),
+                                   x_stride=int(_xs), y_stride=int(_ys),
                                    x_margin=10, y_margin=10, r_margin=10,
-                                   r_min=r_min, r_max=r_max)
+                                   r_min=r_min, r_max=r_max,
+                                   r_step=int(getattr(config, "DISC_HOUGH_R_STEP", 4)))
     except Exception as e:
         print("[视觉] find_ring_center 霍夫失败: %s" % e)
         return None

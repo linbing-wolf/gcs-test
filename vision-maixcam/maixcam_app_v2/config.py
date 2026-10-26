@@ -50,13 +50,20 @@ ROI_QRCODE     = []                      # 二维码：全画面
 ROI_MATERIAL   = [140, 100, 360, 300]    # 原料区转盘（放 3 个物料）
 # 现场要求「扩大 D/E 的 ROI」：320×340 → 448×400（面积 1.65×），上边界必须贴着 0，
 # 否则会裁掉整个靶环、拟合出偏下的大假圆。
-# 现场「扩大 D/E 的 ROI」曾提到 448×400，但实测会让霍夫把「fast frame buffer stack」
-# 耗干 → 日志刷 MemoryError → 堆损坏 → 段错误进程被杀（core 已抓到栈）。
-# 现在回到历史稳定尺寸；扩 ROI 的事等稳定性达标后再逐步推进。
-ROI_DISC_ROUGH = [160, 20, 320, 340]     # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
-ROI_DISC_TEMP  = [160, 20, 320, 340]     # 暂存区圆盘（同上）
-# 霍夫（find_circles）统一限幅：所有调霍夫的地方都用 _cap_roi() 处理
-DISC_HOUGH_ROI_MAX = (340, 320)
+# 现场要求「ROI 要大」：恢复到 448×400（大覆盖面）。
+# 但 find_circles 的霍夫累加器按 ROI 面积吃「fast frame buffer stack」，
+# 448×400 + 默认步长会把池子耗干（日志刷 MemoryError → 堆损坏 → 段错误）。
+# 解法：① 霍夫用更大的 x_stride/y_stride/r_step（少采样 → 内存反而比 320×340 默认还小）
+#       ② 仍保留 _cap_roi 作安全网 + 居中窗口优先、失败再分块铺满
+ROI_DISC_ROUGH = [96, 0, 448, 400]       # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
+ROI_DISC_TEMP  = [96, 0, 448, 400]       # 暂存区圆盘（同上）
+DISC_HOUGH_ROI_MAX = (340, 320)          # 单次霍夫的 ROI 上限（安全网）
+DISC_HOUGH_TILE     = (340, 320)         # 分块铺满时的单块尺寸
+DISC_HOUGH_TILE_MAX = 4                  # 分块兜底最多试几块（按离 ROI 中心远近排序）
+DISC_HOUGH_STRIDE   = (4, 2)             # 霍夫 x/y 采样步长：比默认(2,1)少 4 倍采样
+DISC_HOUGH_R_STEP   = 4                  # 半径步长：40~90 → 13 档（默认 2 → 25 档）
+DISC_HOUGH_THR_SCALE = 0.15              # 大步长下霍夫幅值约降到 1/8，阈值同步缩放
+                                         # （DISC_THRESHOLD=2000 → 实际 300）
 ROI_STACK      = [80, 0, 480, 480]       # 码垛区：纵向全屏（x 80..560，y 0..480）
 
 # ============================== 稳定性判定 ==============================
@@ -161,9 +168,7 @@ DISC_RUNAWAY_GROW_PX   = 2      # |dx| 至少增大 2px 才算“变大”
 # ---- D/E 同心环靶：黑色像素质心（比 Hough 稳，现场实测抖动 ~3px）----
 DISC_BLACK_CENTER_ON   = True   # True=优先用黑色环像素质心定位（靶是黑环+白底）
 DISC_BLACK_MIN_PIXELS  = 300    # 黑色像素少于此值 → 退回 Hough
-DISC_BLACK_ROI         = [170, 30, 300, 230]  # 黑色质心/最内圈白块专用子区域（640x480）
-                                              # blob 路径（find_blobs，便宜）用这个较大窗口；
-                                              # 霍夫（find_circles，吃内存）另行 _cap_roi 限幅到 340×320
+DISC_BLACK_ROI         = [150, 20, 340, 250]  # 黑色质心/最内圈白块子区域（640x480）：包住中间靶，避开左右靶和机械臂
 DISC_BLACK_SUB_RATIO   = 0.65   # DISC_BLACK_ROI 为空时才用：取任务 ROI 上部 65%
 DISC_BLACK_TOP_N       = 8      # 取最大的 N 个黑色 blob 做加权质心
 
