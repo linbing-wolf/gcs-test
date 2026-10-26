@@ -335,6 +335,94 @@ def _gray_np(img):
         return None
 
 
+def _frame_level(gray, img=None, pct=90.0):
+    """估计「盘面亮度」：优先 numpy 灰度（快）；否则用 get_pixel 稀疏采样（PC 单测用）。"""
+    try:
+        if gray is not None:
+            import numpy as np
+            return float(np.percentile(gray[::8, ::8], pct))
+    except Exception:
+        pass
+    if img is None or not hasattr(img, "get_pixel"):
+        return None
+    vals = []
+    w, h = img.width(), img.height()
+    for y in range(0, h, 24):
+        for x in range(0, w, 24):
+            v = _pixel_luma(img, x, y)
+            if v is not None:
+                vals.append(v)
+    if not vals:
+        return None
+    vals.sort()
+    return float(vals[min(len(vals) - 1, int(len(vals) * pct / 100.0))])
+
+
+def check_inside_bright(img, cx, cy, a, b, meta=None, gray=None,
+                        n_rays=None, min_ratio=None):
+    """校验拟合出的椭圆**内侧**确实是盘面亮度。
+
+    为什么：电缆/立柱/阴影外边界也能拟合出一条"看起来合理"的弧（实测 rms 6~7，
+    最低点偏 +60~+80px）。但它们的"内侧"是阴影或桌面（实测 123~154），
+    而真盘缘内侧是盘面（196~211）——这条判据能把假弧整体否掉，
+    又**不会**像"逐点过滤"那样把真盘缘的点裁掉（那会把最低点往里拉）。
+
+    返回 (内侧达标比例, 需要达到的亮度, 有效射线数)；没有像素接口时返回 None。
+    """
+    b = float(b)
+    a = float(a) if a else b
+    if a <= 0 or b <= 0:
+        return None
+    if gray is None:
+        gray = _gray_np(img)
+    try:
+        W, H = int(img.width()), int(img.height())
+    except Exception:
+        return None
+    n_rays = int(n_rays if n_rays is not None
+                 else getattr(config, "PLATE_INSIDE_RAYS", 40))
+    min_ratio = float(min_ratio if min_ratio is not None
+                      else getattr(config, "PLATE_INSIDE_MIN_RATIO", 0.60))
+    lo = float(getattr(config, "PLATE_IN_BACK_LO", 14.0))
+    hi = float(getattr(config, "PLATE_IN_BACK_HI", 34.0))
+    arc = getattr(config, "PLATE_ARC_DEG", (-20.0, 200.0))
+    a0, a1 = math.radians(float(arc[0])), math.radians(float(arc[1]))
+    pct = float(getattr(config, "PLATE_IN_LEVEL_PCT", 90))
+    lvl = _frame_level(gray, img, pct=pct)
+    need = max(float(getattr(config, "PLATE_IN_MIN_ABS", 175.0)),
+               (lvl - float(getattr(config, "PLATE_IN_MARGIN", 18.0)))
+               if lvl is not None else 0.0)
+    ok = tot = 0
+    for i in range(max(6, n_rays)):
+        ang = a0 + (a1 - a0) * i / max(1, n_rays - 1)
+        ca, sa = math.cos(ang), math.sin(ang)
+        rc = a if abs(a - b) < 1e-6 else _ellipse_radius(a, b, ca, sa)
+        vals = []
+        rr = rc - hi
+        while rr <= rc - lo:
+            x = int(round(cx + ca * rr))
+            y = int(round(cy + sa * rr))
+            if 0 <= x < W and 0 <= y < H:
+                if gray is not None:
+                    vals.append(float(gray[y, x]))
+                else:
+                    v = _pixel_luma(img, x, y)
+                    if v is not None:
+                        vals.append(v)
+            rr += 2.0
+        if not vals:
+            continue
+        tot += 1
+        if sum(vals) / len(vals) >= need:
+            ok += 1
+    if tot <= 0:
+        return None
+    if meta is not None:
+        meta["inside_need"] = round(need, 1)
+        meta["inside_rays"] = tot
+    return (float(ok) / float(tot), need, tot)
+
+
 def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
                         skip_bottom_deg=0.0):
     """`_arc_edge_points` 的 numpy 向量化版本（语义一致，快 ~20 倍）。
@@ -390,6 +478,33 @@ def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
     idx = np.argmax(ag, axis=1)
     rows = np.arange(ag.shape[0])
     best = ag[rows, idx]
+
+    # ---- 内侧亮度约束：候选边往里 14~34px 必须是「盘面亮度」----
+    # 电缆/立柱/阴影内部边界上方是阴影或桌面（实测 123~154），盘缘上方是盘面（196~211），
+    # 两者天然分开 40+ 灰度，这条能把电缆这类强边缘直接排除。
+    ok_in = np.ones(ag.shape[0], dtype=bool)
+    if bool(getattr(config, "PLATE_IN_BRIGHT_ON", True)):
+        try:
+            pct = float(getattr(config, "PLATE_IN_LEVEL_PCT", 90))
+            lvl = _frame_level(gray, pct=pct)
+            need = max(float(getattr(config, "PLATE_IN_MIN_ABS", 175.0)),
+                       (lvl - float(getattr(config, "PLATE_IN_MARGIN", 18.0)))
+                       if lvl is not None else 0.0)
+            b_lo = max(1, int(round(float(getattr(config, "PLATE_IN_BACK_LO", 14.0)) / step)))
+            b_hi = max(b_lo + 1, int(round(float(getattr(config, "PLATE_IN_BACK_HI", 34.0)) / step)))
+            kk = idx + 1                      # 最强梯度对应的采样列
+            for i in range(ag.shape[0]):
+                j1 = min(K, kk[i] - b_lo + 1)
+                j0 = max(0, kk[i] - b_hi + 1)
+                if j1 <= j0:
+                    ok_in[i] = False
+                    continue
+                seg = vals[i, j0:j1]
+                good = seg[seg >= 0]
+                ok_in[i] = good.size > 0 and float(good.mean()) >= need
+        except Exception:
+            ok_in[:] = True
+    best = np.where(ok_in, best, -1)
     if not bool(getattr(config, "PLATE_SUBPIXEL", False)):
         # 关闭亚像素 → 与旧版逐像素一致（保住现场已标定的落点口径）
         pts = []
@@ -466,13 +581,16 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
         rr = r0
         prev = None
         gs = []          # [(半径, 带符号梯度)]
+        vs = []          # [(半径, 亮度)]
         while rr <= r1:
             x = int(round(cx + ca * rr))
             y = int(round(cy + sa * rr))
             if 0 <= x < w and 0 <= y < h:
                 v = _pixel_luma(img, x, y)
-                if v is not None and prev is not None:
-                    gs.append((rr, float(v - prev)))
+                if v is not None:
+                    vs.append((rr, float(v)))
+                    if prev is not None:
+                        gs.append((rr, float(v - prev)))
                 prev = v
             else:
                 prev = None
@@ -492,6 +610,19 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
             if abs(den) > 1e-6:
                 sub = max(-0.5, min(0.5, 0.5 * (gl - gr) / den))
         ri = gs[bi][0] + step * sub     # gs[bi][0] 已是「最强梯度那对里靠外」的采样点
+        # 内侧亮度约束（与 numpy 路径同判据）
+        if bool(getattr(config, "PLATE_IN_BRIGHT_ON", True)) and vs:
+            lo = ri - float(getattr(config, "PLATE_IN_BACK_HI", 34.0))
+            hi = ri - float(getattr(config, "PLATE_IN_BACK_LO", 14.0))
+            seg = [v for (r, v) in vs if lo <= r <= hi]
+            if seg:
+                lvl = _frame_level(gray, img, pct=float(
+                    getattr(config, "PLATE_IN_LEVEL_PCT", 90)))
+                need = max(float(getattr(config, "PLATE_IN_MIN_ABS", 175.0)),
+                           (lvl - float(getattr(config, "PLATE_IN_MARGIN", 18.0)))
+                           if lvl is not None else 0.0)
+                if sum(seg) / len(seg) < need:
+                    continue
         if not bool(getattr(config, "PLATE_SUBPIXEL", False)):
             pts.append((float(int(round(cx + ca * ri))),
                         float(int(round(cy + sa * ri)))))
@@ -1035,6 +1166,29 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
                         "" if _ok2 else ("/" + _why2))
 
     d["low_conf"] = bool(gate and rank != 0) or bool(_mismatch)
+
+    # ---- 内侧亮度校验：拟合出的弧内侧必须是盘面 ----
+    # 电缆/立柱/阴影也能拟合出"合理"的弧（最低点偏 +60~80px），但内侧是暗的。
+    if bool(getattr(config, "PLATE_INSIDE_CHECK", True)):
+        chk = check_inside_bright(img, float(res[0]), float(res[1]),
+                                  float(d.get("a") or res[2]), float(res[2]),
+                                  meta=d, gray=gray_all)
+        if chk is not None:
+            ratio, need, tot = chk
+            d["inside_ratio"] = round(ratio, 2)
+            _minr = float(getattr(config, "PLATE_INSIDE_MIN_RATIO", 0.60))
+            if ratio < _minr:
+                d["inside_check"] = "fail"
+                mode2 = str(getattr(config, "PLATE_INSIDE_ON_FAIL",
+                                    "reject")).strip().lower()
+                if mode2 in ("reject", "none", "strict"):
+                    d["reason"] = "inside-fail(%.2f<%.2f, need=%.0f, n=%d)" % (
+                        ratio, _minr, need, tot)
+                    d["rejected"] = True
+                    return None
+                d["low_conf"] = True
+            else:
+                d["inside_check"] = "ok"
     if gate and rank != 0:
         # 现场要求：不准确也要执行完 → 默认 "report"（只标记低置信，照常返回最佳猜测）
         # 想恢复「不可信就回 NONE」的严格模式：PLATE_GATE_MODE="reject"

@@ -1017,9 +1017,12 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
     if timeout_ms is None:
         timeout_ms = int(getattr(config, "PLATE_TIMEOUT_MS", 8000))
 
+    _detect_meta = {}
+
     def _detect(img):
         """一帧：检测下弧 → 返回 (最低点x, 最低点y, meta)（对外口径）或 None"""
         meta = {}
+        _detect_meta["m"] = meta
         c = vision.find_disc_arc(img, init_cx, init_cy, init_r, bands=bands, meta=meta)
         if c is None:
             return None
@@ -1053,7 +1056,8 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
         if meta:
             for k in ("model", "a", "b", "k", "rms", "npts", "reason",
                       "low_ellipse", "low_direct", "low_delta", "low_check",
-                      "low_used", "low_conf"):
+                      "low_used", "low_conf", "inside_ratio", "inside_check",
+                      "inside_need", "inside_rays"):
                 if k in meta:
                     f[k] = meta[k]
         if extra:
@@ -1089,6 +1093,12 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
         if r is None:
             lost += 1
             stable = 0
+            if lost == 1:
+                _why = _detect_meta.get("m", {})
+                log("[H] 本帧未得到可信下弧：%s%s"
+                    % (str(_why.get("reason", "?"))[:60],
+                       ("（内侧亮度通过率 %s）" % _why.get("inside_ratio"))
+                       if _why.get("inside_ratio") is not None else ""))
             img.draw_string(2, 2, "H: no arc %d/%d" % (lost, lost_limit),
                             image.COLOR_RED, 2)
             if rec is not None:
@@ -1125,6 +1135,11 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
             log("[H] 底点校验：椭圆=(%.1f,%.1f) 直测=(%.1f,%.1f) Δ=(%+.1f,%+.1f) %s"
                 % (_le[0], _le[1], _ld[0], _ld[1], _ldx, _ldy,
                    imeta.get("low_check", "?")))
+        if imeta.get("inside_ratio") is not None:
+            log("[H] 内侧亮度：通过率 %.2f（阈值 %.2f）→ %s"
+                % (imeta["inside_ratio"],
+                   float(getattr(config, "PLATE_INSIDE_MIN_RATIO", 0.60)),
+                   imeta.get("inside_check", "?")))
         if rec is not None:
             rec.snap(img, dbg_fields(info["c"], flx, fly, dx, dy, imeta,
                                      {"action": "detect_raw"}),

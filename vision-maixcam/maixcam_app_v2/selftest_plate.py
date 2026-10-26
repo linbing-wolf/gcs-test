@@ -208,6 +208,24 @@ for (cx0, cy0, r0, kb0) in [(310.0, -55.0, 330.0, 0.90),
     check("椭圆 kb=%.2f 返回竖直半轴 b(=最低点用)" % kb0,
           abs(b - r0 * kb0) <= 12.0, "b=%.1f 真值=%.1f" % (b, r0 * kb0))
 
+# ---------------- 2b) 内侧亮度校验：假弧（阴影/电缆）必须被否掉 ----------------
+print("\n== check_inside_bright：真盘缘通过、下移的假弧被否 ==")
+config.PLATE_INSIDE_CHECK = True
+_true_c = (310.0, -55.0, 330.0)
+_img = FakeArcImage(*_true_c)
+_chk = vision.check_inside_bright(_img, _true_c[0], _true_c[1],
+                                  _true_c[2], _true_c[2])
+check("真盘缘：内侧通过率 ≥0.80",
+      _chk is not None and _chk[0] >= 0.80,
+      "-" if _chk is None else "ratio=%.2f need=%.1f n=%d" % _chk)
+# 模拟「锁到盘下方 80px 的假弧」（现场的电缆/阴影情形：半径相近、整体下移）
+_fake_cy = _true_c[1] + 80.0
+_chk2 = vision.check_inside_bright(_img, _true_c[0], _fake_cy,
+                                   _true_c[2], _true_c[2])
+check("下移 80px 的假弧：内侧通过率 <0.60（会被 reject）",
+      _chk2 is not None and _chk2[0] < 0.60,
+      "-" if _chk2 is None else "ratio=%.2f" % _chk2[0])
+
 # ---------------- 3) task_plate one-shot ----------------
 print("\n== task_plate：one-shot（去回读，直接回动作前偏差）==")
 config.ALIGN_ONE_SHOT = True

@@ -442,6 +442,20 @@ PLATE_LOW_MIN_GRAD  = 8.0      # 直测底边缘最小亮度梯度
 PLATE_LOW_MIN_PTS   = 18       # 直测至少多少列测到底边才采信
 PLATE_LOW_MAX_DX    = 45.0     # PLATE_LOW_USE_DIRECT 时的接受上限
 PLATE_LOW_MAX_DY    = 25.0
+# ---- 内侧亮度约束（A.1）----
+# 电缆/立柱/阴影边界都是「上亮下暗」的强边缘，但它们的「内侧」是阴影或桌面（实测 123~154），
+# 而真盘缘的内侧是盘面（实测 196~211）。用这条把假边缘直接排除。
+PLATE_IN_BRIGHT_ON  = False    # 逐点过滤版：会把真盘缘的点也裁掉、把最低点往里拉 15px，默认关
+PLATE_IN_MIN_ABS    = 175.0    # 内侧带均值绝对下限（灰度）
+PLATE_IN_MARGIN     = 18.0     # 或「帧内 p90 亮度 − 该值」，取两者大
+PLATE_IN_LEVEL_PCT  = 90       # 盘面亮度用帧内第 90 百分位估计
+PLATE_IN_BACK_LO    = 14.0     # 内侧取样带：从边缘往里 14~34 px
+PLATE_IN_BACK_HI    = 34.0
+# ---- 内侧亮度校验（用校验而不是过滤：不改变落点口径，只否掉假弧）----
+PLATE_INSIDE_CHECK     = True
+PLATE_INSIDE_MIN_RATIO = 0.60   # 至少 60% 的射线内侧是盘面亮度
+PLATE_INSIDE_RAYS      = 40
+PLATE_INSIDE_ON_FAIL   = "reject"  # reject=直接作废回 NONE（假弧害处远大于 NONE）
 # ---- 底部加密采样（最低点就在这段弧上，点密了 cx/b 才被钉住）----
 PLATE_RAYS_BOTTOM   = 60       # 最低点附近额外加的射线数（0=不加密）
 PLATE_BOTTOM_DEG    = 25.0     # 加密角度范围：90°±该值
