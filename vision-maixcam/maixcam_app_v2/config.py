@@ -515,7 +515,7 @@ PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
 PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
 PLATE_INVERT_Y      = False    # 垂直方向反了置 True
 # ---- H 调试抓图（关键帧 + meta.jsonl，放在 APP 目录外，升级不丢）----
-PLATE_DEBUG_SAVE    = True      # 临时打开：采集真实 H 帧，用来标定底点（采够后关掉）
+PLATE_DEBUG_SAVE    = False     # 已采到足够真帧；现场崩过，先关掉（每帧 JPEG 编码也吃 C 内存池）
 PLATE_DEBUG_DIR     = "/root/yyb_mover_data/plate_debug"
 PLATE_DEBUG_MAX_FRAMES = 16    # 单次 H 最多存多少张图
 PLATE_DEBUG_QUALITY = 85

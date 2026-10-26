@@ -29,6 +29,16 @@ try:
 except Exception:
     pass
 
+# 段错误/C 层崩溃时把 Python 栈打出来（否则现场只能看到"进程没了"）
+# 现场排查结论：崩在 C 层时 Python 层没有任何 traceback，日志里只剩一句
+#   "MemoryError :Out of fast Frame Buffer Stack Memory"
+# 开了 faulthandler 后，SIGSEGV/SIGABRT 会直接打印调用栈。
+try:
+    import faulthandler
+    faulthandler.enable()
+except Exception:
+    pass
+
 import config
 import vision
 import ai_model
