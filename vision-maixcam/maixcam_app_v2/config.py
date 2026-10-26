@@ -228,8 +228,10 @@ ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 
 ALIGN_STEP_MAX    = 0       # 单次 MOVE/MOVEY 最大步长（px）；0 = 不限制
 MOVE_SCALE        = 1.0     # MOVE 数值系数：最终 MOVE = step × MOVE_SCALE（先改回 1x）
 ALIGN_DX_OFFSET   = 2       # E 目标 x=318（应用 D 的 21:55 实测修正）
-ALIGN_DX_OFFSET_D = 2       # D 专用：目标 x=318（按 21:55 实测 +3px 修正）
-ALIGN_DX_OFFSET_E = None    # E 专用；None = 用 ALIGN_DX_OFFSET
+# 现场反馈「D/E 放置时偏画面右」→ 目标 x 再左移 5px：
+#   dx = cx − 320 + offset，offset +5 → 收敛后 cx ≈ 313（比原来左 5px）
+ALIGN_DX_OFFSET_D = 7       # D 专用：目标 x=313（原 2 → 7，左移 5px）
+ALIGN_DX_OFFSET_E = 7       # E 专用：同上（原来 None 走全局 2）
 # ---- 垂直方向（MOVEY）：与水平轴独立配置 ----
 ALIGN_DY_ON       = True    # False = 不校正垂直偏差，只发 MOVE
 ALIGN_DY_TOL      = 5       # 垂直对齐容差(px)
