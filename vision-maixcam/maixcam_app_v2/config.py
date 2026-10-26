@@ -161,7 +161,9 @@ DISC_RUNAWAY_GROW_PX   = 2      # |dx| 至少增大 2px 才算“变大”
 # ---- D/E 同心环靶：黑色像素质心（比 Hough 稳，现场实测抖动 ~3px）----
 DISC_BLACK_CENTER_ON   = True   # True=优先用黑色环像素质心定位（靶是黑环+白底）
 DISC_BLACK_MIN_PIXELS  = 300    # 黑色像素少于此值 → 退回 Hough
-DISC_BLACK_ROI         = [190, 45, 240, 195]  # 黑色质心专用子区域（640x480）：包住中间靶，避开左右靶和机械臂
+DISC_BLACK_ROI         = [170, 30, 300, 230]  # 黑色质心/最内圈白块专用子区域（640x480）
+                                              # blob 路径（find_blobs，便宜）用这个较大窗口；
+                                              # 霍夫（find_circles，吃内存）另行 _cap_roi 限幅到 340×320
 DISC_BLACK_SUB_RATIO   = 0.65   # DISC_BLACK_ROI 为空时才用：取任务 ROI 上部 65%
 DISC_BLACK_TOP_N       = 8      # 取最大的 N 个黑色 blob 做加权质心
 

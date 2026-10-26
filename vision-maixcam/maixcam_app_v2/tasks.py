@@ -765,7 +765,10 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             if disp:
                 disp.show(img)
             if lost >= lost_limit:
-                log("[%s] 连续 %d 帧看不到圆 → NONE" % (tag, lost))
+                log("[%s] 连续 %d 帧看不到圆 → NONE（原因：%s）"
+                    % (tag, lost,
+                       str(meta.get("reason") or meta.get("tpl_reject")
+                           or meta.get("circles_error") or "all-paths-failed")[:70]))
                 if rec:
                     rec.snap(img, dict(f, action="final_none"), "final_none", force=True)
                 return finish(pack_none(tag))
