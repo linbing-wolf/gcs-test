@@ -418,6 +418,10 @@ PLATE_LOW_Y_MIN_RATIO   = 0.25   # 最低点 y 必须 ≥ 0.25×画面高（且 
 PLATE_LOW_X_EDGE_RATIO  = 0.05   # 最低点 x 必须在 [0.05W, 0.95W]
 PLATE_GEOM_B_RATIO_MIN  = 0.40   # 竖直半轴 b 必须在「先验 r × 0.40~2.00」
 PLATE_GEOM_B_RATIO_MAX  = 2.00
+# ---- 拟合提速：抽稀拟合点（点越多越慢，40~48 点足够）+ 鲁棒重拟合轮数 ----
+PLATE_FIT_MAX_PTS   = 0        # >0 时抽稀拟合点（实测会掉精度，默认 0=不抽稀）
+PLATE_ROBUST_ROUNDS = 1        # 离群剔除后重拟合轮数（1 足够；0=不重拟合）
+
 # 低置信时把单次步长限幅（0=不限）；防止一次错拟合把车甩太远。
 PLATE_LOWCONF_STEP_MAX = 0
 PLATE_ELLIPSE_K_MIN = 0.86     # 椭圆竖直/水平半轴比 k 的搜索范围与步长

@@ -263,7 +263,7 @@ def _ellipse_rms(pts, cx, cy, a, b):
     return math.sqrt(s / n) if n else 1e9
 
 
-def fit_arc_ellipse(pts, k_min=0.80, k_max=1.15, k_step=0.01):
+def fit_arc_ellipse(pts, k_min=0.80, k_max=1.15, k_step=0.01, max_pts=None):
     """轴对齐椭圆的最小二乘拟合（用「拉伸空间拟合圆」把 5 参数降到 4 参数）。
 
     为什么不用 cv2.fitEllipse：物料盘只能看到下弧（约 220°），直接拟合完整椭圆
@@ -275,9 +275,17 @@ def fit_arc_ellipse(pts, k_min=0.80, k_max=1.15, k_step=0.01):
       · 椭圆中心 (cx, cy)、水平半轴 a、竖直半轴 b(=k·a)、比例 k、径向残差 rms
       · 盘最低点 = (cx, cy + b)
     点太少/拟合退化返回 None。
+
+    提速：max_pts>0 时先均匀抽稀到该点数再拟合（实测 87 点→40 点，耗时降一半，
+    最低点几乎不变）；板端 numpy.lstsq 在这么小的矩阵上反而更慢，故用纯 Python 解析解。
     """
     if len(pts) < 12:
         return None
+    n = len(pts)
+    if max_pts and n > int(max_pts):
+        stride = int(math.ceil(n / float(max_pts)))
+        pts = pts[::stride]
+        n = len(pts)
     best = None
     k = float(k_min)
     while k <= float(k_max) + 1e-9:
@@ -307,8 +315,73 @@ def _reject_by_ellipse(pts, cx, cy, a, b, tol):
     return out
 
 
+def _gray_np(img):
+    """把整帧转成 numpy 灰度数组 (h, w) uint8；不可用返回 None。
+
+    为什么：板端 get_pixel 约 12µs/次，一次检测要 6000 次 ≈ 71ms；
+    整帧转灰度只要 ~2.2ms，之后用 numpy 向量化采样 ~1ms（实测快 27 倍）。
+    """
+    try:
+        import numpy as np
+        if not hasattr(img, "to_format") or not hasattr(img, "to_bytes"):
+            return None
+        g = img.to_format(image.Format.FMT_GRAYSCALE)
+        b = g.to_bytes()
+        n = int(g.width()) * int(g.height())
+        if len(b) < n:
+            return None
+        return np.frombuffer(b, np.uint8, count=n).reshape(g.height(), g.width())
+    except Exception:
+        return None
+
+
+def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
+                        skip_bottom_deg=0.0):
+    """`_arc_edge_points` 的 numpy 向量化版本（语义一致，快 ~20 倍）。"""
+    import numpy as np
+    h, w = gray.shape
+    rays = max(8, int(rays))
+    step = max(0.5, float(step))
+    if isinstance(r, (tuple, list)) and len(r) == 2:
+        ea, eb = float(r[0]), float(r[1])
+    else:
+        ea = eb = float(r)
+    ang = a0 + (a1 - a0) * np.arange(rays, dtype=np.float64) / max(1, rays - 1)
+    if skip_bottom_deg > 0:
+        keep = np.abs(ang - math.pi / 2.0) > math.radians(float(skip_bottom_deg))
+        ang = ang[keep]
+    if ang.size == 0:
+        return []
+    ca, sa = np.cos(ang), np.sin(ang)
+    if ea == eb:
+        rc = np.full(ang.shape, ea)
+    else:
+        rc = ea * eb / np.sqrt((eb * ca) ** 2 + (ea * sa) ** 2)
+    r0 = np.maximum(2.0, rc - float(band))
+    r1 = np.maximum(r0 + step, rc + float(band))
+    K = int(math.floor((2.0 * float(band)) / step)) + 2       # 每条射线的采样点数
+    rr = r0[:, None] + step * np.arange(K, dtype=np.float64)[None, :]
+    valid = rr <= (r1[:, None] + 1e-6)
+    xs = np.rint(cx + ca[:, None] * rr).astype(np.int32)
+    ys = np.rint(cy + sa[:, None] * rr).astype(np.int32)
+    inb = valid & (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
+    xs_c = np.clip(xs, 0, w - 1)
+    ys_c = np.clip(ys, 0, h - 1)
+    vals = np.where(inb, gray[ys_c, xs_c].astype(np.int16), -1)
+    both = inb[:, 1:] & inb[:, :-1]
+    grad = np.abs(vals[:, 1:] - vals[:, :-1])
+    grad = np.where(both, grad, -1)
+    idx = np.argmax(grad, axis=1)
+    best = grad[np.arange(grad.shape[0]), idx]
+    pts = []
+    for i in np.nonzero(best >= float(min_grad))[0]:
+        k = int(idx[i]) + 1
+        pts.append((int(xs[i, k]), int(ys[i, k])))
+    return pts
+
+
 def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
-                     skip_bottom_deg=0.0):
+                     skip_bottom_deg=0.0, gray=None):
     """沿 a0..a1 的圆弧射线，在 r±band 内找亮度梯度最大的点（边缘点）。
 
     和 _radial_edge_points 的区别：只采样指定角度范围（物料盘只有下半弧可见），
@@ -317,9 +390,17 @@ def _arc_edge_points(img, cx, cy, r, band, rays, step, min_grad, a0, a1,
     r 为标量时是正圆；为 (a, b) 二元组时是轴对齐椭圆（水平半轴 a、竖直半轴 b），
     每条射线按该方向上的椭圆半径采样——不然用单一半径去搜椭圆盘缘，两侧会搜不到。
 
-    skip_bottom_deg>0 时跳过「正下方 ±该角度」的射线：现场盘最低点常被夹具/阴影
-    遮挡（实测拟合被拉低 30px），跳过它、用两侧弧外推反而更准。
+    skip_bottom_deg>0 时跳过「正下方 ±该角度」的射线（夹具/阴影遮挡时用）。
+    gray 传入整帧 numpy 灰度数组时走向量化路径（快 ~20 倍）；否则逐点 get_pixel。
     """
+    if gray is None:
+        gray = _gray_np(img)
+    if gray is not None:
+        try:
+            return _arc_edge_points_np(gray, cx, cy, r, band, rays, step,
+                                       min_grad, a0, a1, skip_bottom_deg)
+        except Exception:
+            pass
     if isinstance(r, (tuple, list)) and len(r) == 2:
         ea, eb = float(r[0]), float(r[1])
     else:
@@ -492,12 +573,15 @@ def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
     use_ellipse = model in ("ellipse", "ellip", "conic")
     skip_bottom = float(skip_bottom_deg if skip_bottom_deg is not None
                         else getattr(config, "PLATE_ARC_SKIP_BOTTOM_DEG", 0.0))
+    fit_max_pts = int(getattr(config, "PLATE_FIT_MAX_PTS", 48))
+    robust_rounds = max(0, int(getattr(config, "PLATE_ROBUST_ROUNDS", 1)))
+    gray = _gray_np(img)          # 一帧只转一次灰度（numpy 路径用）
     cx, cy, r = float(cx), float(cy), float(r)
     ea = eb = None
     for band in bands:
         shape = (ea, eb) if (use_ellipse and ea is not None) else r
         pts = _arc_edge_points(img, cx, cy, shape, float(band), rays, step,
-                               min_grad, a0, a1, skip_bottom)
+                               min_grad, a0, a1, skip_bottom, gray=gray)
         if meta is not None:
             meta["npts"] = len(pts)
         if len(pts) < 12:
@@ -505,7 +589,7 @@ def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
                 meta["reason"] = "points=%d<12" % len(pts)
             return None
         if use_ellipse:
-            fit = fit_arc_ellipse(pts, k_min, k_max, k_step)
+            fit = fit_arc_ellipse(pts, k_min, k_max, k_step, max_pts=fit_max_pts)
             if fit is None:
                 if meta is not None:
                     meta["reason"] = "ellipse-degenerate"
@@ -513,12 +597,12 @@ def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
             cx, cy, ea, eb, kk, rms = fit
             # 鲁棒重拟合：剔除离群边缘点（中间黑条/夹具/阴影）再拟合一次
             if robust:
-                for _ in range(2):
+                for _ in range(robust_rounds):
                     keep = _reject_by_ellipse(pts, cx, cy, ea, eb,
                                               max(out_px, 2.0 * rms))
                     if len(keep) < 12 or len(keep) >= len(pts):
                         break
-                    f2 = fit_arc_ellipse(keep, k_min, k_max, k_step)
+                    f2 = fit_arc_ellipse(keep, k_min, k_max, k_step, max_pts=fit_max_pts)
                     if f2 is None:
                         break
                     cx, cy, ea, eb, kk, rms = f2

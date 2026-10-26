@@ -269,6 +269,13 @@ def main():
     log("握手: 下位机发 R → READY；任务中收到 R 立即中断，收到其它命令回 BUSY")
     log("=" * 56)
 
+    # 预热：numpy 首次 import 在板端要 ~0.3~0.5s，放到启动时，避免第一次 H 变慢
+    try:
+        import numpy  # noqa: F401
+        log("[预热] numpy 已加载（采样走向量化）")
+    except Exception as e:
+        log("[预热] numpy 不可用，退回逐点采样: %s" % e)
+
     reply(pack_ready())
     log("已发送 READY")
 
