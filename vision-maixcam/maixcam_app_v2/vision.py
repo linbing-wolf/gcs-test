@@ -1456,7 +1456,9 @@ def find_disc_center_inner(img, roi=None, meta=None):
         cands.append((d, w * h, cx, cy, max(w, h) / 2.0))
     if not cands:
         if meta is not None:
-            meta["inner_reason"] = "no-candidate(%d blobs)" % len(blobs)
+            _big = max(((b.w(), b.h()) for b in blobs), default=(0, 0))
+            meta["inner_reason"] = "no-candidate(%d blobs, max %dx%d)" % (
+                len(blobs), _big[0], _big[1])
         return None
     near = [c for c in cands if c[0] <= pick_r]
     if near:

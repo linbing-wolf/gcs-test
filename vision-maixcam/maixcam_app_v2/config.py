@@ -168,7 +168,10 @@ DISC_RUNAWAY_GROW_PX   = 2      # |dx| 至少增大 2px 才算“变大”
 # ---- D/E 同心环靶：黑色像素质心（比 Hough 稳，现场实测抖动 ~3px）----
 DISC_BLACK_CENTER_ON   = True   # True=优先用黑色环像素质心定位（靶是黑环+白底）
 DISC_BLACK_MIN_PIXELS  = 300    # 黑色像素少于此值 → 退回 Hough
-DISC_BLACK_ROI         = [150, 20, 340, 250]  # 黑色质心/最内圈白块子区域（640x480）：包住中间靶，避开左右靶和机械臂
+DISC_BLACK_ROI         = [150, 0, 340, 280]  # 黑色质心/最内圈白块子区域（640x480）
+                                             # y 从 0 开始：原来从 20 开始，会把靶环上沿切断，
+                                             # 导致「白心」和上方亮背景连成一大块 → inner 判废
+                                             # （现场现象：环落在 ROI 上侧时 D/E 检不到）
 DISC_BLACK_SUB_RATIO   = 0.65   # DISC_BLACK_ROI 为空时才用：取任务 ROI 上部 65%
 DISC_BLACK_TOP_N       = 8      # 取最大的 N 个黑色 blob 做加权质心
 
