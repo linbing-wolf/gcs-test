@@ -1683,19 +1683,9 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         #   MemoryError: Out of fast Frame Buffer Stack Memory
         # 之后进程直接被系统干掉（无 APP EXIT 记录）。所以给霍夫单独限幅，
         # blob 路径（inner/black）仍用完整大 ROI，不受影响。
-        hroi = roi
-        try:
-            _cap = getattr(config, "DISC_HOUGH_ROI_MAX", (340, 320))
-            if roi:
-                _x, _y, _w, _h = [int(v) for v in roi]
-                _cw, _ch = int(_cap[0]), int(_cap[1])
-                if _w > _cw or _h > _ch:
-                    _nw, _nh = min(_w, _cw), min(_h, _ch)
-                    hroi = [_x + (_w - _nw) // 2, _y + (_h - _nh) // 2, _nw, _nh]
-                    if meta is not None:
-                        meta["hough_roi"] = hroi
-        except Exception:
-            hroi = roi
+        hroi = _cap_roi(roi)
+        if meta is not None and hroi != roi:
+            meta["hough_roi"] = hroi
         circles = img.find_circles(roi=hroi if hroi else [], threshold=threshold,
                                    x_margin=10, y_margin=10, r_margin=10,
                                    r_min=r_min, r_max=r_max)
@@ -1839,6 +1829,29 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
     return None
 
 
+def _cap_roi(roi, max_w=None, max_h=None):
+    """把 ROI 居中裁剪到上限尺寸。
+
+    为什么：find_circles 的霍夫累加器按 ROI 面积吃「fast frame buffer stack」。
+    现场实测 448×400 会把内存池耗干（日志刷 MemoryError，
+    随后堆被破坏 → refine_disc_center 里一个属性访问就段错误、进程被杀）。
+    所以凡是调霍夫的地方都先限幅，回到历史稳定尺寸。
+    """
+    if not roi or len(roi) != 4:
+        return roi
+    try:
+        _cap = getattr(config, "DISC_HOUGH_ROI_MAX", (340, 320))
+        cw = int(max_w if max_w is not None else _cap[0])
+        ch = int(max_h if max_h is not None else _cap[1])
+        x, y, w, h = [int(v) for v in roi]
+        if w <= cw and h <= ch:
+            return roi
+        nw, nh = min(w, cw), min(h, ch)
+        return [x + (w - nw) // 2, y + (h - nh) // 2, nw, nh]
+    except Exception:
+        return roi
+
+
 def find_ring_center(img, roi=None,
                      r_min=config.STACK_RING_R_MIN, r_max=config.STACK_RING_R_MAX,
                      threshold=config.STACK_RING_THRESHOLD):
@@ -1849,11 +1862,16 @@ def find_ring_center(img, roi=None,
     roi = roi if roi else config.ROI_STACK
     if not roi:
         return None
+    roi = _cap_roi(roi)          # 霍夫必须限幅，否则耗干内存池（见 _cap_roi 注释）
     x, y, w, h = roi
     cx0, cy0 = x + w / 2.0, y + h / 2.0
-    circles = img.find_circles(roi=roi, threshold=threshold,
-                               x_margin=10, y_margin=10, r_margin=10,
-                               r_min=r_min, r_max=r_max)
+    try:
+        circles = img.find_circles(roi=roi, threshold=threshold,
+                                   x_margin=10, y_margin=10, r_margin=10,
+                                   r_min=r_min, r_max=r_max)
+    except Exception as e:
+        print("[视觉] find_ring_center 霍夫失败: %s" % e)
+        return None
     if not circles:
         return None
     c = min(circles, key=lambda c: (c.x() - cx0) ** 2 + (c.y() - cy0) ** 2)

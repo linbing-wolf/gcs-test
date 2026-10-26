@@ -50,10 +50,12 @@ ROI_QRCODE     = []                      # 二维码：全画面
 ROI_MATERIAL   = [140, 100, 360, 300]    # 原料区转盘（放 3 个物料）
 # 现场要求「扩大 D/E 的 ROI」：320×340 → 448×400（面积 1.65×），上边界必须贴着 0，
 # 否则会裁掉整个靶环、拟合出偏下的大假圆。
-ROI_DISC_ROUGH = [96, 0, 448, 400]       # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
-ROI_DISC_TEMP  = [96, 0, 448, 400]       # 暂存区圆盘（同上）
-# 霍夫（find_circles）单独限幅：累加器吃「fast frame buffer stack」，
-# 448×400 实测会把内存池耗干 → 刷 MemoryError → 进程被杀。320×340 稳跑很久。
+# 现场「扩大 D/E 的 ROI」曾提到 448×400，但实测会让霍夫把「fast frame buffer stack」
+# 耗干 → 日志刷 MemoryError → 堆损坏 → 段错误进程被杀（core 已抓到栈）。
+# 现在回到历史稳定尺寸；扩 ROI 的事等稳定性达标后再逐步推进。
+ROI_DISC_ROUGH = [160, 20, 320, 340]     # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
+ROI_DISC_TEMP  = [160, 20, 320, 340]     # 暂存区圆盘（同上）
+# 霍夫（find_circles）统一限幅：所有调霍夫的地方都用 _cap_roi() 处理
 DISC_HOUGH_ROI_MAX = (340, 320)
 ROI_STACK      = [80, 0, 480, 480]       # 码垛区：纵向全屏（x 80..560，y 0..480）
 
@@ -159,8 +161,7 @@ DISC_RUNAWAY_GROW_PX   = 2      # |dx| 至少增大 2px 才算“变大”
 # ---- D/E 同心环靶：黑色像素质心（比 Hough 稳，现场实测抖动 ~3px）----
 DISC_BLACK_CENTER_ON   = True   # True=优先用黑色环像素质心定位（靶是黑环+白底）
 DISC_BLACK_MIN_PIXELS  = 300    # 黑色像素少于此值 → 退回 Hough
-DISC_BLACK_ROI         = [150, 20, 340, 250]  # 黑色质心专用子区域（640x480）：包住中间靶，避开左右靶和机械臂
-                                              # 随主 ROI 放大（原 190/45/240/195），留出圆盘偏移余量
+DISC_BLACK_ROI         = [190, 45, 240, 195]  # 黑色质心专用子区域（640x480）：包住中间靶，避开左右靶和机械臂
 DISC_BLACK_SUB_RATIO   = 0.65   # DISC_BLACK_ROI 为空时才用：取任务 ROI 上部 65%
 DISC_BLACK_TOP_N       = 8      # 取最大的 N 个黑色 blob 做加权质心
 
