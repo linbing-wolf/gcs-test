@@ -373,7 +373,9 @@ static void lateral_heading_damping_tests(void)
             run_velocity_update();
             CHECK(run_active && run.velocity_phase==VELOCITY_FORWARD);
             CHECK(run.turn_cmd_rpm==expected);
-            CHECK((run.wheel_rpm[0]+run.wheel_rpm[1]+run.wheel_rpm[2]+run.wheel_rpm[3])/4==expected);
+            /* 单轮限幅会同比缩小混控；保留纠偏方向，不要求限幅后仍等于原PD量。 */
+            CHECK((run.wheel_rpm[0]+run.wheel_rpm[1]+run.wheel_rpm[2]+run.wheel_rpm[3])*expected>=0);
+            for(unsigned wheel=0;wheel<MOTOR_COUNT;wheel++)CHECK(abs(run.wheel_rpm[wheel])<=run_wheel_limit_rpm());
             CHECK(direction ? run.left_cmd_rpm<0 : run.left_cmd_rpm>0);
             output_size=0;output[0]=0;
             run.log_ms=clock_ms-CAR_CONTROL_LOG_MS;
@@ -382,18 +384,18 @@ static void lateral_heading_damping_tests(void)
                 && strstr(output," turn_ref=") && strstr(output," turn_cmd=")
                 && strstr(output," wheel_cmd_rpm=") && strstr(output," wheel_rpm_raw=")
                 && strstr(output," control_dt_ms=") && strstr(output," speed_age_max_ms="));
-            /* 速度归零后仍选用原停车对齐函数，不把行驶PD带入完成判据。 */
+            /* 平移归零后的纠角取消定角10RPM下限，并限制输出变化；到位判据保持。 */
             run.velocity_phase=VELOCITY_STOP_FORWARD;
             run.action_mm=(uint16_t)run.progress_mm;run.continuation_mm=0;
             run.forward_mrpm=0;run.forward_profile_ms=clock_ms;
             run.heading_control.stable_samples=0;
-            expected=heading_control_rpm(&run.heading_control,run.turn_rpm);
+            expected=run.turn_cmd_rpm;
             run.control_ms=clock_ms-CAR_VELOCITY_CONTROL_MS;
             run_velocity_update();
             CHECK(run_active && run.velocity_phase==VELOCITY_STOP_FORWARD);
-            CHECK(!run.left_cmd_rpm && run.turn_cmd_rpm==expected);
+            CHECK(!run.left_cmd_rpm && abs(run.turn_cmd_rpm-expected)<=2);
         }
-    puts("PASS lateral yaw damping: 20 left/right and mirrored field-sample cases; damping through target, no 5RPM jump during travel, unchanged zero-speed alignment and diagnostic fields; host replay only");
+    puts("PASS lateral yaw damping: 20 left/right and mirrored field-sample cases; drive damping retained, limited terminal yaw transition, unchanged arrival windows and diagnostic fields; host replay only");
 }
 
 static void continuous_lateral_tests(void)

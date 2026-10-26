@@ -77,7 +77,7 @@ void can_init(void)
 	CAN_InitTypeDef	CAN_InitStructure;
 	CAN_StructInit(&CAN_InitStructure);
 	CAN_InitStructure.CAN_TTCM = DISABLE;					// 关闭时间触发通讯模式
-	CAN_InitStructure.CAN_ABOM = DISABLE;					// 开启自动离线管理
+	CAN_InitStructure.CAN_ABOM = ENABLE; /* Automatic Bus-Off recovery when the bus becomes healthy. */
 	CAN_InitStructure.CAN_AWUM = DISABLE;					// 关闭自动唤醒模式
 	CAN_InitStructure.CAN_NART = DISABLE;					// 关闭非自动重传模式	DISABLE-自动重传
 	CAN_InitStructure.CAN_RFLM = DISABLE;					// 接收FIFO锁定模式		DISABLE-溢出时新报文会覆盖原有报文

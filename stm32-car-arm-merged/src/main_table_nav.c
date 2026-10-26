@@ -206,6 +206,8 @@ typedef struct
     uint32_t baseline_after_ms; /* 编码器基线必须采样于已确认的停稳区间内。 */
     uint32_t wheel_start_ms[4];
     int16_t wheel_rpm[4];
+    int32_t settle_turn_mrpm;
+    uint8_t settle_turn_active;
     int64_t encoder_start[4];
     int8_t encoder_sign[4];
     int64_t encoder_previous_delta[4];
@@ -1779,6 +1781,7 @@ static int16_t run_heading_error(HeadingSample sample)
 /* 四轮已持续停稳；复用此区间的位置采样，不再要求对齐结束后重采一轮。 */
 static void run_begin_baseline(void)
 {
+    run.settle_turn_active=0;
     run.turning = 0;
     run.velocity_phase = VELOCITY_BASELINE;
     if(run.state==RUN_PREFLIGHT){run.state=RUN_ALIGN;drive.state=MOTION_RUNNING;}
@@ -2441,7 +2444,11 @@ static int16_t run_forward_target(int32_t remaining)
     braking_rpm = sqrtf(delay_rpm * delay_rpm
         + 2.0f * CAR_DRIVE_DECEL_RPM_PER_S * (remaining - CAR_DISTANCE_TOLERANCE_MM) / mm_per_rpm_s) - delay_rpm;
     if (speed > (int32_t)braking_rpm) speed = (int32_t)braking_rpm;
-    if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
+    {
+        int32_t minimum=(run.travel_axis==BODY_LEFT && run.encoder_ready==ALL_MOTORS_MASK
+            && !run.station_shift && !run.obstacle_phase && !run.continuation_mm) ? CAR_LATERAL_SETTLE_MIN_RPM : CAR_DISTANCE_MIN_RPM;
+        if(speed<minimum)speed=minimum;
+    }
     max_rpm = run.travel_axis == BODY_LEFT
         ? (run.lateral_rpm ? run.lateral_rpm : CAR_LATERAL_MAX_RPM) : CAR_RUN_RPM;
     if (run.obstacle_phase == 2 && max_rpm > CAR_OBSTACLE_RETURN_RPM) max_rpm = CAR_OBSTACLE_RETURN_RPM;
@@ -2452,6 +2459,42 @@ static int16_t run_forward_target(int32_t remaining)
     }
     if (run.encoder_ready != 15u && speed > CAR_ENCODER_LEARN_RPM) speed = CAR_ENCODER_LEARN_RPM;
     return (int16_t)(speed * sign);
+}
+
+/* 末端角度和角速度都稳定才归零；仍在转动时保留PD阻尼，不用定角转向的10RPM下限。 */
+static int16_t run_settle_heading_rpm(void)
+{
+    HeadingControl *c=&run.heading_control;
+    int32_t effort,rpm;
+    if(abs(c->error_cdeg)<=CAR_HEADING_TOLERANCE_CDEG
+        && abs(c->rate_cdeg_s)<=CAR_HEADING_STABLE_RATE_CDEG_S)return 0;
+    effort=c->error_cdeg*CAR_HEADING_KP_X100-c->rate_cdeg_s*CAR_HEADING_KD_X100;
+    rpm=effort>=0 ? (effort+5000)/10000 : -((-effort+5000)/10000);
+    if(rpm>CAR_HEADING_DRIVE_TRIM_RPM)rpm=CAR_HEADING_DRIVE_TRIM_RPM;
+    if(rpm< -CAR_HEADING_DRIVE_TRIM_RPM)rpm= -CAR_HEADING_DRIVE_TRIM_RPM;
+    return (int16_t)rpm;
+}
+
+static int16_t run_settle_turn_slew(int16_t desired,uint8_t due)
+{
+    int32_t target=(int32_t)desired*1000,change;
+    uint32_t elapsed;
+    if(!due)return run.turn_cmd_rpm;
+    if(!run.settle_turn_active) {
+        run.settle_turn_mrpm=(int32_t)run.turn_cmd_rpm*1000;
+        run.settle_turn_active=1;
+    }
+    elapsed=clock_ms-run.control_ms;
+    if(elapsed>CAR_DRIVE_SLEW_MAX_DT_MS)elapsed=CAR_DRIVE_SLEW_MAX_DT_MS;
+    change=(int32_t)(CAR_SETTLE_TURN_RPM_PER_S*elapsed);
+    if(target>run.settle_turn_mrpm) {
+        run.settle_turn_mrpm+=change;
+        if(run.settle_turn_mrpm>target)run.settle_turn_mrpm=target;
+    } else {
+        run.settle_turn_mrpm-=change;
+        if(run.settle_turn_mrpm<target)run.settle_turn_mrpm=target;
+    }
+    return (int16_t)(run.settle_turn_mrpm/1000);
 }
 
 static int16_t run_forward_slew(int16_t desired)
@@ -3250,7 +3293,7 @@ static void run_velocity_update(void)
     RunCanFrame frame;
     HeadingDecision decision;
     uint8_t i;
-    uint8_t drive_heading, control_due;
+    uint8_t drive_heading, control_due, settling;
     int16_t forward = 0, left = 0, turn = 0;
     HeadingSample sample = heading_snapshot();
     while (run_read_frame(&frame)) {
@@ -3429,11 +3472,16 @@ static void run_velocity_update(void)
     if (run.travel_axis == BODY_LEFT
         && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD))
         left = control_due ? run_forward_slew(left) : (int16_t)(run.forward_mrpm / 1000 * run.profile_sign);
-    if (drive_heading) {
-        if(!run.vector_move) {
-            run.forward_ref_rpm = forward;
-            forward = control_due ? run_forward_slew(forward) : (int16_t)(run.forward_mrpm / 1000 * run.profile_sign);
-        }
+    if(drive_heading && !run.vector_move) {
+        run.forward_ref_rpm = forward;
+        forward = control_due ? run_forward_slew(forward) : (int16_t)(run.forward_mrpm / 1000 * run.profile_sign);
+    }
+    settling=!run.station_shift && !run.vector_move && !run.obstacle_phase && !run.continuation_mm
+        && run.encoder_ready==ALL_MOTORS_MASK
+        && (run.velocity_phase==VELOCITY_FORWARD || run.velocity_phase==VELOCITY_STOP_FORWARD)
+        && (run.settle_turn_active || abs((int32_t)run.action_mm-run.progress_mm)<=CAR_SETTLE_DISTANCE_MM);
+    if(settling)turn=run_settle_heading_rpm();
+    else if (drive_heading) {
         /* 行驶时连续阻尼；前进指令归零后，沿用已验证的停车对齐/停稳判据。 */
         turn = (forward || (run.vector_move && left)) ? heading_control_drive_rpm(&run.heading_control, CAR_HEADING_DRIVE_TRIM_RPM)
                        : heading_control_rpm(&run.heading_control, run.turn_rpm);
@@ -3443,6 +3491,8 @@ static void run_velocity_update(void)
         turn = heading_control_drive_rpm(&run.heading_control, CAR_HEADING_DRIVE_TRIM_RPM);
     } else turn = heading_control_rpm(&run.heading_control, run.turn_rpm);
     run.turn_ref_rpm = turn;
+    if(settling)turn=run_settle_turn_slew(turn,control_due);
+    else run.settle_turn_active=0;
     if(run.station_shift && run.vector_move && (forward || left)
         && abs(forward)<=CAR_MOVEXY_FINE_MAX_RPM && abs(left)<=CAR_MOVEXY_FINE_MAX_RPM) {
         int32_t effort=run.heading_control.error_cdeg*CAR_DRIVE_HEADING_KP_X100
@@ -3451,7 +3501,7 @@ static void run_velocity_update(void)
          * 有效阻尼仍按原PD输出，平移归零后继续使用原停车对齐函数。 */
         if(effort>-10000 && effort<10000)turn=0;
     }
-    if (forward || left) {
+    if ((forward || left) && !settling) {
         int16_t primary = run.vector_move ? (abs(left)>abs(forward) ? left : forward) : left ? left : forward;
         int16_t limit = (int16_t)((primary < 0 ? -primary : primary) - 1);
         if (limit > CAR_HEADING_DRIVE_TRIM_RPM) limit = CAR_HEADING_DRIVE_TRIM_RPM;
@@ -4162,7 +4212,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261025-merge2-r96; parallel second storage departure\r\n");
+    text("[drive] version=20261026-merge2-r98; smooth translation settling\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

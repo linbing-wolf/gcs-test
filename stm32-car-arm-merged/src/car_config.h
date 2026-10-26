@@ -82,7 +82,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 /* 3. 横移往后偏的预补偿，单位：前移 mm/横移米。正值向前，0 关闭。
  * 30/10 为当前调参；横移闭环叠加该平移前馈，IMU负责车头航向。
  */
-#define LEFT_FORWARD_MM_PER_M     30 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
+#define LEFT_FORWARD_MM_PER_M     10 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 #define RIGHT_FORWARD_MM_PER_M    10 /* 向右横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 
 /* 原地转向只使用IMU闭环；方向位同时供四轮速度混控使用，不能随旧入口删除。 */
@@ -106,9 +106,9 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_HEADING_STABLE_SAMPLES     3u
 #define CAR_HEADING_SETTLE_MS        100u
 #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
-#define CAR_HEADING_KP_X100          300       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
+#define CAR_HEADING_KP_X100          250       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
 #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
-#define CAR_HEADING_MIN_RPM           7       /* 误差超容差时的最低转向修正，RPM。 */
+#define CAR_HEADING_MIN_RPM           10       /* 误差超容差时的最低转向修正，RPM。 */
 #define CAR_HEADING_STABLE_RATE_CDEG_S 100     /* 稳定时角速度不超过1度/秒。 */
 #define CAR_HEADING_DRIVE_TRIM_RPM    20       /* 直行时旋转修正上限，不允许轮子反转。 */
 #define CAR_TRANSLATION_MAX_RPM      ((CAR_RUN_RPM > CAR_LATERAL_MAX_RPM) ? CAR_RUN_RPM : CAR_LATERAL_MAX_RPM)
@@ -125,6 +125,8 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_DRIVE_HEADING_QUIET_CDEG  20       /* 同时满足±0.20度和下面角速度时才输出0。 */
 #define CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S 50 /* 0.50度/秒；不是新的到站精度承诺。 */
 #define CAR_DRIVE_HEADING_MIN_RPM      1       /* 非静稳区的最小纠偏，避免沿用原地转向的最低转速跳变。 */
+#define CAR_SETTLE_TURN_RPM_PER_S     60u      /* 普通平移末段的航向纠偏变化率，RPM/s；保留PD增益，取消10RPM下限，不影响正常定角转向。 */
+#define CAR_SETTLE_DISTANCE_MM        10      /* 道路/单测最后10mm进入同一末端控制，回拉与回正不反复切换；不是到位误差窗口。 */
 #define CAR_MOVEXY_FINE_MAX_RPM        6       /* 仅工位双轴低速微调：两轴均不超过此RPM时，不放大小于1RPM的航向控制量。 */
 #define CAR_MOVEXY_MIN_RPM             1       /* 双轴最后几毫米允许降到1RPM；不沿用普通平移3RPM下限覆盖末端制动结果。 */
 #define CAR_DRIVE_ACCEL_RPM_PER_S    150u      /* 速度指令上升率RPM/s；原120，起步提高25%；减速及制动距离沿用120。 */
@@ -146,6 +148,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_ENCODER_LEARN_TIMEOUT_MS 1500u    /* 起步方向无法确认时停车；不带着未知里程继续加速。 */
 #define CAR_DISTANCE_KP_X100          50       /* 剩余1mm对应0.50 RPM，近终点减速。 */
 #define CAR_DISTANCE_MIN_RPM           3 /* 终点附近非零平移速度下限，RPM；增大会更快接近但更易过冲。 */
+#define CAR_LATERAL_SETTLE_MIN_RPM     1 /* 道路/单测四轮方向确认后的横移末段与回拉下限，RPM；工位微调仍用原参数。 */
 #define CAR_DISTANCE_TOLERANCE_MM      1 /* 编码器到站距离窗口，mm；增大降低停车距离精度。 */
 #define CAR_DISTANCE_OVERRUN_MM      500       /* 操作者指定：距离超程阈值500mm；不改变目标距离与到位精度。 */
 #define CAR_DRIVE_TIMEOUT_MS      30000u      /* 单个几何直行段总时限。 */
@@ -170,6 +173,8 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
     CAR_DRIVE_HEADING_KP_X100 < 1 || CAR_DRIVE_HEADING_KD_X100 < 0 || \
     CAR_DRIVE_HEADING_QUIET_CDEG < 1 || CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S < 1 || \
     CAR_DRIVE_HEADING_MIN_RPM < 1 || CAR_DRIVE_HEADING_MIN_RPM > CAR_HEADING_DRIVE_TRIM_RPM || \
+    CAR_SETTLE_TURN_RPM_PER_S < 1 || CAR_SETTLE_DISTANCE_MM <= CAR_DISTANCE_TOLERANCE_MM || \
+    CAR_LATERAL_SETTLE_MIN_RPM < 1 || CAR_LATERAL_SETTLE_MIN_RPM > CAR_DISTANCE_MIN_RPM || \
     CAR_MOVEXY_FINE_MAX_RPM < 1 || CAR_MOVEXY_FINE_MAX_RPM > CAR_ENCODER_LEARN_RPM || \
     CAR_MOVEXY_MIN_RPM < 1 || CAR_MOVEXY_MIN_RPM > CAR_DISTANCE_MIN_RPM || \
     CAR_DRIVE_ACCEL_RPM_PER_S < 1 || CAR_ROUTE_ACCEL_RPM_PER_S < 1 || CAR_DRIVE_DECEL_RPM_PER_S < 1 || \
