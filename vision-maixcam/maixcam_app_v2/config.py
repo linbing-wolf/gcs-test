@@ -456,6 +456,7 @@ PLATE_INSIDE_CHECK     = True
 PLATE_INSIDE_MIN_RATIO = 0.60   # 至少 60% 的射线内侧是盘面亮度
 PLATE_INSIDE_RAYS      = 40
 PLATE_INSIDE_ON_FAIL   = "reject"  # reject=直接作废回 NONE（假弧害处远大于 NONE）
+PLATE_COARSE_INSIDE    = True   # 粗定位（RANSAC）也要求「内侧是盘面」，挡掉弯电缆
 # ---- 底部加密采样（最低点就在这段弧上，点密了 cx/b 才被钉住）----
 PLATE_RAYS_BOTTOM   = 60       # 最低点附近额外加的射线数（0=不加密）
 PLATE_BOTTOM_DEG    = 25.0     # 加密角度范围：90°±该值

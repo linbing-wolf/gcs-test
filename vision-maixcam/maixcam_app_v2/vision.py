@@ -801,21 +801,52 @@ def _circle_from_3(p1, p2, p3):
     return ux, uy, r
 
 
-def rim_scan_points(img, x_step=16, y0=24, y_step=3, dy=4, min_drop=25.0):
+def rim_scan_points(img, x_step=16, y0=24, y_step=3, dy=4, min_drop=25.0,
+                    need_in=0.0, gray=None):
     """先验无关的全图粗扫盘缘：逐列找「亮→暗」最强的下降沿。
 
     盘缘是一条明显的暗线（实测亮→暗落差 50~150），桌面上没有这么强的边，
     所以这个扫描能在盘横向偏移很大（先验已经偏出搜索带）时，仍给出粗圆心的依据。
     返回 [(x, y), ...]；图像没有像素接口时返回 []。
 
+    need_in>0 时追加**内侧亮度**约束：候选沿上方 14~34px 的均值必须 ≥ need_in。
+    为什么必须加：现场的电缆/机械臂也是「上亮下暗」的强边，而且电缆是**弯的**，
+    RANSAC 会把它当成盘缘拟出一个"合理"的圆（最低点偏 +60~80px）。
+    盘面内侧实测 196~211，电缆上方只有 123~154，这条能把它们分开。
+
     注意：板端 get_pixel 约 15µs/次，本函数是「贵」操作（~200ms），
     find_disc_arc 只在「配置先验那轮不可信」时才调用它（惰性）。
     """
     if not hasattr(img, "get_pixel"):
         return []
-    pts = []
     w, h = img.width(), img.height()
+    pts = []
     ys = max(1, int(y_step))
+    lo = float(getattr(config, "PLATE_IN_BACK_LO", 14.0))
+    hi = float(getattr(config, "PLATE_IN_BACK_HI", 34.0))
+
+    # 预计算「内侧带均值」图：in_mean[y, x] = mean(gray[y-hi : y-lo, x])
+    # 这样每列每个候选 y 都能 O(1) 判断内侧亮不亮，不必逐点采样。
+    in_mean = None
+    if need_in > 0.0:
+        try:
+            import numpy as np
+            if gray is not None:
+                g = gray.astype(np.float32)
+            else:
+                g = np.array([[float(_pixel_luma(img, x, y) or 0)
+                               for x in range(w)] for y in range(h)],
+                             dtype=np.float32)
+            cs = np.concatenate([np.zeros((1, g.shape[1]), np.float32),
+                                 np.cumsum(g, axis=0)], axis=0)
+            iy = np.arange(g.shape[0])
+            a = np.clip(iy - int(round(hi)), 0, g.shape[0])
+            b = np.clip(iy - int(round(lo)), 0, g.shape[0])
+            cnt = np.maximum(b - a, 1).astype(np.float32)
+            in_mean = (cs[b] - cs[a]) / cnt[:, None]
+        except Exception:
+            in_mean = None
+
     for x in range(int(x_step), int(w) - 1, int(x_step)):
         best_g, by = -1.0, None
         y = int(y0)
@@ -825,23 +856,43 @@ def rim_scan_points(img, x_step=16, y0=24, y_step=3, dy=4, min_drop=25.0):
             if va is not None and vb is not None:
                 g = va - vb
                 if g > best_g:
-                    best_g, by = g, y + dy // 2
+                    yy = y + dy // 2
+                    if need_in > 0.0:
+                        # 只有「内侧是盘面亮度」的候选才参与竞争
+                        ok = False
+                        if in_mean is not None:
+                            ok = float(in_mean[yy, x]) >= float(need_in)
+                        else:
+                            vals = []
+                            for vv in range(max(0, yy - int(round(hi))),
+                                            max(1, yy - int(round(lo))), 2):
+                                v = _pixel_luma(img, x, vv)
+                                if v is not None:
+                                    vals.append(float(v))
+                            ok = bool(vals) and (sum(vals) / len(vals)) >= float(need_in)
+                        if not ok:
+                            y += ys
+                            continue
+                    best_g, by = g, yy
             y += ys
-        if by is not None and best_g >= float(min_drop):
-            pts.append((x, by))
+        if by is None or best_g < float(min_drop):
+            continue
+        pts.append((x, by))
     return pts
 
 
 def coarse_disc_prior(img, pts=None, iters=120, tol=8.0, min_inliers=12,
                       r_min=60.0, r_max=900.0, seed=12345,
-                      x_step=16, y0=24, y_step=3):
+                      x_step=16, y0=24, y_step=3, need_in=0.0, gray=None):
     """粗定位盘（先验无关）：边缘点 + RANSAC 圆拟合 → (cx, cy, r, ninl) 或 None。
 
     只用圆做「粗」定位（RANSAC 抗离群：中间黑条/夹具/线缆/桌面边）；
     后续仍由 find_disc_arc 用椭圆模型在它附近精修。
+    need_in>0 时把「内侧必须是盘面亮度」传给 rim_scan_points（挡掉电缆/机械臂）。
     """
     if pts is None:
-        pts = rim_scan_points(img, x_step=x_step, y0=y0, y_step=y_step)
+        pts = rim_scan_points(img, x_step=x_step, y0=y0, y_step=y_step,
+                              need_in=need_in, gray=gray)
     n = len(pts)
     if n < max(4, int(min_inliers)):
         return None
@@ -1083,6 +1134,15 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
 
     # ① 先试「配置先验」——正常位姿走这条，零额外开销
     best = _best_of([("config", cx0, cy0, r0)])
+    # ①b 内侧亮度门槛（粗定位/直测共用）：帧内盘面亮度 p90 往下留 18 灰阶
+    _lvl = _frame_level(gray_all, pct=float(getattr(config, "PLATE_IN_LEVEL_PCT", 90)))
+    _need_in = max(float(getattr(config, "PLATE_IN_MIN_ABS", 175.0)),
+                   (_lvl - float(getattr(config, "PLATE_IN_MARGIN", 18.0)))
+                   if _lvl is not None else 0.0) \
+        if bool(getattr(config, "PLATE_IN_BRIGHT_ON", True)) or \
+        bool(getattr(config, "PLATE_INSIDE_CHECK", True)) else 0.0
+    d["plate_level"] = None if _lvl is None else round(_lvl, 1)
+    d["need_in"] = round(_need_in, 1)
     # ② 仍不可信时才做「先验无关的粗定位」补救（贵，惰性）
     if (best is None or best[0] != 0) and bool(getattr(config, "PLATE_COARSE_LOCATE", True)):
         cp = coarse_disc_prior(
@@ -1094,7 +1154,9 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
             r_max=float(getattr(config, "PLATE_COARSE_R_MAX", 560.0)),
             x_step=int(getattr(config, "PLATE_COARSE_X_STEP", 16)),
             y0=int(getattr(config, "PLATE_COARSE_Y0", 24)),
-            y_step=int(getattr(config, "PLATE_COARSE_Y_STEP", 3)))
+            y_step=int(getattr(config, "PLATE_COARSE_Y_STEP", 3)),
+            need_in=_need_in if bool(getattr(config, "PLATE_COARSE_INSIDE", True)) else 0.0,
+            gray=gray_all)
         lo = r0 * float(getattr(config, "PLATE_COARSE_R_RATIO_MIN", 0.55))
         hi = r0 * float(getattr(config, "PLATE_COARSE_R_RATIO_MAX", 1.60))
         if cp is not None and lo <= cp[2] <= hi:
