@@ -511,6 +511,6 @@ PLATE_DEBUG_MIN_INTERVAL_MS = 100
 # 各任务原来的 DISC_/STACK_/PLATE_START_DELAY_MS 现在作为「最长等待上限」。
 # SCENE_SETTLE_ON=False 时退回旧的固定等待（行为与 3.9.46 一致）。
 SCENE_SETTLE_ON     = True
-SCENE_SETTLE_FRAMES = 2        # 连续 N 帧画面变化 < 阈值 → 判定已稳定（3→2，提速）
+SCENE_SETTLE_FRAMES = 3        # 连续 N 帧画面变化 < 阈值 → 判定已稳定（现场要求 3 帧，更稳）
 SCENE_SETTLE_DIFF   = 3.0      # 降采样(32x24)灰度均差阈值；越小越严、越大越松
 SCENE_SETTLE_MIN_MS = 20       # 至少等这么久，防止刚收到命令就误判稳定（100→40→20）
