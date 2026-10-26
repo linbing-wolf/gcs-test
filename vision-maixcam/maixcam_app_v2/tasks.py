@@ -226,7 +226,7 @@ def _sig_diff(a, b):
     return s / n
 
 
-def _wait_scene_settle(cam, ctl, disp, max_ms, tag=""):
+def _wait_scene_settle(cam, ctl, disp, max_ms, tag="", frames=None):
     """等画面稳定：连续 SCENE_SETTLE_FRAMES 帧画面变化 < 阈值就立即返回 True。
 
     为什么要它：任务开头原来死等固定毫秒（D/E=200、F=500）。
@@ -250,7 +250,8 @@ def _wait_scene_settle(cam, ctl, disp, max_ms, tag=""):
             sleep_ms(20)
         return True
 
-    need = max(1, int(getattr(config, "SCENE_SETTLE_FRAMES", 3)))
+    need = max(1, int(frames if frames is not None
+                      else getattr(config, "SCENE_SETTLE_FRAMES", 3)))
     thr = float(getattr(config, "SCENE_SETTLE_DIFF", 2.0))
     min_ms = max(0, int(getattr(config, "SCENE_SETTLE_MIN_MS", 100)))
     t0 = ticks_ms()
@@ -726,8 +727,11 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     # 收到 D/E 后等画面稳定（上限 DISC_START_DELAY_MS），再读第一帧
     start_delay = max(0, int(getattr(config, "DISC_START_DELAY_MS", 0)))
     if start_delay > 0:
-        log("[%s] 等待画面稳定（上限 %dms）" % (tag, start_delay))
-        if not _wait_scene_settle(cam, ctl, disp, start_delay, tag):
+        _sf = int(getattr(config, "SCENE_SETTLE_FRAMES_D", 5)) if str(tag) == "D" else None
+        log("[%s] 等待画面稳定（上限 %dms，判稳 %d 帧）"
+            % (tag, start_delay,
+               _sf if _sf is not None else int(getattr(config, "SCENE_SETTLE_FRAMES", 3))))
+        if not _wait_scene_settle(cam, ctl, disp, start_delay, tag, frames=_sf):
             return finish(pack_ready())
     P.reset(tag)                         # 清掉上一次同名任务的多帧平均缓存
     tracker = StabilityTracker(need_stable)

@@ -1678,7 +1678,25 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
                 return p
 
     try:
-        circles = img.find_circles(roi=roi if roi else [], threshold=threshold,
+        # find_circles 的霍夫累加器占用「fast frame buffer stack」，**ROI 越大越吃**。
+        # 现场实测：ROI 放大到 448×400 后日志开始刷
+        #   MemoryError: Out of fast Frame Buffer Stack Memory
+        # 之后进程直接被系统干掉（无 APP EXIT 记录）。所以给霍夫单独限幅，
+        # blob 路径（inner/black）仍用完整大 ROI，不受影响。
+        hroi = roi
+        try:
+            _cap = getattr(config, "DISC_HOUGH_ROI_MAX", (340, 320))
+            if roi:
+                _x, _y, _w, _h = [int(v) for v in roi]
+                _cw, _ch = int(_cap[0]), int(_cap[1])
+                if _w > _cw or _h > _ch:
+                    _nw, _nh = min(_w, _cw), min(_h, _ch)
+                    hroi = [_x + (_w - _nw) // 2, _y + (_h - _nh) // 2, _nw, _nh]
+                    if meta is not None:
+                        meta["hough_roi"] = hroi
+        except Exception:
+            hroi = roi
+        circles = img.find_circles(roi=hroi if hroi else [], threshold=threshold,
                                    x_margin=10, y_margin=10, r_margin=10,
                                    r_min=r_min, r_max=r_max)
     except Exception as e:

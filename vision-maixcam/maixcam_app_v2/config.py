@@ -52,6 +52,9 @@ ROI_MATERIAL   = [140, 100, 360, 300]    # 原料区转盘（放 3 个物料）
 # 否则会裁掉整个靶环、拟合出偏下的大假圆。
 ROI_DISC_ROUGH = [96, 0, 448, 400]       # 粗加工区圆盘（上边界必须包住整个靶环，否则会拟合出偏下的大假圆）
 ROI_DISC_TEMP  = [96, 0, 448, 400]       # 暂存区圆盘（同上）
+# 霍夫（find_circles）单独限幅：累加器吃「fast frame buffer stack」，
+# 448×400 实测会把内存池耗干 → 刷 MemoryError → 进程被杀。320×340 稳跑很久。
+DISC_HOUGH_ROI_MAX = (340, 320)
 ROI_STACK      = [80, 0, 480, 480]       # 码垛区：纵向全屏（x 80..560，y 0..480）
 
 # ============================== 稳定性判定 ==============================
@@ -527,5 +530,6 @@ PLATE_DEBUG_MIN_INTERVAL_MS = 100
 # SCENE_SETTLE_ON=False 时退回旧的固定等待（行为与 3.9.46 一致）。
 SCENE_SETTLE_ON     = True
 SCENE_SETTLE_FRAMES = 3        # 连续 N 帧画面变化 < 阈值 → 判定已稳定（现场要求 3 帧，更稳）
+SCENE_SETTLE_FRAMES_D = 5      # D 区单独加严：5 帧判稳（D 的最低位最怕运动模糊）
 SCENE_SETTLE_DIFF   = 3.0      # 降采样(32x24)灰度均差阈值；越小越严、越大越松
 SCENE_SETTLE_MIN_MS = 20       # 至少等这么久，防止刚收到命令就误判稳定（100→40→20）
