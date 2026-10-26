@@ -186,9 +186,9 @@ DISC_CENTER_PICK_RADIUS = 20    # 距黑色质心多少 px 内优先取“最小
 DISC_TEMPLATE_ON        = True
 DISC_TEMPLATE_PATH      = "/maixapp/apps/yyb_mover/assets/target2.png"
 DISC_TEMPLATE_THRESHOLD = 0.55   # NCC 阈值（0~1）；当前物料挡住数字下半部，实测 2 号环 ~0.59，1/3 号环 <0.30
-DISC_TEMPLATE_SCALES    = [0.9, 1.0]  # 0.9 覆盖稍远距离；两个尺度仍然很快
-DISC_TEMPLATE_ROI_W     = 72     # 在候选圆心周围搜“2”的窗口（环距仅 22px，窗口要小）
-DISC_TEMPLATE_ROI_H     = 80
+DISC_TEMPLATE_SCALES    = [0.7, 0.8, 0.9, 1.0, 1.1]  # 远→近多档：E 工位比 D 远，字更小
+DISC_TEMPLATE_ROI_W     = 84     # 在候选圆心周围搜“2”的窗口（环距仅 22px，窗口要小）
+DISC_TEMPLATE_ROI_H     = 92
 DISC_TEMPLATE_ROI_DX    = 0      # 窗口中心相对候选圆心的偏移
 DISC_TEMPLATE_ROI_DY    = 0
 # 匹配点必须离候选圆心足够近，否则当作没匹配（防止锁到旁边别的环上）
@@ -196,7 +196,7 @@ DISC_TEMPLATE_ROI_DY    = 0
 DISC_TEMPLATE_MAX_SHIFT = 22
 
 # ---- D/E 调试抓图（现场分析用；正式比赛可关）----
-DISC_DEBUG_SAVE          = False   # True=每次 D/E 保存关键帧 + 逐帧检测数据
+DISC_DEBUG_SAVE          = True    # 临时开启：排查 E 的模板匹配（排查完关掉）
 DISC_DEBUG_DIR           = "/root/yyb_mover_data/disc_debug"  # 放在 APP 目录外，升级不丢
 DISC_DEBUG_MAX_FRAMES    = 24     # 单次任务最多存多少张图（数据行不受限）
 DISC_DEBUG_QUALITY       = 85     # JPEG 质量 1~100
@@ -206,7 +206,7 @@ DISC_DEBUG_MIN_INTERVAL_MS = 100  # 两张图之间至少间隔 ms（0=不限）
 # 空闲循环会跑一次 D（或 E）任务，只记录不发 MOVE。
 DISC_DEBUG_TRIGGER_FILE  = "/tmp/run_disc_once"
 DISC_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_disc_move"  # 存在时直接跑一次真实 D（发 MOVE + DISC）
-DISC_DEBUG_TRIGGER_CMD   = "D"    # "D"=粗加工区，"E"=暂存区
+DISC_DEBUG_TRIGGER_CMD   = "E"    # 临时改成 E：touch /tmp/run_disc_once 即抓一次暂存区
 DISC_DEBUG_TRIGGER_MS    = 2000   # 触发抓图持续时长(ms)
 
 # ============================== 圆盘对齐（P6：环2 到水平正中心）==============================

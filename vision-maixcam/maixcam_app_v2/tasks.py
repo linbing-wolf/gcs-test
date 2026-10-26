@@ -766,10 +766,20 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             if disp:
                 disp.show(img)
             if lost >= lost_limit:
+                _tm = meta
+                _why = str(_tm.get("reason") or "?" )[:40]
+                if _tm.get("tpl_reject"):
+                    _why += " tpl_reject=%s" % _tm.get("tpl_reject")
+                if _tm.get("tpl_far"):
+                    _why += " tpl_far=%s" % (_tm.get("tpl_far"),)
+                if _tm.get("tpl") is not None:
+                    _why += " tpl=%s" % (_tm.get("tpl"),)
+                if _tm.get("circles_error"):
+                    _why += " circles_error=%s" % _tm.get("circles_error")
+                if _tm.get("inner_reason"):
+                    _why += " inner=%s" % _tm.get("inner_reason")
                 log("[%s] 连续 %d 帧看不到圆 → NONE（原因：%s）"
-                    % (tag, lost,
-                       str(meta.get("reason") or meta.get("tpl_reject")
-                           or meta.get("circles_error") or "all-paths-failed")[:70]))
+                    % (tag, lost, _why[:150]))
                 if rec:
                     rec.snap(img, dict(f, action="final_none"), "final_none", force=True)
                 return finish(pack_none(tag))

@@ -1949,12 +1949,11 @@ def find_ring_center(img, roi=None,
     x, y, w, h = roi
     cx0, cy0 = x + w / 2.0, y + h / 2.0
     try:
-        _xs, _ys = getattr(config, "DISC_HOUGH_STRIDE", (4, 2))
-        circles = img.find_circles(roi=roi, threshold=_hough_threshold(threshold),
-                                   x_stride=int(_xs), y_stride=int(_ys),
+        # 注意：这里**不**用大步长/缩放阈值——环兜底的 ROI 已经被 _cap_roi 限到安全尺寸，
+        # 保持旧参数（默认步长 + 原阈值）行为最稳，避免低阈值带回一堆杂环把中心带偏。
+        circles = img.find_circles(roi=roi, threshold=threshold,
                                    x_margin=10, y_margin=10, r_margin=10,
-                                   r_min=r_min, r_max=r_max,
-                                   r_step=int(getattr(config, "DISC_HOUGH_R_STEP", 4)))
+                                   r_min=r_min, r_max=r_max)
     except Exception as e:
         print("[视觉] find_ring_center 霍夫失败: %s" % e)
         return None
