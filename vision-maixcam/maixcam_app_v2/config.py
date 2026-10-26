@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 config.py —— 新流程（智能搬运赛项）视觉端配置（唯一参数来源）
 
@@ -276,8 +276,9 @@ SHOW_PREVIEW = True         # 屏幕显示 + MaixVision 预览
 # ---- 摄像头补光灯（MaixCAM2 板载照明 LED）----
 #   B25 = 照明 LED（高电平点亮）。别用 PWM6 调亮度：PWM6 与 A30(UART1) 二选一，
 #   会和 Maix 通信协议抢引脚。
-#   ★ 现状：**只在任务 H（物料盘对齐）期间点亮**，H 前后自动开关；
-#     其它命令、空闲时都不亮（避免影响颜色识别/现场观感）。
+#   ★ 现状：**只在 D/E、H（近距离对盘）期间点亮**，任务前后自动开关；
+#     其它命令（A/T/C/F/G）、空闲时都不亮。
+DISC_LIGHT_ON  = True      # False = D/E 也不点灯
 PLATE_LIGHT_ON = True      # False = H 也不点灯
 CAM_LIGHT_PIN  = "B25"
 CAM_LIGHT_FUNC = "GPIOB25"

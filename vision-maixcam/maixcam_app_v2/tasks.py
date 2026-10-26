@@ -599,6 +599,19 @@ def task_pick(cam, clf, disp, color_code, timeout_ms=config.TASK_TIMEOUT_MS, p=N
 # 任务 D / E：圆盘中心（粗加工区 / 暂存区）
 # ======================================================================
 def task_disc(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
+    """任务 D/E 入口：只在任务期间打开补光灯（见 config.DISC_LIGHT_ON）。
+
+    D/E 与 H 一样是「近距离对盘」，现场要求也点上灯；其余命令不亮。
+    """
+    light_on = bool(getattr(config, "DISC_LIGHT_ON", True)) and cam_light.on()
+    try:
+        return _task_disc_impl(cam, disp, roi, tag, timeout_ms, p, ctl)
+    finally:
+        if light_on:
+            cam_light.off()
+
+
+def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     """任务 D/E：圆盘中心 + 环2 水平/垂直对齐
 
     识别：find_circles 候选 → 径向边缘 + 最小二乘细化 → 找不到再用圆环兜底。
