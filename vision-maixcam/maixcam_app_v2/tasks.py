@@ -705,7 +705,7 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                       "picked", "attempts", "inner", "inner_ref",
                       "inner_blobs", "inner_reason",
                       "tpl", "tpl_scale", "tpl_roi", "tpl_reject", "tpl_error",
-                      "tpl_far", "center_src"):
+                      "tpl_far", "center_src", "circles_error"):
                 if k in meta:
                     f[k] = meta[k]
         if extra:

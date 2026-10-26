@@ -1201,9 +1201,18 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
                     meta["ms"] = ticks_ms() - t0
                 return p
 
-    circles = img.find_circles(roi=roi if roi else [], threshold=threshold,
-                               x_margin=10, y_margin=10, r_margin=10,
-                               r_min=r_min, r_max=r_max)
+    try:
+        circles = img.find_circles(roi=roi if roi else [], threshold=threshold,
+                                   x_margin=10, y_margin=10, r_margin=10,
+                                   r_min=r_min, r_max=r_max)
+    except Exception as e:
+        # ROI 放大后 find_circles 的累加器缓冲也变大，内存紧张时会抛
+        # MemoryError（Out of fast Frame Buffer Stack Memory）——
+        # 这里兜住，退到圆环兜底，绝不让整个 D/E 任务挂掉。
+        if meta is not None:
+            meta["circles_error"] = str(e)[:60]
+        print("[视觉] find_circles 失败，走兜底: %s" % e)
+        circles = []
     if meta is not None:
         meta["circles"] = [[int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
                            for c in sorted(circles, key=lambda c: c.r(), reverse=True)[:12]]
