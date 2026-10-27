@@ -7,7 +7,7 @@ static void rough_release_before_departure(void)
     static const char *orders[]={"123","132","213","231","312","321"};
     for(unsigned batch=0;batch<2;batch++)for(unsigned order=0;order<6;order++) {
         char task[48];unsigned offset=0,grips=0,releases=0,moving_home=0;uint32_t deadline;
-        float previous=ARM_CLAW_OPEN_DEG;int expected=(2-(orders[order][2]-'0'))*STN_ROUGH_INDEX_SIGN*STN_ROUGH_INDEX_MM;
+        float previous=ARM_CLAW_OPEN_DEG;int expected=test_station_move_mm(0,orders[order][2]-'0',2);
         snprintf(task,sizeof(task),"task 134+%s+314+%s",orders[order],orders[order]);
         prepare_rough(batch,task);deadline=clock_ms+150000;
         while(clock_ms<deadline) {

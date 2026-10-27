@@ -234,28 +234,28 @@ static int build_raw(void)
     }
     return 1;
 }
-#if !CAR_ARM_TRANSLATION_OVERLAP_ENABLED
-static int push_station_index_step(int delta, uint8_t target, uint8_t *ring, int sign, int mm)
+/* 2号为零点，跨1↔3取两侧环距之和；回程复用同一组几何坐标。 */
+static int station_ring_move_mm(uint8_t from,uint8_t to,int sign,int gap12,int gap23)
 {
-    if (!push(SS_CHASSIS, delta * sign * mm)) return 0;
-    program[stn.count - 1u].ring = target;
-    *ring = target;
-    return 1;
+    int start=from==1u ? -gap12 : from==3u ? gap23 : 0;
+    int end=to==1u ? -gap12 : to==3u ? gap23 : 0;
+    return (end-start)*sign;
 }
-
-static int push_station_index(uint8_t target, uint8_t *ring, int sign, int mm)
+#if !CAR_ARM_TRANSLATION_OVERLAP_ENABLED
+static int push_station_index(uint8_t target, uint8_t *ring, int sign, int gap12, int gap23)
 {
-    /* 相邻150mm，1↔3直接300mm；途中不在2号停车重取互锁。 */
-    if (*ring != target)
-        if (!push_station_index_step((int)target - (int)*ring, target, ring, sign, mm)) return 0;
+    if (*ring != target) {
+        if (!push(SS_CHASSIS,station_ring_move_mm(*ring,target,sign,gap12,gap23)))return 0;
+        program[stn.count-1u].ring=target;*ring=target;
+    }
     return 1;
 }
 #endif
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
-static int push_parallel_index(uint8_t target,uint8_t *ring,int sign,int mm)
+static int push_parallel_index(uint8_t target,uint8_t *ring,int sign,int gap12,int gap23)
 {
     if(*ring==target)return 1;
-    if(!push(SS_INDEX_BEGIN,((int)target-(int)*ring)*sign*mm))return 0;
+    if(!push(SS_INDEX_BEGIN,station_ring_move_mm(*ring,target,sign,gap12,gap23)))return 0;
     program[stn.count-1u].ring=target;*ring=target;
     return 1;
 }
@@ -282,18 +282,18 @@ static int build_rough(void)
         }
         seen |= (uint8_t)(1u << (target - 1u));
     }
-    /* 每次到站只对准中间2号一次；此后按150mm索引完成全部作业，不再逐环请求视觉。 */
+    /* 每次到站只对准中间2号一次；此后按两侧环距索引，不再逐环请求视觉。 */
     push_retract();
     push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f));
     push(SS_ALIGN, 2);
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
-    if(!push_parallel_index(task_rings[stn.batch][0],&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_MM))return 0;
+    if(!push_parallel_index(task_rings[stn.batch][0],&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_12_MM,STN_ROUGH_INDEX_23_MM))return 0;
     for(i=0;i<3u;i++) {
         push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM,(uint8_t)((i+1u)%3u+1u));
         push(SS_INDEX_WAIT,0); /* 车载夹取可在路上做；地面放料必须等目标环。 */
         push_release_contact(&stn_rough_place,(uint8_t)((i+1u)%3u+1u));
         target=task_rings[stn.batch][i<2u ? i+1u : 0u];
-        if(!push_parallel_index(target,&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_MM))return 0;
+        if(!push_parallel_index(target,&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_12_MM,STN_ROUGH_INDEX_23_MM))return 0;
         push_retract_work(station_align_yaw(),(uint8_t)((i+1u)%3u+1u));
     }
     for(i=0;i<3u;i++) {
@@ -301,12 +301,12 @@ static int build_rough(void)
         push_grip_at(&stn_rough_grip,i+1u);
 #if STN_ROUGH_THROUGH_ENABLED
         if(i==2u) {
-            push_place_on_platform(i+1u,1,(2-(int)ring)*STN_ROUGH_INDEX_SIGN*STN_ROUGH_INDEX_MM);
+            push_place_on_platform(i+1u,1,station_ring_move_mm(ring,2u,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_12_MM,STN_ROUGH_INDEX_23_MM));
             continue;
         }
 #endif
         target=i<2u ? task_rings[stn.batch][i+1u] : 2u;
-        if(!push_parallel_index(target,&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_MM))return 0;
+        if(!push_parallel_index(target,&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_12_MM,STN_ROUGH_INDEX_23_MM))return 0;
         push_place_on_platform(i+1u,0,0);
     }
 #if !STN_ROUGH_THROUGH_ENABLED
@@ -315,19 +315,19 @@ static int build_rough(void)
 #else
     for (i = 0; i < 3u; i++) {
         target = task_rings[stn.batch][i];
-        if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+        if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_12_MM, STN_ROUGH_INDEX_23_MM)) return 0;
         push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM,(uint8_t)((i+1u)%3u+1u));
         push_release_at(&stn_rough_place,(uint8_t)((i+1u)%3u+1u));
     }
     /* 按原装车颜色顺序抓回，即G2/G4靶位顺序，恢复原杯位。 */
     for (i = 0; i < 3u; i++) {
         target = task_rings[stn.batch][i];
-        if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+        if (!push_station_index(target, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_12_MM, STN_ROUGH_INDEX_23_MM)) return 0;
         push_grip_at(&stn_rough_grip,i+1u);
         push_place_on_platform(i+1u,0,0);
         push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f)); /* 平台操作完回观察角，再移车。 */
     }
-    if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_MM)) return 0;
+    if (!push_station_index(2u, &ring, STN_ROUGH_INDEX_SIGN, STN_ROUGH_INDEX_12_MM, STN_ROUGH_INDEX_23_MM)) return 0;
 #endif
     push_retract();
     push_platform_yaw(1u,ARM_YAW_HOME_DEG); /* 全部工位动作完成后才回车头0度。 */
@@ -375,7 +375,7 @@ static int build_storage(void)
     else stn_text("[station stack entry] second storage: skip E; F,color at each target\r\n");
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
     if(!stn.batch) {
-        if(!push_parallel_index(targets[0],&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_MM))return 0;
+        if(!push_parallel_index(targets[0],&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_12_MM,STN_STORAGE_INDEX_23_MM))return 0;
         for(i=0;i<3u;i++) {
             uint8_t slot=i<2u ? i+2u : 0u;
             push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM,slot);
@@ -383,19 +383,19 @@ static int build_storage(void)
             push_release_contact(&pose,slot);
 #if STN_STORAGE_FIRST_THROUGH_ENABLED
             if(i==2u) {
-                push(SS_DEPART_BEGIN,(2-(int)ring)*STN_STORAGE_INDEX_SIGN*STN_STORAGE_INDEX_MM);
+                push(SS_DEPART_BEGIN,station_ring_move_mm(ring,2u,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_12_MM,STN_STORAGE_INDEX_23_MM));
                 push_retract_work(ARM_YAW_HOME_DEG,1u);
                 continue;
             }
 #endif
-            if(!push_parallel_index(i<2u ? targets[i+1u] : 2u,&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_MM))return 0;
+            if(!push_parallel_index(i<2u ? targets[i+1u] : 2u,&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_12_MM,STN_STORAGE_INDEX_23_MM))return 0;
             push_retract_work(station_align_yaw(),slot);
         }
 #if !STN_STORAGE_FIRST_THROUGH_ENABLED
         push(SS_INDEX_WAIT,0);
 #endif
     } else {
-        if(!push_parallel_index(targets[0],&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_MM))return 0;
+        if(!push_parallel_index(targets[0],&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_12_MM,STN_STORAGE_INDEX_23_MM))return 0;
         for(i=0;i<3u;i++) {
             uint8_t slot=i<2u ? i+2u : 0u;
             /* F只在固定移位和机构收拢都完成后发出；下一次放料前仍须视觉定位。 */
@@ -406,12 +406,12 @@ static int build_storage(void)
             push_release_contact(&pose,slot);
 #if STN_STORAGE_SECOND_THROUGH_ENABLED
             if(i==2u) {
-                push(SS_DEPART_BEGIN,(2-(int)ring)*STN_STORAGE_INDEX_SIGN*STN_STORAGE_INDEX_MM);
+                push(SS_DEPART_BEGIN,station_ring_move_mm(ring,2u,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_12_MM,STN_STORAGE_INDEX_23_MM));
                 push_retract_work(ARM_YAW_HOME_DEG,1u);
                 continue;
             }
 #endif
-            if(!push_parallel_index(i<2u ? targets[i+1u] : 2u,&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_MM))return 0;
+            if(!push_parallel_index(i<2u ? targets[i+1u] : 2u,&ring,STN_STORAGE_INDEX_SIGN,STN_STORAGE_INDEX_12_MM,STN_STORAGE_INDEX_23_MM))return 0;
             push_retract_work(station_align_yaw(),slot);
         }
 #if !STN_STORAGE_SECOND_THROUGH_ENABLED
@@ -421,7 +421,7 @@ static int build_storage(void)
 #else
     {
     for (i = 0; i < 3u; i++) {
-        if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+        if (!push_station_index(targets[i], &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_12_MM, STN_STORAGE_INDEX_23_MM)) return 0;
         if(stn.batch) {
             push(SS_STACK,task_colors[stn.batch][i]);
             program[stn.count-1u].ring=targets[i];
@@ -431,7 +431,7 @@ static int build_storage(void)
         push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
         /* 保留上位机MOVE/MOVEY后的车身位置，放料后不自动反向撤销纠偏。 */
     }
-    if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_MM)) return 0;
+    if (!push_station_index(2u, &ring, STN_STORAGE_INDEX_SIGN, STN_STORAGE_INDEX_12_MM, STN_STORAGE_INDEX_23_MM)) return 0;
     }
 #endif
     push_retract();

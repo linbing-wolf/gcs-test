@@ -40,14 +40,19 @@ typedef struct {
 
 /* ===== 粗加工区 ===== 到站/离站均为2号环基准；只允许1/2/3的排列。
  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
- * 进站先视觉对准2号基准一次，此后相邻150mm、1↔3直接300mm索引取放。
+ * 进站先视觉对准2号基准一次，1↔2、2↔3环距分别可调；1↔3一次走两段之和。
  * 2026-10-19指定粗加工平推55mm、放料高度5mm、抓回高度5mm、平台取料高度100mm。
  * 作业内云台只在126.5/256度间直转，离站回0度；不等于实车验收。
  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
 #ifndef STN_ROUGH_PLACE_READY
 #define STN_ROUGH_PLACE_READY   1 /* 粗加工地面姿态启用标记，1启用/0未标定；不是速度开关。 */
 #endif
-#define STN_ROUGH_INDEX_MM    150 /* 粗加工相邻环中心距，mm；1到3自动一次走两倍距离。 */
+#ifndef STN_ROUGH_INDEX_12_MM
+#define STN_ROUGH_INDEX_12_MM 145 /* 粗加工1↔2号环中心距，mm；双向共用。 */
+#endif
+#ifndef STN_ROUGH_INDEX_23_MM
+#define STN_ROUGH_INDEX_23_MM 145 /* 粗加工2↔3号环中心距，mm；双向共用。 */
+#endif
 #define STN_ROUGH_INDEX_SIGN   -1 /* 环编号增加时的移车方向，-1=后退；前1、中2、后3。 */
 #define STN_ROUGH_INDEX_RPM    60 /* 粗加工环位索引/视觉微调速度请求上限，RPM；允许20~60。 */
 #ifndef STN_ROUGH_SLIDE_MM
@@ -74,7 +79,8 @@ static const StationPose stn_rough_grip = {
 #define STN_ROUGH_PLATFORM_TAKE_READY 1 /* 粗加工平台取料标定启用，1启用/0未标定。 */
 #endif
 #if (STN_ROUGH_INDEX_SIGN != 1 && STN_ROUGH_INDEX_SIGN != -1) || \
-    STN_ROUGH_INDEX_MM < 1 || STN_ROUGH_INDEX_MM > 300 || \
+    STN_ROUGH_INDEX_12_MM < 1 || STN_ROUGH_INDEX_12_MM > 300 || \
+    STN_ROUGH_INDEX_23_MM < 1 || STN_ROUGH_INDEX_23_MM > 300 || \
     STN_ROUGH_INDEX_RPM < 20 || STN_ROUGH_INDEX_RPM > 60
 #error Invalid_rough_station_index_configuration
 #endif
@@ -87,7 +93,12 @@ static const StationPose stn_rough_grip = {
 #ifndef STN_STORAGE_PLACE_READY
 #define STN_STORAGE_PLACE_READY 1 /* 暂存放料姿态启用，1启用/0未标定。 */
 #endif
-#define STN_STORAGE_INDEX_MM 150 /* 暂存相邻环中心距，mm；当前编译约束为150。 */
+#ifndef STN_STORAGE_INDEX_12_MM
+#define STN_STORAGE_INDEX_12_MM 150 /* 暂存1↔2号环中心距，mm；两批作业及双向共用。 */
+#endif
+#ifndef STN_STORAGE_INDEX_23_MM
+#define STN_STORAGE_INDEX_23_MM 150 /* 暂存2↔3号环中心距，mm；两批作业及双向共用。 */
+#endif
 #define STN_STORAGE_INDEX_SIGN -1 /* 环编号增加时的移车方向，-1=后退；前1、中2、后3。 */
 #define STN_STORAGE_INDEX_RPM 60 /* 暂存索引/视觉微调速度请求上限，RPM；允许20~60。 */
 #define STN_STORAGE_SLIDE_MM 55 /* 暂存地面放料平推目标，mm；第一层与第二层共用。 */
@@ -106,7 +117,9 @@ static const StationPose stn_storage_place = {
 #define STN_PLATFORM_TAKE_READY 1 /* 暂存平台取料标定启用，1启用/0未标定。 */
 #endif
 #if (STN_STORAGE_INDEX_SIGN != 1 && STN_STORAGE_INDEX_SIGN != -1) || \
-    STN_STORAGE_INDEX_MM != 150 || STN_STORAGE_INDEX_RPM < 20 || STN_STORAGE_INDEX_RPM > 60 || \
+    STN_STORAGE_INDEX_12_MM < 1 || STN_STORAGE_INDEX_12_MM > 300 || \
+    STN_STORAGE_INDEX_23_MM < 1 || STN_STORAGE_INDEX_23_MM > 300 || \
+    STN_STORAGE_INDEX_RPM < 20 || STN_STORAGE_INDEX_RPM > 60 || \
     STN_STORAGE_LAYER_LIFT_MM < 0
 #error Invalid_storage_station_configuration
 #endif

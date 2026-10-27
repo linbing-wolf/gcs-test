@@ -9,7 +9,7 @@ static void through_geometry_tests(void)
     for(plan=0;plan<2;plan++)for(batch=0;batch<2;batch++)for(order=0;order<6;order++) {
         char task[48];unsigned offset=0,grips=0,returns=0,launched=0,joined=0,moving_return=0,front_seen=0;
         uint32_t deadline;float previous=ARM_CLAW_OPEN_DEG;double closest=10000;
-        int expected=(2-(orders[order][2]-'0'))*STN_ROUGH_INDEX_SIGN*STN_ROUGH_INDEX_MM;
+        int expected=test_station_move_mm(0,orders[order][2]-'0',2);
         snprintf(task,sizeof(task),"task 134+%s+314+%s",orders[order],orders[order]);
         prepare_rough(batch,task);run.plan=(uint8_t)plan;deadline=clock_ms+150000;
         while(clock_ms<deadline && run.state!=RUN_FAULT) {

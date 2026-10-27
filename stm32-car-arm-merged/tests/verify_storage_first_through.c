@@ -9,7 +9,7 @@ static void first_storage_tests(void)
     for(plan=0;plan<2;plan++)for(order=0;order<6;order++) {
         char task[48];uint32_t deadline,start,depart=0;unsigned offset=0,placed=0,launched=0,joined=0;
         unsigned retract_moving=0,parked=0;float previous=ARM_CLAW_OPEN_DEG;RoadPoint h,f;
-        int expected=(2-(orders[order][2]-'0'))*STN_STORAGE_INDEX_SIGN*STN_STORAGE_INDEX_MM;
+        int expected=test_station_move_mm(1,orders[order][2]-'0',2);
         snprintf(task,sizeof(task),"task 134+%s+314+231",orders[order]);
         prepare_storage(0,task);run.plan=(uint8_t)plan;CHECK(road_point(NODE_H,&h)&&road_point(NODE_F,&f));
         start=clock_ms;deadline=clock_ms+120000;

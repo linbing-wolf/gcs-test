@@ -2,6 +2,30 @@
 #define HEADING_TEST_MAIN heading_regression_main
 #include "verify_heading.c"
 
+static int test_station_offset_mm(unsigned storage,unsigned ring)
+{
+    const int rough[3]={-STN_ROUGH_INDEX_12_MM,0,STN_ROUGH_INDEX_23_MM};
+    const int store[3]={-STN_STORAGE_INDEX_12_MM,0,STN_STORAGE_INDEX_23_MM};
+    return storage ? store[ring-1u]*STN_STORAGE_INDEX_SIGN : rough[ring-1u]*STN_ROUGH_INDEX_SIGN;
+}
+static int test_station_move_mm(unsigned storage,unsigned from,unsigned to)
+{
+    return test_station_offset_mm(storage,to)-test_station_offset_mm(storage,from);
+}
+static double test_station_ring(unsigned storage,double mm)
+{
+    double position=mm*(storage ? STN_STORAGE_INDEX_SIGN : STN_ROUGH_INDEX_SIGN);
+    int gap=position<0 ? (storage ? STN_STORAGE_INDEX_12_MM : STN_ROUGH_INDEX_12_MM)
+        : (storage ? STN_STORAGE_INDEX_23_MM : STN_ROUGH_INDEX_23_MM);
+    return 2+position/gap;
+}
+static int test_station_index_distance(unsigned storage,unsigned mm)
+{
+    unsigned a=storage ? STN_STORAGE_INDEX_12_MM : STN_ROUGH_INDEX_12_MM;
+    unsigned b=storage ? STN_STORAGE_INDEX_23_MM : STN_ROUGH_INDEX_23_MM;
+    return mm==a || mm==b || mm==a+b;
+}
+
 static uint8_t peer_crc(const uint8_t *bytes,unsigned count)
 {
     uint8_t crc=0;unsigned i,bit;
@@ -818,7 +842,7 @@ static void rough_index_tests(void)
         for(i=0;i<7;i++) {
             if(STN_ROUGH_THROUGH_ENABLED && i==6u)break; /* 最后回2环已并入道路，不再作为停车索引。 */
             uint8_t target=i==6 ? 2u : order[i%3];
-            if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN;ring=target;}
+            if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=test_station_move_mm(0,ring,target);ring=target;}
         }
         deadline=clock_ms+400000;
         while(run.state!=RUN_FAULT && (run.job==(batch ? 5 : 2) || run.departure_overlap) && clock_ms<deadline) {
@@ -835,7 +859,7 @@ static void rough_index_tests(void)
                 CHECK(events<expected_count && target==targets[events] && mm==moves[events]);
                 arm_pose_now(&slide,&lift,&yaw,&claw);
                 if(arm_translation_overlap_ready())arm_target_now(&slide,&lift,&yaw,NULL);
-                CHECK((abs(mm)==STN_ROUGH_INDEX_MM || abs(mm)==2*STN_ROUGH_INDEX_MM) && run.remaining_mm==abs(mm) && run.station_shift);
+                CHECK(test_station_index_distance(0,(unsigned)abs(mm)) && run.remaining_mm==abs(mm) && run.station_shift);
                 if(station_index_overlap_active())CHECK(arm_station_clearance_ready(clock_ms)
                     || (slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM));
                 else CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM && yaw==STN_ROUGH_YAW_DEG
@@ -886,13 +910,13 @@ static void rough_index_tests(void)
                 CHECK(loaded<3 && taken==0 && loaded==placed && arm_platform_slot()==(int)loaded+1);
                 CHECK(aligned==1);
                 CHECK(road_point(NODE_D,&point));
-                physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+                physical_ring=test_station_ring(0,field_x-point.x);
                 if(!CAR_ARM_TRANSLATION_OVERLAP_ENABLED)CHECK(fabs(physical_ring-order[loaded])<0.15);
                 loaded++;
             }
             if(claw!=prior_claw && slide==STN_ROUGH_SLIDE_MM && yaw==STN_ROUGH_YAW_DEG) {
                 RoadPoint point;double physical_ring;CHECK(road_point(NODE_D,&point));
-                physical_ring=2+(field_x-point.x)/(STN_ROUGH_INDEX_MM*STN_ROUGH_INDEX_SIGN);
+                physical_ring=test_station_ring(0,field_x-point.x);
                 if(claw==ARM_CLAW_OPEN_DEG) {
                     CHECK(lift==STN_ROUGH_PLACE_LIFT_MM);
                     CHECK(placed<3 && taken==0 && fabs(physical_ring-order[placed])<0.15);
@@ -927,7 +951,7 @@ static void rough_index_tests(void)
         if(variant==3)motor_feedback[3].speed_ms=clock_ms-ARM_FEEDBACK_TIMEOUT_MS-1u;
         if(variant==4)arm_lock.state=1;
         if(variant==5)run.job=7; /* 原料1/4现可执行H修正；启停区仍拒绝工位移车。 */
-        CHECK(!station_chassis_start(variant==6 ? 0 : STN_ROUGH_INDEX_MM));
+        CHECK(!station_chassis_start(variant==6 ? 0 : STN_ROUGH_INDEX_12_MM));
         CHECK(!run_active && !run.station_shift && !velocity_batches);
     }
     /* 索引期间异常取消整轮，不能退回路线旧节点或继续夹取。 */
@@ -1123,7 +1147,7 @@ static void storage_index_tests(void)
         }
         for(i=0;i<4;i++) {
             uint8_t target=i==3 ? 2u : order[batch ? color_order[i]-1u : i];
-            if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=((int)target-ring)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN;ring=target;}
+            if(ring!=target) {targets[expected_count]=target;moves[expected_count++]=test_station_move_mm(1,ring,target);ring=target;}
         }
         deadline=clock_ms+250000;
         while(run.state!=RUN_FAULT && (run.job==(batch ? 6 : 3) || run.departure_overlap) && clock_ms<deadline) {
@@ -1140,7 +1164,7 @@ static void storage_index_tests(void)
                 unsigned target;int mm;
                 CHECK(sscanf(strstr(output,"[station index] ring="),"[station index] ring=%u move_mm=%d",&target,&mm)==2);
                 CHECK(events<expected_count && target==targets[events] && mm==moves[events]);events++;
-                CHECK((abs(mm)==150 || abs(mm)==300) && run.remaining_mm==abs(mm) && station_chassis_pose_safe());
+                CHECK(test_station_index_distance(1,(unsigned)abs(mm)) && run.remaining_mm==abs(mm) && station_chassis_pose_safe());
                 if(station_index_overlap_active())CHECK(arm_station_clearance_ready(clock_ms)
                     || (slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM));
                 else CHECK(yaw==STN_STORAGE_ALIGN_YAW_DEG && claw==ARM_CLAW_OPEN_DEG
@@ -1170,7 +1194,7 @@ static void storage_index_tests(void)
                 uint8_t target;
                 CHECK(placed<3);target=order[batch ? color_order[placed]-1u : placed];
                 CHECK(road_point(NODE_H,&point));
-                actual=2+(field_y-point.y)/(STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN);
+                actual=test_station_ring(1,field_y-point.y);
                 CHECK(claw==ARM_CLAW_OPEN_DEG && taken==placed+1 && placed<3);
                 CHECK(fabs(actual-target)<0.15 && arm_platform_slot()==(ARM_STATION_PRESELECT_ENABLED && placed<2 ? (int)placed+2 : (int)placed+1));placed++;
             }
@@ -1191,7 +1215,7 @@ static void storage_index_tests(void)
         if(variant==1)CHECK(arm_command("arm pose 0 105 0 45",clock_ms));
         if(variant==2)motor_feedback[0].status_flags=11;
         if(variant==3)CHECK(arm_command("arm yaw 10",clock_ms));
-        CHECK(!station_chassis_start(STN_STORAGE_INDEX_MM) && !run_active && !velocity_batches);
+        CHECK(!station_chassis_start(STN_STORAGE_INDEX_12_MM) && !run_active && !velocity_batches);
     }
     puts("PASS storage: first G2 placement, second same-color G1/G2 lookup independent of G4, all six ring/color permutations, layer height/travel guards, 150/300mm direct segments (no ring2 intermediate stop) and final ring2, arm retracted before terminal approach, grip after chassis completion");
 }
@@ -1447,7 +1471,7 @@ static void stack_retained_position_tests(void)
             unsigned i;int sum_x=0,sum_y=0;
             for(i=0;i<=placed;i++){sum_x+=yp[i];sum_y-=xp[i];}
             CHECK(fabs(field_x-point.x-sum_x)<8.0);
-            CHECK(fabs(field_y-point.y-(rings[placed]-2)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN-sum_y)<8.0);placed++;
+            CHECK(fabs(field_y-point.y-test_station_offset_mm(1,rings[placed])-sum_y)<8.0);placed++;
         }
     }
     CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==7 && sent==3 && placed==3 && started==10);
@@ -1693,7 +1717,7 @@ static void station_alignment_tests(void)
             }
             if(run.station_shift && !was_shift) {
                 positions=arm_positions;yaw_pwm=arm_yaw_us;
-                if(run.remaining_mm!=STN_ROUGH_INDEX_MM && run.remaining_mm!=2*STN_ROUGH_INDEX_MM) {
+                if(!test_station_index_distance(storage,run.remaining_mm)) {
                     micro++;
                     /* 两轴移动中缓存及终包顺序由独立MOVEY回归覆盖。 */
                 }

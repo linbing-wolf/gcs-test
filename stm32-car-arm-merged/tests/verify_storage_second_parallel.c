@@ -12,7 +12,7 @@ static void second_storage_orders(void)
         uint32_t start,deadline,depart=0;float previous=ARM_CLAW_OPEN_DEG;RoadPoint h;
         unsigned index=colors[color][2]=='1' ? 0 : colors[color][2]=='3' ? 1 : 2;
         int last_ring=orders[order][index]-'0';
-        int expected=(2-last_ring)*STN_STORAGE_INDEX_SIGN*STN_STORAGE_INDEX_MM;
+        int expected=test_station_move_mm(1,last_ring,2);
         snprintf(task,sizeof(task),"task 134+%s+%s+231",orders[order],colors[color]);
         prepare_storage(1,task);run.plan=(uint8_t)plan;CHECK(road_point(NODE_H,&h));
         start=clock_ms;deadline=clock_ms+150000;

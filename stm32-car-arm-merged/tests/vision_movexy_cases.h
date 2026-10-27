@@ -213,7 +213,7 @@ static void movexy_storage_retained_tests(void)
             unsigned i;int sum_x=0,sum_y=0;
             for(i=0;i<=placed;i++){sum_x+=yp[i];sum_y-=xp[i];}
             CHECK(fabs(field_x-point.x-sum_x)<8.0);
-            CHECK(fabs(field_y-point.y-(rings[placed]-2)*STN_STORAGE_INDEX_MM*STN_STORAGE_INDEX_SIGN-sum_y)<8.0);placed++;
+            CHECK(fabs(field_y-point.y-test_station_offset_mm(1,rings[placed])-sum_y)<8.0);placed++;
         }
     }
     CHECK(clock_ms<deadline && run.state!=RUN_FAULT && run.job==7 && sent==3 && placed==3 && started==7);

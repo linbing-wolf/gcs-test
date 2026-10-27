@@ -4459,7 +4459,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261026-merge2-r108; PC9 active-low prepares arm and starts C route\r\n");
+    text("[drive] version=20261026-merge2-r109; independent station ring gaps\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
