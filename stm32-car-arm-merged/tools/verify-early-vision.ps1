@@ -25,7 +25,7 @@ try {
         $earlyHashes[$earlyFile]=(Get-FileHash -LiteralPath $earlyFile -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;exitCode=$earlyExit;sourceHashes=$earlyHashes;hardwareAccessed=$false;
-        scope='Early H/D/E/F and first C, immediate replies, H FIFO and C handoff, F index handoff, manual !, exact request counts and full A/C routes with upper peer independently judging wheel stop; no physical acceptance'} |
+        scope='D waits for original station arrival; H/E/F and first C retain early requests; immediate replies, H FIFO and C handoff, F index handoff, manual !, exact request counts and full A/C routes; no physical acceptance'} |
         ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $earlyOut 'result.json')
     $earlyText | Select-Object -Last 5
     Write-Output $earlyOut

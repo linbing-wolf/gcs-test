@@ -3889,7 +3889,7 @@ static void help(void)
     text("ARM: arm platform pose DEG | arm platform 1/2/3 | arm stop | arm off (park first)\r\n");
     text("ARM: arm load1 | arm load3 (or @) = calibrated loading sequences\r\n");
     text("STATION: task 134+123+314+231 | station | station auto on/off (default on)\r\n");
-    text("VISION: vision status/ping/range/pick N/clear; UART5 AA55+CRC8\r\n");
+    text("VISION: vision status/ping/range/pick N/clear; UART4 PC10 TX / PC11 RX AA55+CRC8\r\n");
     text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
@@ -4459,7 +4459,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261026-merge2-r109; independent station ring gaps\r\n");
+    text("[drive] version=20261029-merge2-r111; vision UART4 PC10 TX / PC11 RX\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

@@ -2,7 +2,7 @@
 #define VISION_LINK_H
 #include <stdint.h>
 
-/* MaixCAM 视觉链路：UART5，PD2=RX / PC12=TX，115200 8N1。
+/* MaixCAM 视觉链路：UART4，PC11=RX / PC10=TX，115200 8N1。
  * 帧格式：AA 55 LEN payload CRC8 0D（CRC8 poly=0x07 init=0x00，范围 LEN+payload）。
  * 原料区由上位机在物块转到固定取料口后回 PICK,<颜色>,x,y；
  * 视觉端不会主动重传，超时后由调用方决定是否重新发 C,<颜色>。
@@ -17,7 +17,7 @@ enum {
 
 void vision_init(void);
 void vision_update(uint32_t now);
-/* UART5中断只提交字节；uart_error非零时丢弃本轮请求，主循环处理故障。 */
+/* UART4中断只提交字节；uart_error非零时主循环丢弃受损半包、保留请求。 */
 void vision_receive_byte(uint8_t byte, uint8_t uart_error);
 int vision_command(const char *s, uint32_t now);
 

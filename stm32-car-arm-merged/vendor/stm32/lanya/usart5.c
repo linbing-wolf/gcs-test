@@ -37,7 +37,7 @@ void uart5_init(u32 bound)
 	NVIC_InitStructure.NVIC_IRQChannel = UART5_IRQn;
 	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=1;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;	
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+	NVIC_InitStructure.NVIC_IRQChannelCmd = DISABLE;
 	NVIC_Init(&NVIC_InitStructure);	
 	
 	//USART 初始化设置
@@ -49,7 +49,7 @@ void uart5_init(u32 bound)
 	USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
 	USART_Init(UART5, &USART_InitStructure);      
 	
-	USART_ITConfig(UART5, USART_IT_RXNE, ENABLE); 
+	USART_ITConfig(UART5, USART_IT_RXNE, DISABLE);
 	USART_Cmd(UART5, ENABLE);                     
 }
 
@@ -63,16 +63,7 @@ void uart5_init(u32 bound)
   * @retval 无
   ******************************************************************************
   */
-/* UART5 belongs to the vision protocol; IRQ only queues bytes. */
-extern void vision_receive_byte(uint8_t byte, uint8_t uart_error);
-void UART5_IRQHandler(void)
-{
-    uint32_t status = UART5->SR;
-    if (status & (USART_FLAG_RXNE | USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE | USART_FLAG_PE)) {
-        uint8_t byte = (uint8_t)UART5->DR;
-        vision_receive_byte(byte,(uint8_t)((status & (USART_FLAG_ORE | USART_FLAG_FE | USART_FLAG_NE | USART_FLAG_PE)) != 0));
-    }
-}
+/* Vision RX is owned by UART4_IRQHandler in src/vision_link.c. */
 
 void UART5_SendString(char *str) 
 {

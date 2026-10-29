@@ -3,7 +3,6 @@
 #ifdef ARM_HOST_TEST
 #include "../tests/vision_host_io.h"
 #else
-#include "usart5.h"
 #include "stm32f4xx.h"
 #endif
 #include <string.h>
@@ -16,6 +15,41 @@
 #define VISION_PICK_TIMEOUT_MS 20000u
 #define VISION_ALIGN_TIMEOUT_MS 25000u
 #define VISION_MOTION_QUEUE      32u /* 有界离散指令队列；MOVEXY两轴整体占1条，终包不清空。 */
+
+#ifndef ARM_HOST_TEST
+/* UART4固定使用PC10/PC11(AF8)，避开已无法接线的PC12/PD2。 */
+static void vision_uart_init(void)
+{
+    GPIO_InitTypeDef gpio;
+    USART_InitTypeDef uart;
+    NVIC_InitTypeDef irq;
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC,ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_UART4,ENABLE);
+    GPIO_PinAFConfig(GPIOC,GPIO_PinSource10,GPIO_AF_UART4);
+    GPIO_PinAFConfig(GPIOC,GPIO_PinSource11,GPIO_AF_UART4);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Pin=GPIO_Pin_10|GPIO_Pin_11;gpio.GPIO_Mode=GPIO_Mode_AF;
+    gpio.GPIO_OType=GPIO_OType_PP;gpio.GPIO_Speed=GPIO_Speed_50MHz;gpio.GPIO_PuPd=GPIO_PuPd_UP;
+    GPIO_Init(GPIOC,&gpio);
+    USART_StructInit(&uart);
+    uart.USART_BaudRate=115200u;uart.USART_Mode=USART_Mode_Rx|USART_Mode_Tx;
+    USART_Init(UART4,&uart);
+    irq.NVIC_IRQChannel=UART4_IRQn;irq.NVIC_IRQChannelPreemptionPriority=1;
+    irq.NVIC_IRQChannelSubPriority=0;irq.NVIC_IRQChannelCmd=ENABLE;
+    NVIC_Init(&irq);
+    USART_ITConfig(UART4,USART_IT_RXNE,ENABLE);
+    USART_Cmd(UART4,ENABLE);
+}
+
+void UART4_IRQHandler(void)
+{
+    uint32_t status=UART4->SR;
+    if(status&(USART_FLAG_RXNE|USART_FLAG_ORE|USART_FLAG_FE|USART_FLAG_NE|USART_FLAG_PE)) {
+        uint8_t byte=(uint8_t)UART4->DR;
+        vision_receive_byte(byte,(uint8_t)((status&(USART_FLAG_ORE|USART_FLAG_FE|USART_FLAG_NE|USART_FLAG_PE))!=0));
+    }
+}
+#endif
 
 typedef struct {
     uint32_t received_ms;
@@ -109,8 +143,8 @@ static void vision_transmit(void)
     if (!entry_host_vision_tx_ready()) return;
     entry_host_vision_send_byte(tx_frame[tx_offset++]);
 #else
-    if (USART_GetFlagStatus(UART5,USART_FLAG_TXE) == RESET) return;
-    USART_SendData(UART5,tx_frame[tx_offset++]);
+    if (USART_GetFlagStatus(UART4,USART_FLAG_TXE) == RESET) return;
+    USART_SendData(UART4,tx_frame[tx_offset++]);
 #endif
 }
 
@@ -331,9 +365,9 @@ void vision_init(void)
 #ifdef ARM_HOST_TEST
     entry_host_vision_init(115200u);
 #else
-    uart5_init(115200u);
+    vision_uart_init();
 #endif
-    arm_output("[vision] UART5 115200 PD2=RX PC12=TX; AA55+CRC8 frames\r\n");
+    arm_output("[vision] UART4 115200 PC11=RX PC10=TX; AA55+CRC8 frames\r\n");
 }
 
 void vision_update(uint32_t now)

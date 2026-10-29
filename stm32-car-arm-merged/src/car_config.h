@@ -63,7 +63,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 /* 行驶中心线内移：上沿F/G向+Y，下沿D/I向-Y，暂存H向+X；A/C及B/E不移动。
  * 单位mm。修改后先运行tools/rebuild-route-table.ps1重生成并验证查表，再编译。 */
 #define CAR_MAP_TOP_INSET_MM         90 /* 上侧工位向场内内移距离，mm；改后须重生成离线路表。 */
-#define CAR_MAP_BOTTOM_INSET_MM      50 /* 粗加工保留原50mm内移，按操作者纠正不撤回；改后须重生成离线路表。 */
+#define CAR_MAP_BOTTOM_INSET_MM      0 /* 粗加工保留原50mm内移，按操作者纠正不撤回；改后须重生成离线路表。 */
 #define CAR_MAP_RAW_EXTRA_INSET_MM  100      /* 仅原料F额外内移，原50mm再加50mm；G点不随动，单位mm。 */
 #define CAR_MAP_STORAGE_INSET_MM     80      /* 撤回暂存新增50mm，保留原80mm内移，单位mm。 */
 #if CAR_MAP_TOP_INSET_MM < 0 || CAR_MAP_TOP_INSET_MM >= 1000 || \
