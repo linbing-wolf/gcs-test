@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-25T07:06:20.024Z",
+  "generatedAt": "2026-10-27T14:33:26.67Z",
   "rule": "distance, then unknown distance, then exactly the current C baseline route",
   "sourceHashes": {
-    "src/car_config.h": "935971e514938c5ec53f24682243c5a286a540c4b2c36ab72878812504db3260",
+    "src/car_config.h": "30166b9413b9af4f40b2f3e31ccd0dd2abc6482eacd7195ddd4814850971867b",
     "src/structure.h": "e477e35e822fd58fd3c99c71405023e65b0d1ea3ba3272ecece05d29aece3fb7",
     "src/road_map.c": "9fe5f75c03f759a3ebb54b81e245f19f57586404f5c4811d2721e6e6ca463beb",
     "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
@@ -16,7 +16,7 @@
   },
   "parameters": {
     "topInsetMm": 90,
-    "bottomInsetMm": 50,
+    "bottomInsetMm": 0,
     "rawExtraInsetMm": 100,
     "storageInsetMm": 80
   },
@@ -35,7 +35,7 @@
     ],
     [
       1200,
-      2010
+      2060
     ],
     [
       1200,
@@ -55,7 +55,7 @@
     ],
     [
       340,
-      2010
+      2060
     ]
   ],
   "roads": [
@@ -72,7 +72,7 @@
     [
       2,
       3,
-      1270
+      1220
     ],
     [
       3,
@@ -82,7 +82,7 @@
     [
       8,
       7,
-      890
+      940
     ],
     [
       7,
@@ -107,7 +107,7 @@
     [
       4,
       3,
-      810
+      860
     ],
     [
       7,
@@ -129,6 +129,6 @@
   "decisionClasses": 100,
   "maxClassesPerPair": 5,
   "tiedBlockedQueries": 5808,
-  "tableDataSha256": "04dcd1d1deb1822a3ca52b4fd4acfb8b0ca59190fb1ce6fd3a0f781e387ed264",
+  "tableDataSha256": "08062dc91b8862f4b32cbcfe08fa1002c1d53b6df7f7147e8a6509c0103b8193",
   "validation": "passed: all 531441 states / 43046721 exact C-reference queries and independent Floyd"
 }

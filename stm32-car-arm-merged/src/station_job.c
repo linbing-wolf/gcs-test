@@ -766,6 +766,7 @@ static void station_vision_early_update(uint32_t now)
 {
     const StationStep *s=&program[stn.cursor];
     uint8_t next=(uint8_t)(stn.cursor+1u);
+    if(stn.job==2u || stn.job==5u)return; /* D只在原到站交接后发送，观察云台仍可提前准备。 */
     if(stn.vision_preissued || !station_chassis_vision_early() || !station_vision_pose_ready())return;
     if((s->kind==SS_ALIGN || s->kind==SS_STACK || s->kind==SS_VISION) && !stn.issued) {
         stn.issued=1;(void)issue_step(now);

@@ -1,4 +1,4 @@
-/* 请求须早于下位机停稳确认；立即回包也不得提前执行下一动作。 */
+/* H/E/F/C保留提前发送；D等原到站交接，立即回包均只执行一次。 */
 #define STATION_TEST_MAIN retained_station_suite
 #include "verify_station_vision.c"
 
@@ -68,7 +68,9 @@ static void entry_early_reply_tests(void)
             plant_step();if(run.job!=last_job){last_job=run.job;arm_positions=0;}
         }
         CHECK(clock_ms<deadline && vision_tx_bytes[offset+3u]==(target==2 ? 'D' : 'E'));
-        CHECK(run_active && run.station_entry_overlap);positions=arm_positions;
+        if(target==2)CHECK(!run_active && !run.station_entry_overlap && !station_chassis_busy());
+        else CHECK(run_active && run.station_entry_overlap);
+        positions=arm_positions;
         peer_reply("MOVEXY,15,7",0);peer_reply("DISC,320,240,0,1",0);
         while(run.station_entry_overlap && clock_ms<deadline) {
             CHECK(arm_positions==positions);plant_step();
@@ -76,7 +78,7 @@ static void entry_early_reply_tests(void)
         while(!run.station_visual_shift && clock_ms<deadline)plant_step();
         CHECK(clock_ms<deadline && run.vector_target_mm[0]==-15 && run.vector_target_mm[1]==7);
         CHECK(vision_tx_count==offset+6u);stop_request();
-        printf("PASS early %c: MOVE/terminal received during entry retained; correction begins after entry completion\n",target==2 ? 'D' : 'E');
+        printf("PASS %c timing: D waits for arrival, E retains early reply handoff; correction executes once\n",target==2 ? 'D' : 'E');
     }
 }
 
@@ -99,7 +101,7 @@ static void early_full_routes(void)
         CHECK(clock_ms<deadline && run.state==RUN_DONE && run.job==8 && !run_active);
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM);
         CHECK(counts['H']==2 && counts['D']==2 && counts['E']==1 && counts['F']==3 && counts['C']==6);
-        CHECK(early['H']==2 && early['D']==2 && early['E']==1 && early['F']==3 && early['C']==2);
+        CHECK(early['H']==2 && early['D']==0 && early['E']==1 && early['F']==3 && early['C']==2);
         printf("EARLY_ROUTE plan=%u total_ms=%lu distance=%lu H=%u/%u D=%u/%u E=%u/%u F=%u/%u C=%u/%u; host independently judges wheel stop\n",
             plan,(unsigned long)(clock_ms-start),(unsigned long)run.distance_mm,early['H'],counts['H'],early['D'],counts['D'],
             early['E'],counts['E'],early['F'],counts['F'],early['C'],counts['C']);

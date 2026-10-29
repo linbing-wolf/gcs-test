@@ -21,19 +21,21 @@ static void rough_turn_yaw_tests(void)
     }
 }
 
-static void early_reply_handoff_tests(void)
+static void d_after_entry_tests(void)
 {
-    for(unsigned plan=0;plan<2;plan++) {
+    for(unsigned plan=0;plan<2;plan++)for(unsigned batch=0;batch<2;batch++) {
         unsigned offset=0,last_job=0,positions;uint32_t deadline;
+        unsigned job=batch ? 5u : 2u;
         prepare_arm_auto(plan);send_line("task 134+123+314+231");send_line(plan ? "runimu C" : "runimu A");
-        deadline=clock_ms+100000;
+        deadline=clock_ms+200000;
         while(clock_ms<deadline) {
-            if(run.job==2 && vision_tx_count>=offset+6u)break;
-            if(run.job!=2)serve_peer(&offset);
+            if(run.job==job && vision_tx_count>=offset+6u)break;
+            if(run.job!=job)serve_peer(&offset);
             plant_step();if(run.job!=last_job){last_job=run.job;arm_positions=0;}
         }
-        CHECK(clock_ms<deadline && vision_tx_bytes[offset+3u]=='D' && run.turning && run.station_entry_overlap);
-        CHECK(abs(run.heading_control.progress_cdeg)<9000);positions=arm_positions;
+        CHECK(clock_ms<deadline && vision_tx_bytes[offset+3u]=='D');
+        CHECK(!run_active && !run.station_entry_overlap && !station_chassis_busy() && run.state==RUN_STATION);
+        positions=arm_positions;
         peer_reply("MOVEXY,15,7",0);peer_reply("DISC,320,240,0,1",0);
         while(run.station_entry_overlap && clock_ms<deadline) {
             int slide,lift;arm_pose_now(&slide,&lift,NULL,NULL);
@@ -45,7 +47,7 @@ static void early_reply_handoff_tests(void)
         CHECK(vision_tx_count==offset+6u);stop_request();
         peer_reply("MOVEXY,90,90",0);tick(200);CHECK(!run_active && !station_active());
     }
-    puts("PASS early D during180: observation complete permits one request, immediate MOVE/terminal retained, axes/ground work wait for chassis completion; ! cancels");
+    puts("PASS D after arrival: both A/C and both rough visits wait for chassis completion; MOVE/terminal executes once; ! cancels");
 }
 
 static void curved_entry_and_full_routes(void)
@@ -79,6 +81,6 @@ static void curved_entry_and_full_routes(void)
 
 int main(void)
 {
-    rough_turn_yaw_tests();early_reply_handoff_tests();curved_entry_and_full_routes();
+    rough_turn_yaw_tests();d_after_entry_tests();curved_entry_and_full_routes();
     printf("PASS station turn/yaw: %lu assertions; host model only\n",(unsigned long)assertions);return 0;
 }

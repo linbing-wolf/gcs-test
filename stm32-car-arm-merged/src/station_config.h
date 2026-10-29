@@ -94,10 +94,10 @@ static const StationPose stn_rough_grip = {
 #define STN_STORAGE_PLACE_READY 1 /* 暂存放料姿态启用，1启用/0未标定。 */
 #endif
 #ifndef STN_STORAGE_INDEX_12_MM
-#define STN_STORAGE_INDEX_12_MM 150 /* 暂存1↔2号环中心距，mm；两批作业及双向共用。 */
+#define STN_STORAGE_INDEX_12_MM 145 /* 暂存1↔2号环中心距，mm；两批作业及双向共用。 */
 #endif
 #ifndef STN_STORAGE_INDEX_23_MM
-#define STN_STORAGE_INDEX_23_MM 150 /* 暂存2↔3号环中心距，mm；两批作业及双向共用。 */
+#define STN_STORAGE_INDEX_23_MM 145 /* 暂存2↔3号环中心距，mm；两批作业及双向共用。 */
 #endif
 #define STN_STORAGE_INDEX_SIGN -1 /* 环编号增加时的移车方向，-1=后退；前1、中2、后3。 */
 #define STN_STORAGE_INDEX_RPM 60 /* 暂存索引/视觉微调速度请求上限，RPM；允许20~60。 */
