@@ -63,7 +63,7 @@ void uart5_init(u32 bound)
   * @retval нч
   ******************************************************************************
   */
-/* Vision RX is owned by UART4_IRQHandler in src/vision_link.c. */
+/* Vision RX is owned by EXTI15_10/EXTI9_5_IRQHandler in src/vision_link.c. */
 
 void UART5_SendString(char *str) 
 {

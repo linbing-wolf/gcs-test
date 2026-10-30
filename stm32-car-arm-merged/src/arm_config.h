@@ -67,7 +67,7 @@
 #define ARM_PLATFORM_FIRST_DEG        20.0f /* PA2，沿用随包PWM.c三个档位。 */
 #define ARM_PLATFORM_SECOND_DEG      139.0f /* 载物台2号杯对准夹爪的目标角，度；不是环位2。 */
 #define ARM_PLATFORM_THIRD_DEG       256.0f /* 载物台3号杯对准夹爪的目标角，度；不是环位3。 */
-#define ARM_CHASSIS_STOP_HOLD_MS     200u /* 机构会话获取底盘状态的保持时间，ms；非每个抓放步骤的延时。 */
+#define ARM_CHASSIS_STOP_HOLD_MS       0u /* 机构会话收到四轮新鲜状态后不再附加底盘稳定保持，ms。 */
 #define ARM_CHASSIS_LOCK_TIMEOUT_MS 2000u /* 底盘互锁等待诊断时限，ms；具体等待/日志行为见主控。 */
 #define ARM_SERVO_TIME_MS           300u /* 载物台插值时长，ms；减小会更快发完目标，舵机无到位反馈。 */
 #define ARM_YAW_TIME_MS             100u /* 云台插值时长，ms；减小加快指令变化，与末端保持40ms独立。 */

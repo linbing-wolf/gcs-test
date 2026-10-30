@@ -25,7 +25,7 @@ try {
         $yawHashes[$yawFile]=(Get-FileHash -LiteralPath $yawFile -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     [ordered]@{passed=$true;exitCode=$yawExit;sourceHashes=$yawHashes;hardwareAccessed=$false;
-        scope='A/C both rough180 visits: observation PWM starts before90deg while D waits for original chassis arrival; immediate reply executes once; H/F curved entries still overlap turning; full8-job routes and manual !; no hardware acceptance'} |
+        scope='A/C both rough180 visits: observation PWM starts before90deg while D waits for original chassis arrival; immediate reply executes once; curved entries jobs1/3/4/6 wait until path remaining<=STN_CURVED_ENTRY_PREPARE_MM(200mm default), actual PWM still overlaps approach; full8-job routes and manual !; no hardware acceptance'} |
         ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $yawOut 'result.json')
     $yawText | Select-Object -Last 5
     Write-Output $yawOut

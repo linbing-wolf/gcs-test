@@ -17,38 +17,7 @@
 #define VISION_MOTION_QUEUE      32u /* 有界离散指令队列；MOVEXY两轴整体占1条，终包不清空。 */
 
 #ifndef ARM_HOST_TEST
-/* UART4固定使用PC10/PC11(AF8)，避开已无法接线的PC12/PD2。 */
-static void vision_uart_init(void)
-{
-    GPIO_InitTypeDef gpio;
-    USART_InitTypeDef uart;
-    NVIC_InitTypeDef irq;
-    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC,ENABLE);
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_UART4,ENABLE);
-    GPIO_PinAFConfig(GPIOC,GPIO_PinSource10,GPIO_AF_UART4);
-    GPIO_PinAFConfig(GPIOC,GPIO_PinSource11,GPIO_AF_UART4);
-    GPIO_StructInit(&gpio);
-    gpio.GPIO_Pin=GPIO_Pin_10|GPIO_Pin_11;gpio.GPIO_Mode=GPIO_Mode_AF;
-    gpio.GPIO_OType=GPIO_OType_PP;gpio.GPIO_Speed=GPIO_Speed_50MHz;gpio.GPIO_PuPd=GPIO_PuPd_UP;
-    GPIO_Init(GPIOC,&gpio);
-    USART_StructInit(&uart);
-    uart.USART_BaudRate=115200u;uart.USART_Mode=USART_Mode_Rx|USART_Mode_Tx;
-    USART_Init(UART4,&uart);
-    irq.NVIC_IRQChannel=UART4_IRQn;irq.NVIC_IRQChannelPreemptionPriority=1;
-    irq.NVIC_IRQChannelSubPriority=0;irq.NVIC_IRQChannelCmd=ENABLE;
-    NVIC_Init(&irq);
-    USART_ITConfig(UART4,USART_IT_RXNE,ENABLE);
-    USART_Cmd(UART4,ENABLE);
-}
-
-void UART4_IRQHandler(void)
-{
-    uint32_t status=UART4->SR;
-    if(status&(USART_FLAG_RXNE|USART_FLAG_ORE|USART_FLAG_FE|USART_FLAG_NE|USART_FLAG_PE)) {
-        uint8_t byte=(uint8_t)UART4->DR;
-        vision_receive_byte(byte,(uint8_t)((status&(USART_FLAG_ORE|USART_FLAG_FE|USART_FLAG_NE|USART_FLAG_PE))!=0));
-    }
-}
+#include "vision_soft_i2c.h"
 #endif
 
 typedef struct {
@@ -64,6 +33,16 @@ static volatile uint16_t rx_head, rx_tail;
 static volatile uint8_t rx_fault;
 static uint8_t tx_frame[VISION_PAYLOAD_MAX + VISION_FRAME_OVERHEAD];
 static uint8_t tx_length, tx_offset;
+
+static int vision_tx_complete(void)
+{
+    if(tx_offset<tx_length)return 0;
+#ifndef ARM_HOST_TEST
+    return vision_i2c.head==vision_i2c.tail; /* 已排队不等于主机已读走。 */
+#else
+    return 1;
+#endif
+}
 
 static struct {
     uint8_t frame[VISION_PAYLOAD_MAX + VISION_FRAME_OVERHEAD];
@@ -123,7 +102,7 @@ void vision_receive_byte(uint8_t byte, uint8_t uart_error)
     rx_ring[rx_head] = byte;rx_head = next;
 }
 
-/* 发送按TXE分次推进，视觉断线/发送器异常不能堵住急停和底盘主循环。 */
+/* 发送分次排入传输层；主机未取走时保留待发数据，不阻塞主循环。 */
 static int vision_send(const char *payload)
 {
     size_t size = strlen(payload);
@@ -143,8 +122,8 @@ static void vision_transmit(void)
     if (!entry_host_vision_tx_ready()) return;
     entry_host_vision_send_byte(tx_frame[tx_offset++]);
 #else
-    if (USART_GetFlagStatus(UART4,USART_FLAG_TXE) == RESET) return;
-    USART_SendData(UART4,tx_frame[tx_offset++]);
+    if (!vision_i2c_tx_ready()) return;
+    vision_i2c_send_byte(tx_frame[tx_offset++]);
 #endif
 }
 
@@ -182,7 +161,7 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
     memcpy(vision.message, message, (size_t)length + 1u);
     vision.frames++;
     if ((vision.align_state==VISION_PICK_WAITING || vision.stack_state==VISION_PICK_WAITING)
-        && tx_offset>=tx_length
+        && vision_tx_complete()
         && (!strncmp(message,"MOVE,",5) || !strncmp(message,"MOVEY,",6)
             || !strncmp(message,"MOVEXY,",7) || !strncmp(message,"MOVEXY ",7)
             || !strncmp(message,"MOVEXY\t",7) || !strncmp(message,"movexy,",7)
@@ -215,7 +194,7 @@ invalid_motion:
     }
     if (!strncmp(message,"STACK,",6)) {
         int dx,ok=1;
-        if (vision.stack_state!=VISION_PICK_WAITING || tx_offset<tx_length) return;
+        if (vision.stack_state!=VISION_PICK_WAITING || !vision_tx_complete()) return;
         cursor=message+5;
         if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y)) goto invalid_stack;
         dx=x-320;
@@ -237,7 +216,7 @@ invalid_stack:
         return;
     }
     if (vision.align_state==VISION_PICK_WAITING) {
-        if (tx_offset<tx_length || !strcmp(message,"READY")) return;
+        if (!vision_tx_complete() || !strcmp(message,"READY")) return;
         if (!strncmp(message,"DISC,",5)) {
             int cx,cy,dx,ok;
             cursor=message+4;
@@ -257,6 +236,7 @@ invalid_stack:
         cursor = message + 4;
         if (!vision_number(&cursor, &value) || value < 1 || value > 4)
             return;
+        if(!vision_tx_complete())return; /* 主机未取走本次C时，不能用积压PICK提前完成它。 */
         if (vision.pick_state != VISION_PICK_WAITING) {
             snprintf(vision.line, sizeof(vision.line),
                      "[vision] PICK color=%d ignored; no request pending\r\n", value);
@@ -365,9 +345,9 @@ void vision_init(void)
 #ifdef ARM_HOST_TEST
     entry_host_vision_init(115200u);
 #else
-    vision_uart_init();
+    vision_i2c_init();
 #endif
-    arm_output("[vision] UART4 115200 PC11=RX PC10=TX; AA55+CRC8 frames\r\n");
+    arm_output("[vision] soft I2C slave 0x42 PG15=SCL PD7=SDA; mailbox=32 AA55+CRC8\r\n");
 }
 
 void vision_update(uint32_t now)
@@ -378,7 +358,7 @@ void vision_update(uint32_t now)
     __enable_irq();
     if (fault) {
         vision.length = 0;vision.overflows++;
-        arm_output("[vision warning] UART/receive overflow; discard incomplete frame, requests retained\r\n");
+        arm_output("[vision warning] transport/receive overflow; discard incomplete frame, requests retained\r\n");
     }
     vision_transmit();
     if (vision.align_state == VISION_PICK_WAITING
@@ -447,6 +427,9 @@ void vision_pick_result(uint8_t *color, int16_t *x, int16_t *y)
 
 void vision_cancel_pick(void)
 {
+#ifndef ARM_HOST_TEST
+    vision_i2c_cancel_tx();
+#endif
     vision.pick_state = VISION_PICK_IDLE;
     vision.request_color = 0;
     vision.stack_state=VISION_PICK_IDLE;vision.stack_color=0;
@@ -551,6 +534,13 @@ int vision_command(const char *s, uint32_t now)
         return 0;
     if (!strcmp(s, "vision") || !strcmp(s, "vision status")) {
         const char *states[5] = { "idle", "waiting", "ready", "timeout", "fault" };
+#ifndef ARM_HOST_TEST
+        snprintf(vision.line,sizeof(vision.line),"[vision i2c] addr=0x42 mailbox=32 reads=%lu writes=%lu queued=%u invalid=%lu bus_err=%lu\r\n",
+            (unsigned long)vision_i2c.reads,(unsigned long)vision_i2c.writes,
+            (unsigned)((vision_i2c.head-vision_i2c.tail+VISION_I2C_TX_RING)%VISION_I2C_TX_RING),
+            (unsigned long)vision_i2c.invalid,(unsigned long)vision_i2c.bus_errors);
+        arm_output(vision.line);
+#endif
         snprintf(vision.line, sizeof(vision.line),
                  "[vision] state=%s request=%u pick=%u frames=%lu crc_err=%lu bad=%lu overflow=%lu timeout=%lu\r\n",
                  states[vision.pick_state], (unsigned)vision.request_color,

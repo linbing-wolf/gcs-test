@@ -1861,7 +1861,9 @@ static void run_begin_alignment(void)
         if (error <= CAR_HEADING_TOLERANCE_CDEG && error >= -CAR_HEADING_TOLERANCE_CDEG
             && run.heading_control.last_yaw_cdeg == sample.yaw_cdeg
             && run.heading_control.stable_samples >= CAR_HEADING_STABLE_SAMPLES
+#if CAR_HEADING_STABLE_MS > 0
             && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS
+#endif
             && run_velocity_stopped()) {
             text((run.station_departing || run.station_shift) ? "[station heading retained; fresh wheels confirmed]\r\n" : "[heading reused; four wheels stopped]\r\n");
             run_begin_baseline();
@@ -1995,12 +1997,18 @@ static void arm_lock_update(void)
     }
     if (arm_lock.state == 1) {
         if (!ready) arm_lock.settling = 0;
-        else if (!arm_lock.settling) {arm_lock.settling = 1;arm_lock.stable_ms = clock_ms;}
-        else if ((uint32_t)(clock_ms - arm_lock.stable_ms) >= ARM_CHASSIS_STOP_HOLD_MS) {
+        else {
+            if (!arm_lock.settling) {arm_lock.settling = 1;arm_lock.stable_ms = clock_ms;}
+#if ARM_CHASSIS_STOP_HOLD_MS > 0
+            if ((uint32_t)(clock_ms - arm_lock.stable_ms) >= ARM_CHASSIS_STOP_HOLD_MS) {
+#endif
             if (stop_pending) return;
             if (!arm_enabled()) arm_command("arm on", clock_ms);
             arm_lock.state = 2;
             text("[arm interlock acquired: chassis commands locked until parked arm off]\r\n");
+#if ARM_CHASSIS_STOP_HOLD_MS > 0
+            }
+#endif
         }
         if (arm_lock.state == 1 && (uint32_t)(clock_ms - arm_lock.started_ms) > ARM_CHASSIS_LOCK_TIMEOUT_MS) {
             run_warning("four-wheel confirmation delayed; continue polling");
@@ -2185,18 +2193,22 @@ static int run_velocity_stopped(void)
     if (!run.zero_ms || run.velocity_waiting || !run_velocity_feedback_fresh()) return 0;
     for (i = 0; i < MOTOR_COUNT; i++) {
         MotorFeedback *f = &motor_feedback[i];
-        uint32_t after_zero = f->speed_ms - run.zero_ms;
+        int32_t after_zero = (int32_t)(f->speed_ms - run.zero_ms);
         station_log_wheel_speed(i,"stop");
         if (run.obstacle_phase && (f->speed_rpm>CAR_VELOCITY_STOP_RPM || f->speed_rpm<-CAR_VELOCITY_STOP_RPM)) {
             run.stopped_ms=0;return 0; /* 主动obstacle要求真正停稳后才允许反向。 */
         }
-        if (after_zero < CAR_HEADING_SETTLE_MS || after_zero > 0x7fffffffu) {
+        if (after_zero < (int32_t)CAR_HEADING_SETTLE_MS) {
             run.stopped_ms = 0;
             return 0;
         }
     }
     if (!run.stopped_ms) run.stopped_ms = clock_ms;
+#if CAR_HEADING_STABLE_MS > 0
     return (uint32_t)(clock_ms - run.stopped_ms) >= CAR_HEADING_STABLE_MS;
+#else
+    return 1;
+#endif
 }
 
 static void run_velocity_query(void)
@@ -3392,7 +3404,10 @@ static void run_corner_update(void)
         && run_velocity_stopped() && run.heading_control.stable_samples>=CAR_HEADING_STABLE_SAMPLES
         && ((run.corner.visual_terminal && visual_end)
             || (fabsf(point.x-run.corner.x_mm)<=CAR_DISTANCE_TOLERANCE_MM && fabsf(point.y-run.corner.y_mm)<=CAR_DISTANCE_TOLERANCE_MM))
-        && (uint32_t)(run.heading_control.sample_ms-run.heading_control.stable_ms)>=CAR_HEADING_STABLE_MS) {
+#if CAR_HEADING_STABLE_MS > 0
+        && (uint32_t)(run.heading_control.sample_ms-run.heading_control.stable_ms)>=CAR_HEADING_STABLE_MS
+#endif
+        ) {
         run.corner.active=0;run.remaining_mm=0;run.turning=0;run.transition_ready=1;
         run.heading=run.target_heading=run.corner.reversing ? run.corner.start_heading : run.corner.end_heading;
         if(run.corner.reversing){run_return_wait();return;}
@@ -3721,7 +3736,10 @@ static void run_velocity_update(void)
         run.forward_cmd_rpm = forward;run.left_cmd_rpm = left;run.turn_cmd_rpm = turn;
     }
     if (!forward && !left && !turn && run_velocity_stopped() && run.heading_control.stable_samples >= CAR_HEADING_STABLE_SAMPLES
-        && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS) {
+#if CAR_HEADING_STABLE_MS > 0
+        && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS
+#endif
+        ) {
         run.heading = run.target_heading;
         if (run.velocity_phase == VELOCITY_TURN) {
             text(station_speed_log_only() ? "[heading aligned; zero commands confirmed; wheel speed logged only]\r\n"
@@ -3889,7 +3907,7 @@ static void help(void)
     text("ARM: arm platform pose DEG | arm platform 1/2/3 | arm stop | arm off (park first)\r\n");
     text("ARM: arm load1 | arm load3 (or @) = calibrated loading sequences\r\n");
     text("STATION: task 134+123+314+231 | station | station auto on/off (default on)\r\n");
-    text("VISION: vision status/ping/range/pick N/clear; UART4 PC10 TX / PC11 RX AA55+CRC8\r\n");
+    text("VISION: vision status/ping/range/pick N/clear; soft I2C 0x42 PG15 SCL / PD7 SDA mailbox32\r\n");
     text("screen main/chassis/arm/sensors/refresh = read-only USART6 display\r\n");
     text("qr = scanner status | qr init | qr baud 9600/115200 (MCU only)\r\n");
     text("runimu A/C = continuous IMU turn/drive + encoder distance; imu / feedback = diagnostics\r\n");
@@ -4459,7 +4477,7 @@ int main(void)
     }
     text("== runimu full route + manual single-step diagnostics ==\r\n");
     text("== merged chassis + arm serial control; ! always emergency stop ==\r\n");
-    text("[drive] version=20261029-merge2-r111; vision UART4 PC10 TX / PC11 RX\r\n");
+    text("[drive] version=20261030-merge2-r117; vision soft I2C slave 0x42 PG15 SCL / PD7 SDA\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */

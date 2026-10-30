@@ -807,7 +807,7 @@ static void transition_reuse_tests(void)
         if(test==0 || test==4) {
             CHECK(run.velocity_phase==VELOCITY_BASELINE && run.baseline_after_ms==1100 && !run.turning);
             CHECK(run.heading_control.target_cdeg==9000 && run.heading_control.progress_cdeg==9000);
-            CHECK(run.heading_control.stable_samples>=3);
+            CHECK(run.heading_control.stable_samples>=CAR_HEADING_STABLE_SAMPLES);
         } else if(test==3) {
             CHECK(run_active && run.alignment_waiting && run.state!=RUN_FAULT);
             clock_ms++;sample_yaw(0);run_velocity_update();

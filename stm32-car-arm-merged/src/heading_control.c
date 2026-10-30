@@ -48,7 +48,10 @@ HeadingDecision heading_control_update(HeadingControl *control, HeadingSample sa
         if (!control->stable_samples) control->stable_ms = sample.received_ms;
         if (control->stable_samples < 255u) control->stable_samples++;
         if (control->stable_samples >= CAR_HEADING_STABLE_SAMPLES
-            && (uint32_t)(sample.received_ms - control->stable_ms) >= CAR_HEADING_STABLE_MS)
+#if CAR_HEADING_STABLE_MS > 0
+            && (uint32_t)(sample.received_ms - control->stable_ms) >= CAR_HEADING_STABLE_MS
+#endif
+            )
             return HEADING_DONE;
         return HEADING_WAIT;
     }

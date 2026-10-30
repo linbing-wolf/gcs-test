@@ -103,9 +103,9 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_MAP_YAW_SIGN              -1       /* 场地图X向右、Y向下；地图方向递增与左转角相反。 */
 #define CAR_IMU_MAX_AGE_MS           250u
 #define CAR_HEADING_TOLERANCE_CDEG    80       /* 0.80度；实际精度仍需实测。 */
-#define CAR_HEADING_STABLE_MS        300u
-#define CAR_HEADING_STABLE_SAMPLES     3u
-#define CAR_HEADING_SETTLE_MS        100u
+#define CAR_HEADING_STABLE_MS          0u /* 满足原角度/角速度条件后不再额外保持，ms。 */
+#define CAR_HEADING_STABLE_SAMPLES     1u /* 一份满足条件的新IMU样本即可，不等待连续多份。 */
+#define CAR_HEADING_SETTLE_MS          0u /* 零速命令后的新速度反馈不再额外等待100ms。 */
 #define CAR_HEADING_TIMEOUT_MS    20000u       /* 每次航向对齐的总时限。 */
 #define CAR_HEADING_KP_X100          250       /* 2.00 RPM/度；提高转向后段速度，过冲沿误差反向修正。 */
 #define CAR_HEADING_KD_X100           30       /* 0.30 RPM/(度/秒)，测量角速度阻尼。 */
@@ -169,7 +169,7 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
     (CAR_RUN_RETURN_LATERAL_ENABLED != 0 && CAR_RUN_RETURN_LATERAL_ENABLED != 1) || \
     CAR_LATERAL_MAX_RPM < 20 || CAR_LATERAL_MAX_RPM > CAR_WHEEL_MAX_RPM || \
     CAR_OBSTACLE_RETURN_RPM < 20 || CAR_OBSTACLE_RETURN_RPM > CAR_WHEEL_MAX_RPM || \
-    CAR_HEADING_TOLERANCE_CDEG < 1 || CAR_HEADING_STABLE_SAMPLES < 2 || \
+    CAR_HEADING_TOLERANCE_CDEG < 1 || CAR_HEADING_STABLE_SAMPLES < 1 || \
     CAR_HEADING_KP_X100 < 1 || CAR_VELOCITY_CONTROL_MS < 10 || \
     CAR_DRIVE_HEADING_KP_X100 < 1 || CAR_DRIVE_HEADING_KD_X100 < 0 || \
     CAR_DRIVE_HEADING_QUIET_CDEG < 1 || CAR_DRIVE_HEADING_QUIET_RATE_CDEG_S < 1 || \

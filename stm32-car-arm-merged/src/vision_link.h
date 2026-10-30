@@ -2,7 +2,8 @@
 #define VISION_LINK_H
 #include <stdint.h>
 
-/* MaixCAM 视觉链路：UART4，PC11=RX / PC10=TX，115200 8N1。
+/* MaixCAM 视觉链路：模拟I2C从机0x42，PG15=SCL / PD7=SDA；每次读写32字节。
+ * 邮箱首字节N=0..31，随后N个帧流字节，其余填0；无寄存器地址或SMBus计数字节。
  * 帧格式：AA 55 LEN payload CRC8 0D（CRC8 poly=0x07 init=0x00，范围 LEN+payload）。
  * 原料区由上位机在物块转到固定取料口后回 PICK,<颜色>,x,y；
  * 视觉端不会主动重传，超时后由调用方决定是否重新发 C,<颜色>。
@@ -17,7 +18,7 @@ enum {
 
 void vision_init(void);
 void vision_update(uint32_t now);
-/* UART4中断只提交字节；uart_error非零时主循环丢弃受损半包、保留请求。 */
+/* 传输层仅提交有效帧流字节；uart_error沿用既有接口名，非零表示传输错误。 */
 void vision_receive_byte(uint8_t byte, uint8_t uart_error);
 int vision_command(const char *s, uint32_t now);
 

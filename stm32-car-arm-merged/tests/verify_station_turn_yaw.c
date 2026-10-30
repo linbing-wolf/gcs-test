@@ -52,30 +52,36 @@ static void d_after_entry_tests(void)
 
 static void curved_entry_and_full_routes(void)
 {
+    const unsigned expected=(1u<<3)|(1u<<4)|(1u<<6);
     for(unsigned plan=0;plan<2;plan++) {
-        unsigned offset=0,last_job=0,mask=0;uint32_t start,deadline;
+        unsigned offset=0,last_job=0,entry_mask=0,pwm_mask=0;uint32_t start,deadline;
         prepare_arm_auto(plan);send_line("task 134+123+314+231");send_line(plan ? "runimu C" : "runimu A");
         start=clock_ms;deadline=clock_ms+300000;
         while(run.state!=RUN_DONE && clock_ms<deadline) {
-            uint16_t yaw=arm_yaw_us;
+            uint16_t yaw=arm_yaw_us;unsigned preparing=run.station_entry_overlap;
             serve_peer(&offset);plant_step();
+            if(!preparing && run.station_entry_overlap && run.corner.active) {
+                float remaining=run.corner.total_mm-run.corner.s_mm;
+                printf("CURVED_PREPARE plan=%u job=%u remaining_mm=%.3f threshold_mm=%u\n",
+                    plan,run.job,remaining,(unsigned)STN_CURVED_ENTRY_PREPARE_MM);
+                CHECK(remaining<=STN_CURVED_ENTRY_PREPARE_MM);
+                entry_mask|=1u<<run.job;
+            }
             if(run.station_entry_overlap && run_active) {
                 int slide,lift;arm_pose_now(&slide,&lift,NULL,NULL);
                 CHECK(slide==ARM_SLIDE_HOME_MM && lift==ARM_LIFT_HOME_MM);
-                if(run.corner.active && run_corner_rotating_span() && yaw!=arm_yaw_us && run.turn_cmd_rpm) {
-                    HeadingSample sample=heading_snapshot();
-                    int error=abs(heading_wrap_cdeg(CAR_MAP_YAW_SIGN*(int32_t)run.corner.end_heading*9000
-                        - ((int32_t)sample.yaw_cdeg-run.yaw_zero_cdeg)));
-                    if(error>STN_APPROACH_OVERLAP_YAW_CDEG)mask|=1u<<run.job;
+                if(run.corner.active && yaw!=arm_yaw_us && (run.forward_cmd_rpm || run.left_cmd_rpm || run.turn_cmd_rpm)) {
+                    CHECK(run.corner.total_mm-run.corner.s_mm<=STN_CURVED_ENTRY_PREPARE_MM);
+                    pwm_mask|=1u<<run.job;
                 }
             }
             if(run.job!=last_job){last_job=run.job;arm_positions=0;}
         }
-        CHECK(clock_ms<deadline && run.job==8 && mask==((1u<<3)|(1u<<4)|(1u<<6)));
+        CHECK(clock_ms<deadline && run.job==8 && entry_mask==expected && pwm_mask==expected);
         CHECK(run.distance_mm==EXPECTED_FULL_ROUTE_MM && peer_stack_count==3 && arm_ready() && arm_parked());
         CHECK(peer_area_count[1]==1 && peer_area_count[2]==1 && peer_area_count[3]==1 && peer_area_count[4]==1 && peer_area_count[5]==1);
-        printf("STATION_YAW_ROUTE plan=%u elapsed_ms=%lu curved_entry_mask=%u jobs=%u max_endpoint_model_mm=%.3f\n",
-            plan,(unsigned long)(clock_ms-start),mask,run.job,checkpoint_max_error_mm);
+        printf("STATION_YAW_ROUTE plan=%u elapsed_ms=%lu curved_entry_mask=%u pwm_mask=%u jobs=%u max_endpoint_model_mm=%.3f\n",
+            plan,(unsigned long)(clock_ms-start),entry_mask,pwm_mask,run.job,checkpoint_max_error_mm);
     }
 }
 
