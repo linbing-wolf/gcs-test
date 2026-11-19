@@ -63,7 +63,7 @@
 #define ARM_PICK_YAW_DEG             131.0f /* 约1247us，操作者提供的原料抓取角。 */
 #define ARM_PLACE_SLIDE_MM            35 /* 车载杯位取/放共用平推目标，mm；绝对伸出坐标。 */
 #define ARM_PLACE_LIFT_MM            110 /* 放回车载杯位时松爪高度，mm；取出高度100另见station_config.h。 */
-#define ARM_PLACE_YAW_DEG            256.0f /* 约553us，操作者提供的车上放置角。 */
+#define ARM_PLACE_YAW_DEG            260.0f /* 约531us，云台对准车载杯的取放角。 */
 #define ARM_PLATFORM_FIRST_DEG        20.0f /* PA2，沿用随包PWM.c三个档位。 */
 #define ARM_PLATFORM_SECOND_DEG      139.0f /* 载物台2号杯对准夹爪的目标角，度；不是环位2。 */
 #define ARM_PLATFORM_THIRD_DEG       256.0f /* 载物台3号杯对准夹爪的目标角，度；不是环位3。 */

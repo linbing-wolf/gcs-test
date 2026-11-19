@@ -54,6 +54,10 @@ static uint8_t automatic = 1;
 
 static int storage_job(void) {return stn.job==3u || stn.job==6u;}
 static int raw_job(void) {return stn.job==1u || stn.job==4u;}
+static int fixed_ring_job(void)
+{
+    return STN_FIXED_RING_ARM_ENABLED && !stn.debug && (stn.job==2u || stn.job==5u || stn.job==3u);
+}
 static float station_align_yaw(void) {return raw_job() ? ARM_PICK_YAW_DEG : storage_job() ? STN_STORAGE_ALIGN_YAW_DEG : STN_ROUGH_YAW_DEG;}
 
 /* 像素→毫米的控制比例由操作者指定，整数四舍五入；保留正负和完整幅值。 */
@@ -166,8 +170,7 @@ static void push_take_from_platform(uint8_t slot,int lift_mm,uint8_t next_slot)
     /* 直接搬运由后续SS_TRANSFER一次抬至最高，实际110mm放行云台；不在105mm中途停车。 */
     (void)next_slot;
 }
-/* 粗加工放回原盘，只抬高收回，不回车头或自动换盘。 */
-static void push_place_on_platform(uint8_t slot,uint8_t departing,int departure_mm)
+static void push_release_on_platform(uint8_t slot)
 {
 #if ARM_DIRECT_TRANSFER_ENABLED && ARM_LIFT_PARALLEL_ENABLED
     push_transfer(ARM_PLACE_SLIDE_MM,ARM_PLACE_LIFT_MM,ARM_PLACE_YAW_DEG,slot);
@@ -176,6 +179,11 @@ static void push_place_on_platform(uint8_t slot,uint8_t departing,int departure_
 #endif
     push(SS_LIFT, ARM_PLACE_LIFT_MM);
     push(SS_CLAW, (int)(ARM_CLAW_OPEN_DEG * 10.0f));
+}
+/* 原索引流程的放回及离站交接。 */
+static void push_place_on_platform(uint8_t slot,uint8_t departing,int departure_mm)
+{
+    push_release_on_platform(slot);
     if(departing)push(SS_DEPART_BEGIN,departure_mm);
     push_retract_work(departing ? ARM_YAW_HOME_DEG : station_align_yaw(),departing ? 1u : 0u);
 }
@@ -261,6 +269,65 @@ static int push_parallel_index(uint8_t target,uint8_t *ring,int sign,int gap12,i
 }
 #endif
 
+static const StationPose rough_fixed_rings[3] = {
+    {STN_ROUGH_RING1_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_RING1_YAW_DEG},
+    {STN_ROUGH_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_YAW_DEG},
+    {STN_ROUGH_RING3_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_RING3_YAW_DEG}
+};
+static const StationPose storage_fixed_rings[3] = {
+    {STN_STORAGE_RING1_SLIDE_MM, STN_STORAGE_LIFT_MM, STN_STORAGE_RING1_YAW_DEG},
+    {STN_STORAGE_SLIDE_MM, STN_STORAGE_LIFT_MM, STN_STORAGE_YAW_DEG},
+    {STN_STORAGE_RING3_SLIDE_MM, STN_STORAGE_LIFT_MM, STN_STORAGE_RING3_YAW_DEG}
+};
+
+static int fixed_pose_valid(const StationPose *pose)
+{
+    return pose->slide_mm>=ARM_SLIDE_MIN_MM && pose->slide_mm<=ARM_SLIDE_MAX_MM
+        && pose->yaw_deg>=ARM_YAW_MIN_DEG && pose->yaw_deg<=ARM_YAW_MAX_DEG;
+}
+
+const char *station_fixed_ring_calibration_error(void)
+{
+    unsigned ring;
+    if(!STN_FIXED_RING_ARM_ENABLED)return NULL;
+    for(ring=0;ring<3u;ring++) {
+        if(!fixed_pose_valid(&rough_fixed_rings[ring]))
+            return "fixed rough ring poses missing/out of travel; set STN_ROUGH_RING1/RING3 in station_config.h";
+        if(!fixed_pose_valid(&storage_fixed_rings[ring]))
+            return "fixed storage ring poses missing/out of travel; set STN_STORAGE_RING1/RING3 in station_config.h";
+    }
+    return NULL;
+}
+
+static void push_fixed_ring_contact(const StationPose *pose,int lift,uint8_t claw)
+{
+    /* 外侧环位先在高位收回时转向，再伸出和下降，避免长伸出状态横扫相邻物块。 */
+    push_retract();
+    push(SS_YAW,(int)(pose->yaw_deg*10.0f));
+    push(SS_SLIDE,pose->slide_mm);
+    push(SS_LIFT,lift);
+    push(SS_CLAW,claw*10);
+}
+
+static void push_fixed_rough_work(void)
+{
+    uint8_t i;
+    for(i=0;i<3u;i++) {
+        const StationPose *pose=&rough_fixed_rings[task_rings[stn.batch][i]-1u];
+        push_retract();
+        push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM,0u);
+        push_fixed_ring_contact(pose,pose->lift_mm,ARM_CLAW_OPEN_DEG);
+    }
+    for(i=0;i<3u;i++) {
+        const StationPose *pose=&rough_fixed_rings[task_rings[stn.batch][i]-1u];
+        push_fixed_ring_contact(pose,STN_ROUGH_LIFT_MM,ARM_CLAW_CLOSE_DEG);
+        push_retract();
+        push_release_on_platform(i+1u);
+    }
+    push_retract();
+    push_platform_yaw(1u,ARM_YAW_HOME_DEG);
+}
+
 static int build_rough(void)
 {
     uint8_t i, target, ring = 2u, seen = 0;
@@ -282,10 +349,14 @@ static int build_rough(void)
         }
         seen |= (uint8_t)(1u << (target - 1u));
     }
-    /* 每次到站只对准中间2号一次；此后按两侧环距索引，不再逐环请求视觉。 */
+    /* 每次到站只对准中间2号一次。 */
     push_retract();
     push(SS_YAW, (int)(STN_ROUGH_YAW_DEG * 10.0f));
     push(SS_ALIGN, 2);
+    if(fixed_ring_job()) {
+        push_fixed_rough_work();
+        return 1;
+    }
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
     if(!push_parallel_index(task_rings[stn.batch][0],&ring,STN_ROUGH_INDEX_SIGN,STN_ROUGH_INDEX_12_MM,STN_ROUGH_INDEX_23_MM))return 0;
     for(i=0;i<3u;i++) {
@@ -371,6 +442,18 @@ static int build_storage(void)
     }
     push_retract();
     push(SS_YAW, (int)(STN_STORAGE_ALIGN_YAW_DEG * 10.0f));
+    if(fixed_ring_job()) {
+        push(SS_ALIGN,2);
+        for(i=0;i<3u;i++) {
+            const StationPose *ring_pose=&storage_fixed_rings[targets[i]-1u];
+            push_retract();
+            push_take_from_platform(i+1u,STN_ROUGH_PLATFORM_TAKE_LIFT_MM,0u);
+            push_fixed_ring_contact(ring_pose,pose.lift_mm,ARM_CLAW_OPEN_DEG);
+        }
+        push_retract();
+        push_platform_yaw(1u,ARM_YAW_HOME_DEG);
+        return 1;
+    }
     if(!stn.batch)push(SS_ALIGN,2); /* 首次对空环用E；第二次直接在目标环位F识别已有物块。 */
     else stn_text("[station stack entry] second storage: skip E; F,color at each target\r\n");
 #if CAR_ARM_TRANSLATION_OVERLAP_ENABLED
@@ -521,6 +604,10 @@ int station_start(uint8_t node, uint8_t job, uint32_t now)
     if (!arm_ready() || !arm_platform_slot()) {
         stn_fault("arm on + arm pose + arm platform pose 20 must be done before run");
         return -1;
+    }
+    if(fixed_ring_job()) {
+        const char *error=station_fixed_ring_calibration_error();
+        if(error) {stn_fault(error);return -1;}
     }
     if (job == 1u || job == 4u) {
         if (!build_raw()) return -1;
@@ -733,7 +820,7 @@ static void station_parallel_index_update(uint32_t now)
 static void station_approach_overlap(uint32_t now,int terminal_ready)
 {
     const StationStep *next;
-    if(!terminal_ready || stn.debug || stn.approach_preissued || stn.cursor+1u>=stn.count
+    if(!terminal_ready || stn.debug || fixed_ring_job() || stn.approach_preissued || stn.cursor+1u>=stn.count
         || vision_motion_peek_xy(NULL,NULL,0))return;
     next=&program[stn.cursor+1u];
     if(next->kind!=SS_APPROACH || !station_chassis_approach_begin())return;
@@ -980,7 +1067,7 @@ int station_through_departure(int16_t *return_mm)
 int station_departure_ready(void)
 {
     const StationStep *s;
-    if(stn.phase!=ST_RUN || !stn.issued || stn.cursor+1u!=stn.count)return 0;
+    if(stn.phase!=ST_RUN || fixed_ring_job() || !stn.issued || stn.cursor+1u!=stn.count)return 0;
     s=&program[stn.cursor];
     return (s->kind==SS_PLATFORM_YAW && s->platform_slot==1u && !s->value && arm_departure_rotation_active())
         || (s->kind==SS_LOAD1 && s->value && (arm_departure_rotation_active()

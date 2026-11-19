@@ -83,8 +83,8 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 /* 3. 横移往后偏的预补偿，单位：前移 mm/横移米。正值向前，0 关闭。
  * 30/10 为当前调参；横移闭环叠加该平移前馈，IMU负责车头航向。
  */
-#define LEFT_FORWARD_MM_PER_M     10 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
-#define RIGHT_FORWARD_MM_PER_M    10 /* 向右横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
+#define LEFT_FORWARD_MM_PER_M     0 /* 向左横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
+#define RIGHT_FORWARD_MM_PER_M    0 /* 向右横移时的前移预补偿，mm/横移米；增大更向前，0关闭。 */
 
 /* 原地转向只使用IMU闭环；方向位同时供四轮速度混控使用，不能随旧入口删除。 */
 #define CAR_TURN_RPM                  30       /* turn模式手动定角转向默认速度上限，RPM。 */
@@ -218,7 +218,8 @@ static inline uint16_t car_lateral_limit_rpm(uint32_t distance_mm)
 #define CAR_START_BUTTON_GPIO                GPIOC
 #define CAR_START_BUTTON_GPIO_CLOCK          RCC_AHB1Periph_GPIOC
 #define CAR_START_BUTTON_PIN                 GPIO_Pin_9
-#define CAR_START_BUTTON_DEBOUNCE_MS          30u /* 按下/松开消抖时长，ms；与串口runimu C共用启动条件。 */
+#define CAR_START_BUTTON_DEBOUNCE_MS          30u /* 按下/松开消抖时长，ms；松开后复用串口runimu A/C启动条件。 */
+#define CAR_START_BUTTON_LONG_PRESS_MS      1000u /* 有效按住不足此时长从C出发，达到则从A出发；两者都在松开消抖后启动。 */
 /* XM1601：USART1 PB6 TX/PB7 RX，PC0低电平触发脚保持释放。
  * 9600是待现场确认的初值；qr baud命令只改STM32串口，不写模块波特率。 */
 #define CAR_SCANNER_UART_BAUD              9600u

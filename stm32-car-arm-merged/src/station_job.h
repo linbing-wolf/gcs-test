@@ -2,18 +2,19 @@
 #define STATION_JOB_H
 #include <stdint.h>
 
-/* 工位作业：进站朝向匹配后提前转观察角；离物后固定索引与车载搬运并行。
+/* 工位作业：进站朝向匹配后提前转观察角。
  *
  * 原料区：圆盘每把一块物料转到固定取料口，上位机识别到目标颜色后回 PICK，
  *         才执行一次已标定的单块装车动作（arm load1）。
- * 粗加工区：先视觉对准2号基准一次；前1中2后3，随后按固定距离索引抓放，结束回2号。
- *           平台取料高度100mm，落位/抓回高度见station_config.h；作业内126.5/256度直转，离站回0。
- * 暂存区：首次126.5度E对准2号后查G2；第二次跳过E，反查G1/G2，在目标环位F定位已有物块并同色叠放。
+ * 粗加工区：D对准2号后固定车身，按任务环位伸臂放下、抓回，离站回正。
+ * 暂存区：首次E对准2号后固定车身放料；第二次按同色环位移车并使用F视觉补移叠放。
  *
  * 粗加工/暂存姿态未标定时拒绝自动执行（见 station_config.h）。
  */
 void station_init(void);
 int station_auto_enabled(void);
+/* 固定车身取放的两侧环位需要完成标定才能发车。返回NULL表示通过。 */
+const char *station_fixed_ring_calibration_error(void);
 /* 本轮有效任务是否已接收；扫码接收窗口由底盘首次抵达B控制。 */
 int station_task_ready(void);
 void station_task_words(int32_t *first,int32_t *second);

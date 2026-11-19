@@ -1,5 +1,36 @@
 #ifndef STATION_CONFIG_H
 #define STATION_CONFIG_H
+
+/* 两批粗加工和首次暂存：车停在2号环，用每个环独立的平推绝对量(mm)和云台角(度)取放。 */
+#ifndef STN_FIXED_RING_ARM_ENABLED
+#define STN_FIXED_RING_ARM_ENABLED 1 /* 0仅供复测原底盘索引流程。 */
+#endif
+/* -1mm、-999度表示尚未标定。实测对中和净空后填写。 */
+#ifndef STN_ROUGH_RING1_SLIDE_MM
+#define STN_ROUGH_RING1_SLIDE_MM (-1)
+#endif
+#ifndef STN_ROUGH_RING1_YAW_DEG
+#define STN_ROUGH_RING1_YAW_DEG (100.0f)
+#endif
+#ifndef STN_ROUGH_RING3_SLIDE_MM
+#define STN_ROUGH_RING3_SLIDE_MM (-1)
+#endif
+#ifndef STN_ROUGH_RING3_YAW_DEG
+#define STN_ROUGH_RING3_YAW_DEG (-999.0f)
+#endif
+#ifndef STN_STORAGE_RING1_SLIDE_MM
+#define STN_STORAGE_RING1_SLIDE_MM (-1)
+#endif
+#ifndef STN_STORAGE_RING1_YAW_DEG
+#define STN_STORAGE_RING1_YAW_DEG (-999.0f)
+#endif
+#ifndef STN_STORAGE_RING3_SLIDE_MM
+#define STN_STORAGE_RING3_SLIDE_MM (-1)
+#endif
+#ifndef STN_STORAGE_RING3_YAW_DEG
+#define STN_STORAGE_RING3_YAW_DEG (-999.0f)
+#endif
+
 /* 复用现有连续道路和工位并行开关；关闭其中之一即保留原回2环停车路径。 */
 #define STN_ROUGH_THROUGH_ENABLED (CAR_ARM_TRANSLATION_OVERLAP_ENABLED && CAR_RUN_CORNER_ENABLED && CAR_RUN_OMNI_ENABLED)
 #define STN_STORAGE_FIRST_THROUGH_ENABLED STN_ROUGH_THROUGH_ENABLED /* 首次暂存回2环并入离站道路。 */
@@ -42,7 +73,7 @@ typedef struct {
  * 操作者确认：前1、中2、后3；按盘位顺序查任务靶位，放下后同序抓回。
  * 进站先视觉对准2号基准一次，1↔2、2↔3环距分别可调；1↔3一次走两段之和。
  * 2026-10-19指定粗加工平推55mm、放料高度5mm、抓回高度5mm、平台取料高度100mm。
- * 作业内云台只在126.5/256度间直转，离站回0度；不等于实车验收。
+ * 云台角按环位标定；车载杯取放用260度，离站回0度。
  * 姿态全零即使READY=1也拒绝。下面#ifndef仅供电脑测试覆盖，不是标定值。 */
 #ifndef STN_ROUGH_PLACE_READY
 #define STN_ROUGH_PLACE_READY   1 /* 粗加工地面姿态启用标记，1启用/0未标定；不是速度开关。 */
@@ -65,7 +96,7 @@ typedef struct {
 #define STN_ROUGH_LIFT_MM       5 /* 粗加工地面抓回高度，mm；绝对坐标，放料高度由上一项定义。 */
 #endif
 #ifndef STN_ROUGH_YAW_DEG
-#define STN_ROUGH_YAW_DEG     126.5f /* 粗加工观察/放料/抓回角，度；车载杯取放256度在arm_config.h。 */
+#define STN_ROUGH_YAW_DEG     135.0f /* 粗加工观察/2号环放料和抓回角，度。 */
 #endif
 static const StationPose stn_rough_place = {
     STN_ROUGH_SLIDE_MM, STN_ROUGH_PLACE_LIFT_MM, STN_ROUGH_YAW_DEG
@@ -103,8 +134,8 @@ static const StationPose stn_rough_grip = {
 #define STN_STORAGE_INDEX_RPM 60 /* 暂存索引/视觉微调速度请求上限，RPM；允许20~60。 */
 #define STN_STORAGE_SLIDE_MM 55 /* 暂存地面放料平推目标，mm；第一层与第二层共用。 */
 #define STN_STORAGE_LIFT_MM 5 /* 暂存第一层松爪绝对高度，mm；第二层在此基础上加层高。 */
-#define STN_STORAGE_YAW_DEG 126.5f /* 暂存地面放料云台角，度；需与观察角配合。 */
-#define STN_STORAGE_ALIGN_YAW_DEG 126.5f /* 观察/换盘/微调角；放料角同为126.5度。 */
+#define STN_STORAGE_YAW_DEG 135.0f /* 暂存2号环放料及第二批索引码垛角，度。 */
+#define STN_STORAGE_ALIGN_YAW_DEG 135.0f /* 暂存观察/换盘/视觉微调角，度。 */
 #ifndef STN_STORAGE_LAYER_LIFT_MM
 #define STN_STORAGE_LAYER_LIFT_MM 60 /* 物块/层高增量，mm；第二层=5+60=65，非从车上取料高度。 */
 #endif

@@ -1,4 +1,5 @@
 #include "vision_link.h"
+#include "start_scan.h"
 #include "arm_control.h"
 #ifdef ARM_HOST_TEST
 #include "../tests/vision_host_io.h"

@@ -155,8 +155,10 @@ static void vision_i2c_edges(void)
         }
     }
 }
-void EXTI15_10_IRQHandler(void) {vision_i2c_edges();}
+#ifndef CHASSIS_OBSTACLE_TEST
+void EXTI15_10_IRQHandler(void) {vision_i2c_edges();start_scan_echo_irq();}
 void EXTI9_5_IRQHandler(void) {vision_i2c_edges();}
+#endif
 static void vision_i2c_init(void)
 {
     GPIO_InitTypeDef gpio;EXTI_InitTypeDef edge;NVIC_InitTypeDef irq;

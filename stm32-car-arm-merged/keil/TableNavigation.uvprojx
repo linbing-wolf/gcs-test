@@ -835,6 +835,11 @@
               <FilePath>..\src\main_table_nav.c</FilePath>
             </File>
             <File>
+              <FileName>start_scan.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\src\start_scan.c</FilePath>
+            </File>
+            <File>
               <FileName>stm32f4xx_it.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\vendor\stm32\USER\stm32f4xx_it.c</FilePath>
