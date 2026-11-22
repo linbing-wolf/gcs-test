@@ -1,0 +1,15 @@
+{
+  "release": "3.9.97-i2c-gpio",
+  "target_y": 318,
+  "direction_enabled": true,
+  "direction_fallback": 1,
+  "files": {
+    "protocol.py": "08a2517dd5b9d81517a274e1139758a85d7a1454cef408d1ab080b660f2036ad",
+    "main.py": "be4b197bd55142df516aa3f9ecb092e9c8113f4bc9b9248e7648a881b5536006",
+    "config.py": "55565042c0b91c812703d4cfca44eb2d0deaf7a0a1eaba1872de06d2b904feec",
+    "tasks.py": "7bf26c7eab2e1bf9546adae79356f981b6b3227a9c5d22ded0e7c86b935f677e",
+    "h_direction.py": "f80e2c24adc046e6e28266057f1f779c8aa31953c031a88b4685c6341ca2a6a4",
+    "material_state.py": "06bc9241f316124e7218626fe20ffd9c0ce511db9c9644344604a96e0005cdc3",
+    "app.yaml": "d5f5041b80f2eb5372511e0c8c9d18304642daf28588539cd239a4f48c919688"
+  }
+}
