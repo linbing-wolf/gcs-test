@@ -49,12 +49,12 @@ class DirectionTests(unittest.TestCase):
         self.assertEqual(tracker.direction, hd.UNKNOWN)
 
     def test_packets(self):
-        self.assertEqual(hd.pack_colors("3", "2", hd.CW), "HCOLORS,3,2,CW")
-        self.assertEqual(hd.pack_disc(383, 151, 63, "3", "2", hd.UNKNOWN),
-                         "HDISC,383,151,63,3,2,UNKNOWN")
+        self.assertEqual(hd.pack_colors("3", "2", hd.CW), "HCOLORS,3,2,0")
+        self.assertEqual(hd.pack_disc(383, 151, 63, "3", "2", hd.CCW),
+                         "HDISC,383,151,63,3,2,1")
         with self.assertRaises(ValueError):
             hd.pack_colors("1", "1", hd.CCW)
-        payload = hd.pack_disc(383, 151, 63, "3", "2", hd.UNKNOWN)
+        payload = hd.pack_disc(383, 151, 63, "3", "2", hd.CCW)
         frame = protocol.encode_frame(payload)
         self.assertEqual(frame[:2], b"\xaa\x55")
         self.assertEqual(frame[2], len(payload))
@@ -62,10 +62,24 @@ class DirectionTests(unittest.TestCase):
         self.assertEqual(frame[-2], protocol.crc8(frame[2:-2]))
         self.assertEqual(frame[-1], 13)
 
+    def test_fallback_and_packet_validation(self):
+        for fallback in (0, 1):
+            tracker = hd.DirectionTracker(fallback)
+            self.assertIsNone(tracker.direction)
+            self.assertEqual(tracker.effective_direction, fallback)
+            self.assertEqual(hd.pack_colors("1", "2", tracker.effective_direction),
+                             "HCOLORS,1,2,%d" % fallback)
+        for invalid in (None, True, "1", -1, 2):
+            with self.assertRaises(ValueError):
+                hd.DirectionTracker(invalid)
+            with self.assertRaises(ValueError):
+                hd.pack_colors("1", "2", invalid)
+
     def test_enabled_task_both_directions_and_unknown(self):
-        for step, suffix, first, second in [(10, "CCW", "3", "1"),
-                                            (-10, "CW", "1", "3"),
-                                            (0, "UNKNOWN", "3", "1")]:
+        for step, suffix, first, second, fallback in [(10, "1", "3", "1", 0),
+                                                      (-10, "0", "1", "3", 1),
+                                                      (0, "1", "3", "1", 1),
+                                                      (0, "0", "3", "1", 0)]:
             def item(code, x):
                 return dict(code=code, cx=x, cy=240, x=x-15, y=225,
                             w=30, h=30, pixels=200, src="ai")
@@ -83,6 +97,7 @@ class DirectionTests(unittest.TestCase):
             link = smoke._Link([])
             link.poll_command = lambda: "R" if clock[0] > 2000 else None
             with patch.multiple(smoke.config, H_DIRECTION_PACKET_ENABLED=True,
+                                H_DIRECTION_FALLBACK=fallback,
                                 PLATE_DEBUG_SAVE=False, PLATE_LIGHT_ON=False,
                                 PICK_STOP_HOLD_MS=100, H_MATERIAL_COLOR_FRAMES=2,
                                 H_MATERIAL_CENTER_FRAMES=2, H_MATERIAL_TARGET_Y=240,

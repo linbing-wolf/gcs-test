@@ -575,3 +575,4 @@ SCENE_SETTLE_MIN_MS = 20       # 至少等这么久，防止刚收到命令就�
 
 # Direction-format experiment, disabled until both ends are ready.
 H_DIRECTION_PACKET_ENABLED = False
+H_DIRECTION_FALLBACK = 1  # 0=顺时针，1=逆时针；自动判向证据不足时采用

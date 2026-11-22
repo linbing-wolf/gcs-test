@@ -1037,7 +1037,7 @@ def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
     result = pack_none("H")
     colors = []
     direction_enabled = bool(getattr(config, "H_DIRECTION_PACKET_ENABLED", False))
-    direction_tracker = h_direction.DirectionTracker()
+    direction_tracker = h_direction.DirectionTracker(getattr(config, "H_DIRECTION_FALLBACK", 1))
     direction_frozen = False
     tracks = {}
     stopped_colors = []
@@ -1104,7 +1104,7 @@ def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
                     stopped.append(item)
             tracks = next_tracks
             stopped.sort(key=lambda item: item["raw"][0] if direction_enabled
-                         and direction_tracker.direction == h_direction.CW else -item["x"])
+                         and direction_tracker.effective_direction == h_direction.CW else -item["x"])
 
             if not colors and not stopped:
                 ordered = sorted(pair_candidates.values(), key=lambda item: -item["x"])
@@ -1144,11 +1144,13 @@ def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
                         break
 
             if len(colors) == 2 and not colors_sent:
-                payload = (h_direction.pack_colors(*colors, direction_tracker.direction)
+                payload = (h_direction.pack_colors(*colors, direction_tracker.effective_direction)
                            if direction_enabled else pack_h_colors(*colors))
                 link.send_payload(payload)
                 screen_echo.set_tx(payload)
                 colors_sent = True
+                if direction_enabled:
+                    direction_frozen = True
                 log("[H-material] 已发送 %s" % payload)
 
             item = terminal or correction
@@ -1162,7 +1164,8 @@ def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
                       "colors": list(colors), "stopped_colors": list(stopped_colors),
                       "moving_pair": shortcut, "moves": moves,
                       "direction_enabled": direction_enabled,
-                      "direction": direction_tracker.direction}
+                      "direction": direction_tracker.effective_direction,
+                      "direction_assumed": direction_tracker.direction is h_direction.UNKNOWN}
             rec.snap(img, fields, "detect")
             if disp is not None:
                 draw_roi(img, roi)
@@ -1173,7 +1176,7 @@ def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
                 disp.show(img)
 
             if terminal is not None and (not (x_out or y_out) or max_moves == 0):
-                result = (h_direction.pack_disc(center[0], center[1], dx, *colors, direction_tracker.direction)
+                result = (h_direction.pack_disc(center[0], center[1], dx, *colors, direction_tracker.effective_direction)
                           if direction_enabled else pack_h_disc(center[0], center[1], dx, *colors))
                 break
             # Keep one correction available for the final material, which owns the result.
@@ -1193,7 +1196,7 @@ def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
                 rec.data(dict(fields, sent=payload), "move")
                 log("[H-material] dx=%+d dy=%+d 超差，发 %s" % (dx, dy, payload))
                 if terminal is not None and moves >= max_moves:
-                    result = (h_direction.pack_disc(center[0], center[1], dx, *colors, direction_tracker.direction)
+                    result = (h_direction.pack_disc(center[0], center[1], dx, *colors, direction_tracker.effective_direction)
                           if direction_enabled else pack_h_disc(center[0], center[1], dx, *colors))
                     rec.data(dict(fields, moves=moves, reason="budget_exhausted"), "final_budget")
                     log("[H-material] 纠偏次数用尽，带末轮动作前坐标回 %s" % result)

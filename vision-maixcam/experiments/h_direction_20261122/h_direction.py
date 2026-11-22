@@ -1,18 +1,25 @@
 """Optional H direction protocol. Raw image rightward motion means CCW."""
 
-UNKNOWN = "UNKNOWN"
-CW = "CW"
-CCW = "CCW"
+UNKNOWN = None
+CW = 0
+CCW = 1
 
 
 class DirectionTracker:
     """Lock direction after three displacement windows agree, before car movement."""
 
-    def __init__(self):
+    def __init__(self, fallback=CCW):
+        if type(fallback) is not int or fallback not in (CW, CCW):
+            raise ValueError("H direction fallback must be 0 or 1")
+        self.fallback = fallback
         self.direction = UNKNOWN
         self.anchors = {}
         self.vote = 0
         self.count = 0
+
+    @property
+    def effective_direction(self):
+        return self.fallback if self.direction is UNKNOWN else self.direction
 
     def reset_motion(self):
         self.anchors.clear()
@@ -79,5 +86,6 @@ def pack_disc(x, y, dx, first, second, direction):
 def _validate(first, second, direction):
     if str(first) not in ("1", "2", "3", "4") or str(second) not in ("1", "2", "3", "4"):
         raise ValueError("invalid H color")
-    if str(first) == str(second) or direction not in (UNKNOWN, CW, CCW):
+    if (str(first) == str(second) or type(direction) is not int
+            or direction not in (CW, CCW)):
         raise ValueError("invalid H pair or direction")
