@@ -218,7 +218,7 @@ ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（中心稳�
 ALIGN_MODE        = "movexy"  # movexy=MOVEXY,dx,dy 双轴并行；split=MOVE + MOVEY
 ALIGN_ONE_SHOT    = True    # True = 最多发一轮 MOVEXY（或 MOVE/MOVEY），D/E 等待视觉复核
 ALIGN_ONE_SHOT_OK = 1       # 保留旧配置键；D/E 主动对齐结果由复核决定
-DISC_OK_ON_DETECTION = False  # D/E 联调：有识别坐标的 DISC 可统一回 ok=1
+DISC_OK_ON_DETECTION = True  # D/E 联调：有识别坐标的 DISC 可统一回 ok=1
 # D/E 主动对齐在发出动作后复核；F/H 一次性模式沿用动作前坐标。
 ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 5px
 ALIGN_GAIN        = 0.65    # 比例系数：按实测 k≈1.48 取 1/k；先走大部分，第二轮只补残差

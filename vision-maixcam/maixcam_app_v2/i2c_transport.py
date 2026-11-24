@@ -240,7 +240,8 @@ class I2CTransport:
                     except queue.Empty:
                         pass
                 now = time.monotonic()
-                can_read = not self._rx.full()
+                # Do not start a read while retrying the tail of a frame.
+                can_read = not frame_in_progress and not self._rx.full()
                 read_due = can_read and now >= next_read
                 write_due = bool(link.queue) and now >= retry_at
                 # Application writes contain one complete AA55 frame. Once its

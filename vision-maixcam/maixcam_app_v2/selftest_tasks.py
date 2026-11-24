@@ -588,28 +588,28 @@ def main():
               lk.sent[:3])
         check('收敛到中心', abs(cam.circle_x - 640) > 0, 'circle_x=%d' % cam.circle_x)
 
-        # 机构不动 → 次数用尽后带偏差回复 ok=0
+        # 机构不动 → 次数用尽后带偏差回复 ok=1
         config.ALIGN_MAX_ITER = 3
         cam2 = FakeCam(1, circle_x=640, circle_y=240)
         lk2 = _Link([])
         out2 = frame_str(tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk2))).split(',')
-        check('超次数 → 回 ok=0', out2[0] == 'DISC' and out2[-1] == '0', out2)
+        check('超次数 → 回 ok=1', out2[0] == 'DISC' and out2[-1] == '1', out2)
         check('超次数仍发了 3 条 MOVEXY',
               sum(1 for x in lk2.sent if x.startswith('MOVEXY,')) == 3, lk2.sent)
-        with patch.object(config, 'DISC_OK_ON_DETECTION', True):
+        for tag in ('D', 'E'):
             tasks.reset_guard()
             test_link = _Link([])
-            result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
+            result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, tag,
                                      p=P_ID, ctl=tasks.TaskCtl(test_link))
             check('联调模式：超差仍回真实坐标和 ok=1',
                   result == ','.join([*out2[:-1], '1']), result)
             with patch.object(vision, 'find_disc_center', return_value=None):
-                result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
+                result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, tag,
                                          p=P_ID, ctl=tasks.TaskCtl(_Link([])))
-            check('联调模式：无圆盘仍回 NONE,D', result == 'NONE,D', result)
+            check('无圆盘仍回 NONE,' + tag, result == 'NONE,' + tag, result)
 
-        # 一次性模式：只发一条移动指令，复核失败返回 ok=0
+        # 一次性模式：只发一条移动指令，复核失败返回 ok=1
         config.ALIGN_MAX_ITER = old_iter
         config.ALIGN_ONE_SHOT = True
         config.ALIGN_ONE_SHOT_OK = 0
@@ -619,8 +619,8 @@ def main():
                                          timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk5))).split(',')
         check('一次性模式：只发 1 条 MOVEXY',
               sum(1 for x in lk5.sent if x.startswith('MOVEXY,')) == 1, lk5.sent)
-        check('一次性模式：未移动回 DISC ok=0',
-              out5[0] == 'DISC' and out5[-1] == '0', out5)
+        check('一次性模式：未移动回 DISC ok=1',
+              out5[0] == 'DISC' and out5[-1] == '1', out5)
 
         tasks.reset_guard()
         cam_ok = FakeCam(1, circle_x=345, circle_y=240)
@@ -645,7 +645,7 @@ def main():
                                          timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
         check('MOVE 100x 系数（无上限）',
               any(x == 'MOVEXY,25600,0' for x in lk6.sent), lk6.sent)
-        check('MOVE 100x 未移动仍回 ok=0', out6[0] == 'DISC' and out6[-1] == '0', out6)
+        check('MOVE 100x 未移动仍回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
         config.MOVE_SCALE = 1.0
 
         # 单轴限幅：ALIGN_STEP_MAX=20 → 320px 误差只发 20
