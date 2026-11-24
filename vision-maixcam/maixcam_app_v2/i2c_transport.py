@@ -226,13 +226,15 @@ class I2CTransport:
             link = SynchronousTransport(dev, baud)
             link.separate_write = True
             self._ready.set()
-            print('[I2C-ASYNC] worker enabled; empty read gap=50ms, data gap=20ms; TX between scheduled reads', flush=True)
+            print('[I2C-ASYNC] worker enabled; complete TX frames stay contiguous; scheduled RX between frames', flush=True)
             next_read = 0
             retry_at = 0
+            frame_in_progress = False
             while not self._stop.is_set():
                 self._wake.clear()
                 # Only this thread touches link.queue, GPIO, and counters.
                 if not link.queue:
+                    frame_in_progress = False
                     try:
                         link.write(self._tx.get_nowait())
                     except queue.Empty:
@@ -241,6 +243,10 @@ class I2CTransport:
                 can_read = not self._rx.full()
                 read_due = can_read and now >= next_read
                 write_due = bool(link.queue) and now >= retry_at
+                # Application writes contain one complete AA55 frame. Once its
+                # first mailbox is sent, finish its remaining mailboxes before
+                # a normal command read: a GPIO read can itself take >100ms.
+                write_poll = write_due and (frame_in_progress or not read_due)
                 if not read_due and not write_due:
                     deadlines = [now + .2]
                     if can_read:
@@ -251,12 +257,15 @@ class I2CTransport:
                     continue
                 link.next_poll = 0
                 failures = link.counts['tx_error'] + link.counts['rx_error']
-                data = link.read(allow_rx=can_read, allow_tx=not read_due)
+                queued_before = len(link.queue)
+                data = link.read(allow_rx=can_read, allow_tx=write_poll)
                 completed = time.monotonic()
                 failed = link.counts['tx_error'] + link.counts['rx_error'] > failures
-                if not read_due:
+                if len(link.queue) < queued_before:
+                    frame_in_progress = bool(link.queue)
+                if write_poll:
                     retry_at = completed + (.1 if failed else 0)
-                if read_due or data:
+                if (read_due and not write_poll) or data:
                     next_read = completed + (.1 if failed else .02 if data else .05)
                 if data:
                     # Only this worker adds RX data. If the queue fills, leave
