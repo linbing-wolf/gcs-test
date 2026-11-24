@@ -55,6 +55,11 @@ auth.json
 *.exe
 __pycache__/
 *.pyc
+/vision-maixcam/_from_device/
+/vision-maixcam/experiments/
+/vision-maixcam/h_current_example/
+/vision-maixcam/maixcam_app_v2/dist/*.zip
+/stm32-car-arm-merged/evidence/
 /stm32-car-test/keil/*.uvguix.*
 /stm32-car-test/keil/OBJ/*
 !/stm32-car-test/keil/OBJ/table_navigation.axf

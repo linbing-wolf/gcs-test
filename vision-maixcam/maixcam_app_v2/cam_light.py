@@ -46,12 +46,16 @@ def set_on(on):
     if not init():
         return False
     want = bool(on)
+    previous = bool(_STATE["on"])
     try:
         _STATE["obj"].value(1 if want else 0)
         _STATE["on"] = want
+        if want != previous:
+            print("[灯] %s" % ("ON" if want else "OFF"))
         return want
     except Exception as e:
         _STATE["err"] = str(e)
+        print("[灯] %s失败: %s" % ("点亮" if want else "熄灭", e))
         return False
 
 

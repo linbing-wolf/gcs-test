@@ -35,6 +35,13 @@ static struct {
     uint8_t align_state, align_stage, align_move_pending; /* MOVE为过程反馈，DISC才结束D/E任务。 */
     int16_t align_error;
     uint32_t align_ms, align_move_ms;
+#if VISION_H_MATERIAL_TEST
+    struct {
+        uint8_t state, first, second, move_pending;
+        int16_t offset, offset_y;
+        uint32_t started_ms, move_ms;
+    } material;
+#endif
     int16_t pick_x, pick_y;
     uint32_t request_ms, pick_warning_ms, align_warning_ms;
     uint8_t busy_reported, mismatch_reported;
@@ -123,6 +130,80 @@ static int vision_number(const char **cursor, int *value)
     return 1;
 }
 
+#if VISION_H_MATERIAL_TEST
+static void vision_h_handle(const char *message, uint8_t length, uint32_t now)
+{
+    const char *cursor;
+    int x,y,offset,first,second;
+    if (!strncmp(message,"COLORS,",7)) {
+        if (length!=10u || message[7]<'1' || message[7]>'4' || message[8]!=','
+            || message[9]<'1' || message[9]>'4' || message[7]==message[9]) {
+            vision.bad_frames++;return;
+        }
+        if (vision.material.first) return;
+        vision.material.first=(uint8_t)(message[7]-'0');
+        vision.material.second=(uint8_t)(message[9]-'0');
+        snprintf(vision.line,sizeof(vision.line),"[vision H] COLORS,%u,%u\r\n",
+                 (unsigned)vision.material.first,(unsigned)vision.material.second);
+        arm_output(vision.line);
+        return;
+    }
+    if (!strncmp(message,"MOVEXY,",7)) {
+        cursor=message+6;
+        if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y) || *cursor) {
+            vision.bad_frames++;return;
+        }
+        vision.material.offset=(int16_t)x;
+        vision.material.offset_y=(int16_t)y;
+        vision.material.move_pending=0;
+        snprintf(vision.line,sizeof(vision.line),"[vision H] MOVEXY,%d,%d (px)\r\n",x,y);
+        arm_output(vision.line);
+        return;
+    }
+    if (!strncmp(message,"MOVE,",5)) {
+        cursor=message+4;
+        if (!vision_number(&cursor,&offset) || *cursor) {vision.bad_frames++;return;}
+        vision.material.offset=(int16_t)offset;
+        vision.material.offset_y=0;
+        vision.material.move_ms=now;
+        vision.material.move_pending=1;
+        snprintf(vision.line,sizeof(vision.line),"[vision H] MOVE,%d (px)\r\n",offset);
+        arm_output(vision.line);
+        return;
+    }
+    if (!strncmp(message,"DISC,",5)) {
+        cursor=message+4;
+        if (!vision_number(&cursor,&x) || !vision_number(&cursor,&y)
+            || !vision_number(&cursor,&offset) || !vision_number(&cursor,&first)
+            || !vision_number(&cursor,&second) || *cursor
+            || x<0 || x>=640 || y<0 || y>=480
+            || first<1 || first>4 || second<1 || second>4 || first==second) {
+            vision.bad_frames++;return;
+        }
+        if (vision.material.first && (vision.material.first!=first || vision.material.second!=second)) {
+            vision.bad_frames++;
+            arm_output("[vision H] terminal colors differ from COLORS; request retained\r\n");
+            return;
+        }
+        vision.material.first=(uint8_t)first;
+        vision.material.second=(uint8_t)second;
+        vision.material.state=VISION_PICK_READY;
+        vision.material.move_pending=0;
+        snprintf(vision.line,sizeof(vision.line),"[vision H] ready: DISC,%d,%d,%d,%d,%d\r\n",
+                 x,y,offset,first,second);
+        arm_output(vision.line);
+        return;
+    }
+    if (!strcmp(message,"NONE,H") || !strncmp(message,"ERR,",4)) {
+        vision.material.state=VISION_PICK_FAULT;
+        vision.material.move_pending=0;
+        snprintf(vision.line,sizeof(vision.line),"[vision H] fault: %s; colors=%u,%u\r\n",
+                 message,(unsigned)vision.material.first,(unsigned)vision.material.second);
+        arm_output(vision.line);
+    }
+}
+#endif
+
 static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
 {
     char message[VISION_PAYLOAD_MAX + 1u];
@@ -133,6 +214,12 @@ static void vision_handle(const uint8_t *payload, uint8_t length, uint32_t now)
     message[length] = 0;
     memcpy(vision.message, message, (size_t)length + 1u);
     vision.frames++;
+#if VISION_H_MATERIAL_TEST
+    if (vision.material.state==VISION_PICK_WAITING) {
+        if (tx_offset>=tx_length) vision_h_handle(message,length,now);
+        return;
+    }
+#endif
     if (!strncmp(message,"STACK,",6)) {
         if (vision.stack_state!=VISION_PICK_WAITING || tx_offset<tx_length) return;
         cursor=message+5;
@@ -332,6 +419,15 @@ void vision_update(uint32_t now)
         rx_tail = (uint16_t)((rx_tail + 1u) % VISION_RX_RING);
         vision_byte(byte, now);
     }
+#if VISION_H_MATERIAL_TEST
+    if (vision.material.state==VISION_PICK_WAITING
+        && (uint32_t)(now-vision.material.started_ms)>=VISION_ALIGN_TIMEOUT_MS) {
+        vision.material.state=VISION_PICK_TIMEOUT;
+        vision.material.move_pending=0;
+        vision.timeouts++;
+        arm_output("[vision H] timed out waiting for terminal reply\r\n");
+    }
+#endif
     if (vision.pick_state == VISION_PICK_WAITING
         && (uint32_t)(now - vision.pick_warning_ms) >= VISION_PICK_TIMEOUT_MS) {
         vision.pick_warning_ms = now;
@@ -350,6 +446,9 @@ void vision_request_pick(uint8_t color, uint32_t now)
     vision.stack_state=VISION_PICK_IDLE;vision.stack_color=0;
     if (color < 1u || color > 4u)
         return;
+#if VISION_H_MATERIAL_TEST
+    memset(&vision.material,0,sizeof(vision.material));
+#endif
     snprintf(payload, sizeof(payload), "C,%u", (unsigned)color);
     vision.pick_state = VISION_PICK_WAITING;
     vision.request_color = color;
@@ -384,6 +483,9 @@ void vision_cancel_pick(void)
     vision.stack_state=VISION_PICK_IDLE;vision.stack_color=0;
     vision.align_state = VISION_PICK_IDLE;
     vision.align_stage = ALIGN_IDLE;vision.align_move_pending=0;
+#if VISION_H_MATERIAL_TEST
+    memset(&vision.material,0,sizeof(vision.material));
+#endif
     tx_length = tx_offset = 0;vision.length = 0;
     __disable_irq();rx_tail = rx_head;rx_fault = 0;__enable_irq();
 }
@@ -429,6 +531,39 @@ int vision_align_take_move(int16_t *offset, uint32_t *received_ms)
     return 1;
 }
 
+#if VISION_H_MATERIAL_TEST
+int vision_request_h(uint32_t now)
+{
+    if (tx_offset<tx_length || vision.pick_state==VISION_PICK_WAITING
+        || vision.stack_state==VISION_PICK_WAITING || vision.align_state==VISION_PICK_WAITING
+        || vision.material.state==VISION_PICK_WAITING) return 0;
+    vision_cancel_pick();
+    if (!vision_send("H")) {vision.material.state=VISION_PICK_FAULT;return 0;}
+    vision.material.started_ms=now;
+    vision.material.state=VISION_PICK_WAITING;
+    return 1;
+}
+
+int vision_h_state(void) {return vision.material.state;}
+
+int vision_h_colors(uint8_t *first, uint8_t *second)
+{
+    if (!vision.material.first) return 0;
+    if (first) *first=vision.material.first;
+    if (second) *second=vision.material.second;
+    return 1;
+}
+
+int vision_h_take_move(int16_t *offset, uint32_t *received_ms)
+{
+    if (vision.material.state!=VISION_PICK_WAITING || !vision.material.move_pending) return 0;
+    vision.material.move_pending=0;
+    if (offset) *offset=vision.material.offset;
+    if (received_ms) *received_ms=vision.material.move_ms;
+    return 1;
+}
+#endif
+
 const char *vision_last_message(void) { return vision.message; }
 
 int vision_command(const char *s, uint32_t now)
@@ -451,10 +586,28 @@ int vision_command(const char *s, uint32_t now)
         snprintf(vision.line,sizeof(vision.line),"[vision stack] state=%u color=%u x=%d y=%d\r\n",
                  (unsigned)vision.stack_state,(unsigned)vision.stack_color,(int)vision.stack_x,(int)vision.stack_y);
         arm_output(vision.line);
+#if VISION_H_MATERIAL_TEST
+        snprintf(vision.line,sizeof(vision.line),"[vision H] state=%s colors=%u,%u offset_px=%d offset_y_px=%d\r\n",
+                 states[vision.material.state],(unsigned)vision.material.first,
+                 (unsigned)vision.material.second,(int)vision.material.offset,
+                 (int)vision.material.offset_y);
+        arm_output(vision.line);
+#endif
         snprintf(vision.line, sizeof(vision.line), "[vision] last=\"%s\"\r\n", vision.message);
         arm_output(vision.line);
         return 1;
     }
+#if VISION_H_MATERIAL_TEST
+    if (!strcmp(s,"vision h")) {
+        arm_output(vision_request_h(now) ? "[vision H] queued H (transport-only)\r\n"
+                                         : "[vision H] rejected: active request or transmit busy\r\n");
+        return 1;
+    }
+    if (vision.material.state==VISION_PICK_WAITING && strcmp(s,"vision clear")) {
+        arm_output("[vision H] active; use vision status or vision clear\r\n");
+        return 1;
+    }
+#endif
     if (!strcmp(s, "vision ping")) {
         if (!vision_send("D")) {arm_output("[vision rejected: transmit busy]\r\n");return 1;}
         arm_output("[vision] queued D; expect MOVE/DISC frame\r\n");

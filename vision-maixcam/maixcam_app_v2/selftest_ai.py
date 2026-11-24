@@ -13,6 +13,7 @@
 
 import sys
 import types
+from unittest.mock import patch
 
 # ----------------------------------------------------------------------
 # 造假 maix 包（只做导入与最小行为，不依赖真机）
@@ -280,6 +281,63 @@ def main():
         FakeOneHit(hit, prob=0.80), imgN, roiN, vision.COLOR_RED,
         tile=96, stride=96, min_prob=0.75, min_tiles=2)
     check("单块 prob=0.80（<0.90）→ 仍要求 2 块，判未命中", it2 is None)
+
+    print("[F] 分块连通分量合并与逐簇过滤")
+
+    class FakeTileMap(FakeAI):
+        def __init__(self, positions, code):
+            super().__init__(code=code, prob=0.97)
+            self.positions = dict((pos, 0.97) for pos in positions)
+
+        def classify_label(self, img, roi=None):
+            if tuple(roi[:2]) in self.positions:
+                return super().classify_label(img, roi)
+            return "background", 0.99, config.AI_LABELS.index("background")
+
+    bridge = [(0, 0), (192, 0), (96, 96)]
+    outputs = []
+    for positions in (bridge, list(reversed(bridge))):
+        outputs.append(vision.find_stack_color_center_ai(
+            FakeTileMap(positions, vision.COLOR_RED), imgN, [0, 0, 288, 192],
+            vision.COLOR_RED, tile=96, stride=96, min_tiles=3))
+    check("后续桥接块合并两个已有簇", outputs[0] is not None and outputs[0]['ai_tiles'] == 3,
+          str(outputs[0]))
+    check("候选映射输入顺序不影响输出", outputs[0] == outputs[1])
+    # 将实际聚类输入倒序，验证桥接连通性和最终输出不依赖扫描次序。
+    with patch.object(vision, 'sorted',
+                      lambda seq, key: list(reversed(sorted(seq, key=key))), create=True):
+        reversed_output = vision.find_stack_color_center_ai(
+            FakeTileMap(bridge, vision.COLOR_RED), imgN, [0, 0, 288, 192],
+            vision.COLOR_RED, tile=96, stride=96, min_tiles=3)
+    check("实际聚类输入倒序仍产生同一连通分量与中心", reversed_output == outputs[0])
+
+    old_max_tiles = config.STACK_AI_BLUE_MAX_TILES
+    old_max_cy = config.STACK_AI_BLUE_MAX_CY
+    try:
+        config.STACK_AI_BLUE_MAX_TILES = 2
+        config.STACK_AI_BLUE_MAX_CY = 480
+        # 左侧3块背景超过现有蓝色最大块数，右上2块仍应被选中。
+        positions = [(0, 0), (0, 96), (0, 192), (288, 0), (384, 0)]
+        item = vision.find_stack_color_center_ai(
+            FakeTileMap(positions, vision.COLOR_BLUE), imgN, [0, 0, 480, 288],
+            vision.COLOR_BLUE, tile=96, stride=96, min_tiles=2)
+        check("最大蓝色背景簇过滤后仍返回次大合格簇",
+              item is not None and item['ai_tiles'] == 2 and item['cx'] == 384, str(item))
+        config.STACK_AI_BLUE_MAX_TILES = 6
+        config.STACK_AI_BLUE_MAX_CY = 150
+        positions = [(0, 192), (96, 192), (0, 288), (288, 0), (384, 0)]
+        item = vision.find_stack_color_center_ai(
+            FakeTileMap(positions, vision.COLOR_BLUE), imgN, [0, 0, 480, 384],
+            vision.COLOR_BLUE, tile=96, stride=96, min_tiles=2)
+        check("下半区最大簇过滤后仍返回上方合格簇",
+              item is not None and item['cy'] == 48 and item['ai_tiles'] == 2, str(item))
+        item = vision.find_stack_color_center_ai(
+            FakeTileMap([(0, 192), (96, 192)], vision.COLOR_BLUE), imgN, [0, 0, 480, 384],
+            vision.COLOR_BLUE, tile=96, stride=96, min_tiles=2)
+        check("所有蓝色簇均在下半区时仍拒绝", item is None)
+    finally:
+        config.STACK_AI_BLUE_MAX_TILES = old_max_tiles
+        config.STACK_AI_BLUE_MAX_CY = old_max_cy
 
     print()
     if FAILED:

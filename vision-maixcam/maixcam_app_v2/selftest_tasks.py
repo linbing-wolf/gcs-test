@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 import types
+from unittest.mock import patch
 
 APP = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP)
@@ -146,6 +147,7 @@ sys.modules.update({'maix': maix, 'maix.image': image, 'maix.app': app,
 
 import config                      # noqa: E402
 config.DISC_DEBUG_SAVE = False     # 单测不写抓图目录
+config.STACK_DEBUG_SAVE = False
 config.DISC_BLACK_CENTER_ON = False  # 单测用假圆验证 Hough 路径
 config.DISC_CENTER_ON = False        # 单测不走“最内圈白块”路径
 import precision                   # noqa: E402
@@ -182,6 +184,11 @@ def run_all(P, label):
     check('F 帧格式', out.startswith('STACK,'), out)
     out = frame_str(tasks.task_forward(cam, None, p=P))
     check('G 帧格式', out.startswith(('OBST,', 'CLEAR')), out)
+    obstacle = dict(x=10, y=10, w=20, h=20, cx=20, cy=20)
+    with patch.object(tasks, 'ticks_ms', side_effect=[0, 2]), \
+            patch.object(vision, 'find_obstacle', return_value=obstacle):
+        out = frame_str(tasks.task_forward(cam, None, timeout_ms=1, p=P))
+    check('G 看到未确认的障碍并超时时回 NONE,G', out == 'NONE,G', out)
 
 
 class _Link:
@@ -293,7 +300,109 @@ P_HD = precision.Pipeline(1280, 960, 640, 480, dist=None, filter_n=1)
 P_ID = precision.Pipeline(640, 480, 640, 480)
 
 
+def test_h_material():
+    print('\n== H 停稳事件与全图双色 ==')
+    cam = FakeCam(1)
+
+    def item(code, x, y=240):
+        return dict(code=code, cx=x, cy=y, x=x-15, y=max(0,y-15),
+                    w=30, h=30, pixels=200, src='ai')
+
+    def run(frames, commands=(), max_moves=2, step_max=12):
+        clock = [0]
+        images = iter(frames)
+
+        def detect(img, roi, pixels):
+            assert roi is None
+            clock[0] += 100
+            return next(images, [])
+
+        clf = types.SimpleNamespace(resolve_code=lambda img, obj: obj['code'], detect=detect)
+        link = _Link(commands)
+        poll = link.poll_command
+        link.poll_command = lambda: 'R' if clock[0] >= (len(frames) + 6) * 100 else poll()
+        with patch.multiple(config, PLATE_DEBUG_SAVE=False, PLATE_LIGHT_ON=False,
+                            PICK_STOP_HOLD_MS=100, H_MATERIAL_COLOR_FRAMES=2,
+                            H_MATERIAL_CENTER_FRAMES=2, H_MATERIAL_TARGET_Y=240,
+                            H_MATERIAL_SETTLE_MS=0, H_MATERIAL_MAX_MOVES=max_moves,
+                            H_MATERIAL_STEP_MAX=step_max,
+                            H_MATERIAL_TIMEOUT_MS=1600,
+                            H_DIRECTION_PACKET_ENABLED=False), patch.object(tasks, 'ticks_ms', lambda: clock[0]):
+            result = tasks.task_h_material(cam, clf, None, p=P_ID, ctl=tasks.TaskCtl(link))
+        return result, link.sent, clock[0]
+
+    first = item('3', 320, 280)
+    second = item('1', 320)
+    result, sent, elapsed = run([[first]] * 5 + [[second]] * 3)
+    check('首件停稳发微调，等待另一件停稳后完成',
+          sent == ['MOVEXY,0,12', 'COLORS,3,1'] and result == 'DISC,320,240,0,3,1'
+          and elapsed == 800, (result, sent, elapsed))
+
+    moving = [[item('1', 230 + x), item('3', 480 + x)] for x in (0, 10, 20)]
+    result, sent, elapsed = run(moving + [[second]] * 3)
+    check('运动中全图右先左后，只等左侧物料停稳',
+          sent == ['COLORS,3,1'] and result == 'DISC,320,240,0,3,1'
+          and elapsed == 600, (result, sent, elapsed))
+
+    far_second = item('1', 286, 194)
+    result, sent, _ = run(moving + [[far_second]] * 3 + [[second]] * 3)
+    check('后到物料两轴超差先发 MOVEXY，复核后才回终包',
+          sent == ['COLORS,3,1', 'MOVEXY,-12,-12']
+          and result == 'DISC,320,240,0,3,1', (result, sent))
+    result, sent, elapsed = run(moving + [[far_second]] * 3 + [[second]] * 8, max_moves=1)
+    check('最后一步立即用末轮动作前坐标回双色 DISC',
+          sent == ['COLORS,3,1', 'MOVEXY,-12,-12'] and result == 'DISC,286,194,-34,3,1'
+          and elapsed == 600, (result, sent, elapsed))
+    result, sent, _ = run(moving + [[far_second]] * 3, max_moves=1, step_max=0)
+    check('新 H 的上限为 0 时，两轴按基础增益发完整步长',
+          sent == ['COLORS,3,1', 'MOVEXY,-22,-30'] and result == 'DISC,286,194,-34,3,1',
+          (result, sent))
+    result, sent, _ = run(moving + [[far_second]] * 3, max_moves=0)
+    check('只观察模式保留坐标回包且不移动',
+          sent == ['COLORS,3,1'] and result == 'DISC,286,194,-34,3,1', (result, sent))
+
+    false_green = [[item('2', 230 + i * 10), item('4', x, y)]
+                   for i, (x, y) in enumerate(((580, 6), (617, 14), (613, 7), (612, 9)))]
+    result, sent, _ = run(false_green)
+    check('贴画框的绿色不会锁存为双色', result == 'READY' and not sent, (result, sent))
+
+    true_green = [[item('1', 230 + x), item('4', 480 + x)] for x in (0, 10, 20)]
+    result, sent, _ = run(true_green + [[second]] * 3)
+    check('完整入镜的绿色仍可参与右先左后',
+          sent == ['COLORS,4,1'] and result == 'DISC,320,240,0,4,1', (result, sent))
+
+    frames = [[item('3', x)] for x in (270, 290, 310)] + [[item('3', 320)]] * 4
+    result, sent, elapsed = run(frames + [[second]] * 3)
+    check('单色运动不提前记双色，等待两次停稳',
+          sent == ['COLORS,3,1'] and result == 'DISC,320,240,0,3,1' and elapsed == 1000,
+          (result, sent, elapsed))
+
+    result, sent, _ = run([[first]] * 7)
+    check('同一物料不算两次，等 R 中断',
+          result == 'READY' and sent == ['MOVEXY,0,12'], (result, sent))
+    result, sent, elapsed = run([[]] * 90 + moving + [[far_second]] * 3 + [[second]] * 5)
+    check('超过旧超时仍继续，停稳并进容差后回 DISC',
+          elapsed > 8000 and sent == ['COLORS,3,1', 'MOVEXY,-12,-12']
+          and result == 'DISC,320,240,0,3,1', (result, sent, elapsed))
+    result, sent, _ = run([], ['R'])
+    check('H 支持 R 中断', result == 'READY' and not sent, result)
+
+
 def main():
+    print('\n== A/C 共享 Pipeline：任务间坐标隔离 ==')
+    shared = precision.Pipeline(640, 480, 640, 480, filter_n=9)
+    clf = vision.ColorClassifier(ai=None)
+    for color, bx, by in [('1', 150, 160), ('2', 350, 260), ('1', 250, 200)]:
+        out = frame_str(tasks.task_pick(FakeCam(int(color), blob_x=bx, blob_y=by),
+                                        clf, None, color, p=shared)).split(',')
+        check('C 独立颜色及位置 color=' + color,
+              out[0] == 'PICK' and out[1] == color and
+              out[2:4] == [str(bx + 50), str(by + 40)], out)
+    for bx, by in [(150, 160), (350, 260), (250, 200)]:
+        out = frame_str(tasks.task_start(FakeCam(1, blob_x=bx, blob_y=by),
+                                         None, p=shared)).split(',')
+        check('A 独立位置 x=' + str(bx), out[0] == 'START' and
+              out[2:4] == [str(bx + 50), str(by + 40)], out)
     run_all(P_HD, 'DET 1280x960 → 640x480')
     a = frame_str(tasks.task_start(FakeCam(1), None, p=P_HD)).split(',')
     check('A 坐标折半', a[2] == '325' and a[3] == '220', a)
@@ -485,22 +594,45 @@ def main():
         lk2 = _Link([])
         out2 = frame_str(tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
                                          p=P_ID, ctl=tasks.TaskCtl(lk2))).split(',')
-        check('超次数 → 仍回 ok=1', out2[0] == 'DISC' and out2[-1] == '1', out2)
+        check('超次数 → 回 ok=0', out2[0] == 'DISC' and out2[-1] == '0', out2)
         check('超次数仍发了 3 条 MOVEXY',
               sum(1 for x in lk2.sent if x.startswith('MOVEXY,')) == 3, lk2.sent)
+        with patch.object(config, 'DISC_OK_ON_DETECTION', True):
+            tasks.reset_guard()
+            test_link = _Link([])
+            result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
+                                     p=P_ID, ctl=tasks.TaskCtl(test_link))
+            check('联调模式：超差仍回真实坐标和 ok=1',
+                  result == ','.join([*out2[:-1], '1']), result)
+            with patch.object(vision, 'find_disc_center', return_value=None):
+                result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, 'D',
+                                         p=P_ID, ctl=tasks.TaskCtl(_Link([])))
+            check('联调模式：无圆盘仍回 NONE,D', result == 'NONE,D', result)
 
-        # 一次性模式：只发 1 条 MOVE，立即回 DISC
+        # 一次性模式：只发一条移动指令，复核失败返回 ok=0
         config.ALIGN_MAX_ITER = old_iter
         config.ALIGN_ONE_SHOT = True
         config.ALIGN_ONE_SHOT_OK = 0
         cam5 = FakeCam(1, circle_x=640, circle_y=240)
         lk5 = _Link([])
         out5 = frame_str(tasks.task_disc(cam5, None, config.ROI_DISC_ROUGH, 'D',
-                                         p=P_ID, ctl=tasks.TaskCtl(lk5))).split(',')
+                                         timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk5))).split(',')
         check('一次性模式：只发 1 条 MOVEXY',
               sum(1 for x in lk5.sent if x.startswith('MOVEXY,')) == 1, lk5.sent)
-        check('一次性模式：立即回 DISC ok=1',
-              out5[0] == 'DISC' and out5[-1] == '1', out5)
+        check('一次性模式：未移动回 DISC ok=0',
+              out5[0] == 'DISC' and out5[-1] == '0', out5)
+
+        tasks.reset_guard()
+        cam_ok = FakeCam(1, circle_x=345, circle_y=240)
+        lk_ok = _AlignLink(cam_ok)
+        out_ok = frame_str(tasks.task_disc(cam_ok, None, config.ROI_DISC_ROUGH, 'D',
+                                           timeout_ms=1000, p=P_ID,
+                                           ctl=tasks.TaskCtl(lk_ok))).split(',')
+        check('一次性模式：复核后进容差才回 ok=1',
+              out_ok[0] == 'DISC' and out_ok[-1] == '1'
+              and abs(int(out_ok[3])) <= config.ALIGN_TOL
+              and len(lk_ok.sent) == 1, (out_ok, lk_ok.sent))
+
 
 
         # MOVE 系数：dx=320，限幅 40，10x → MOVE,400
@@ -510,10 +642,10 @@ def main():
         cam6 = FakeCam(1, circle_x=640, circle_y=240)
         lk6 = _Link([])
         out6 = frame_str(tasks.task_disc(cam6, None, config.ROI_DISC_ROUGH, 'D',
-                                         p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
+                                         timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
         check('MOVE 100x 系数（无上限）',
               any(x == 'MOVEXY,25600,0' for x in lk6.sent), lk6.sent)
-        check('MOVE 100x 仍回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
+        check('MOVE 100x 未移动仍回 ok=0', out6[0] == 'DISC' and out6[-1] == '0', out6)
         config.MOVE_SCALE = 1.0
 
         # 单轴限幅：ALIGN_STEP_MAX=20 → 320px 误差只发 20
@@ -522,7 +654,7 @@ def main():
         cam8 = FakeCam(1, circle_x=640, circle_y=240)
         lk8 = _Link([])
         frame_str(tasks.task_disc(cam8, None, config.ROI_DISC_ROUGH, 'D',
-                                  p=P_ID, ctl=tasks.TaskCtl(lk8)))
+                                  timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk8)))
         check('MOVE 单轴限幅 20', 'MOVEXY,20,0' in lk8.sent, lk8.sent)
 
         # MOVEY 垂直闭环：dy=+60px → 发 MOVEY 并收敛
@@ -587,6 +719,31 @@ def main():
                                          duration_ms=120, p=P_ID))
     check('抓图模式 task_snapshot', out4 == 'NONE,D', out4)
 
+    # Runtime D/E/F offsets must reach task replies, not just the file parser.
+    old_runtime = (config.PLATE_BIAS_FILE, config.PLATE_BIAS_CACHE_MS,
+                   config.ALIGN_ON, config.SCENE_SETTLE_ON)
+    with tempfile.TemporaryDirectory(dir=APP) as tmp:
+        config.PLATE_BIAS_FILE = os.path.join(tmp, 'bias')
+        config.PLATE_BIAS_CACHE_MS = 0
+        config.ALIGN_ON = False
+        config.SCENE_SETTLE_ON = False
+        with open(config.PLATE_BIAS_FILE, 'w') as f:
+            f.write('ALIGN_DX_OFFSET_D=17\nALIGN_DX_OFFSET_E=-9\n'
+                    'STACK_ALIGN_DX_OFFSET=23\n')
+        try:
+            for tag, offset in [('D', 17), ('E', -9)]:
+                out = frame_str(tasks.task_disc(FakeCam(1, circle_x=320, circle_y=240),
+                                None, config.ROI_DISC_ROUGH, tag, p=P_ID)).split(',')
+                check('runtime offset ' + tag, out[0] == 'DISC' and
+                      int(out[3]) == int(out[1]) - config.W // 2 + offset, str(out))
+            out = frame_str(tasks.task_stack(FakeCam(1), clf0, None, p=P_ID)).split(',')
+            check('runtime offset F', out[0] == 'STACK' and
+                  int(out[3]) == int(out[1]) - config.W // 2 + 23, str(out))
+        finally:
+            (config.PLATE_BIAS_FILE, config.PLATE_BIAS_CACHE_MS,
+             config.ALIGN_ON, config.SCENE_SETTLE_ON) = old_runtime
+
+    test_h_material()
     print()
     if FAILED:
         print('[FAIL] %d 项: %s' % (len(FAILED), FAILED))

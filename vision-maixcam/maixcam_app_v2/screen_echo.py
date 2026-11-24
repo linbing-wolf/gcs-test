@@ -196,13 +196,21 @@ def draw(img, state=None, w=None, h=None, lines=None):
 class EchoDisplay:
     def __init__(self, real):
         self._real = real
+        self._last_img = None
 
     def show(self, img):
         try:
             draw(img)
         except Exception:
             pass
-        return self._real.show(img)
+        result = self._real.show(img)
+        self._last_img = img
+        return result
+
+    def refresh(self):
+        """Redraw the echo bar on the last displayed frame."""
+        if self._last_img is not None:
+            self.show(self._last_img)
 
     # width()/height()/其它 display 方法原样转发（触屏那边要用来算坐标）
     def __getattr__(self, name):

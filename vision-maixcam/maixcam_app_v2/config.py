@@ -96,7 +96,7 @@ STACK_ALIGN_DY_OFFSET = 45     # 参数本身=45；目标 y=240-45=195
 STACK_INVERT_X       = False   # F 的 MOVE 方向反了置 True
 STACK_INVERT_Y       = False   # F 的 MOVEY 方向反了置 True
 STACK_START_DELAY_MS = 800     # 【最长等待】等画面稳定再识别；判稳即提前开始（见 SCENE_SETTLE_*）
-STACK_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_stack_move"  # 调试：直接跑一次真实 F
+STACK_DEBUG_TRIGGER_REAL_FILE = ""                  # 调试需要时设成 /tmp/run_stack_move
 STACK_DEBUG_TRIGGER_COLOR = "3"  # ""=F 不带颜色；"1"~"4"=按颜色找底座
 # ---- F 颜色中心：CV 找不到同色底座时，用 AI 分类器分块扫描兜底 ----
 STACK_AI_LOCATE      = True    # True = 启用 AI 分块找颜色中心
@@ -120,7 +120,7 @@ STACK_TOP_R_MAX      = 55      # circle 模式：物料顶部圆半径上限(px)
 STACK_TOP_THRESHOLD  = 1500    # circle 模式：顶部圆霍夫阈值
 STACK_CV_SEARCH_MARGIN = 24    # AI 框外扩后再精修(px)
 # ---- F 码垛调试记录（JPEG + meta.jsonl，放在 APP 目录外）----
-STACK_DEBUG_SAVE        = False   # 比赛提速：默认关；要抓 F 调试图改回 True
+STACK_DEBUG_SAVE        = True    # 重装复调：保存 F 原图和逐帧诊断
 STACK_DEBUG_DIR         = "/root/yyb_mover_data/stack_debug"
 STACK_DEBUG_MAX_FRAMES  = 80   # 每次 F 最多存 80 张，覆盖完整的动作前/动作后
 STACK_DEBUG_QUALITY     = 85
@@ -203,12 +203,12 @@ DISC_DEBUG_SAVE          = True    # 临时开启：排查 E 的模板匹配（�
 DISC_DEBUG_DIR           = "/root/yyb_mover_data/disc_debug"  # 放在 APP 目录外，升级不丢
 DISC_DEBUG_MAX_FRAMES    = 24     # 单次任务最多存多少张图（数据行不受限）
 DISC_DEBUG_QUALITY       = 85     # JPEG 质量 1~100
-DISC_DEBUG_KEEP_TASKS    = 20     # 只保留最近 N 次任务目录，自动删旧
+DISC_DEBUG_KEEP_TASKS    = 0      # 重装复调期间保留历次记录
 DISC_DEBUG_MIN_INTERVAL_MS = 100  # 两张图之间至少间隔 ms（0=不限）
 # 不接 STM32 也能抓一次：SSH 上 `touch /tmp/run_disc_once`，
 # 空闲循环会跑一次 D（或 E）任务，只记录不发 MOVE。
 DISC_DEBUG_TRIGGER_FILE  = "/tmp/run_disc_once"
-DISC_DEBUG_TRIGGER_REAL_FILE = "/tmp/run_disc_move"  # 存在时直接跑一次真实 D（发 MOVE + DISC）
+DISC_DEBUG_TRIGGER_REAL_FILE = ""                  # 调试需要时设成 /tmp/run_disc_move
 DISC_DEBUG_TRIGGER_CMD   = "E"    # 临时改成 E：touch /tmp/run_disc_once 即抓一次暂存区
 DISC_DEBUG_TRIGGER_MS    = 2000   # 触发抓图持续时长(ms)
 
@@ -216,12 +216,10 @@ DISC_DEBUG_TRIGGER_MS    = 2000   # 触发抓图持续时长(ms)
 # 视觉端主动发 MOVE,<dx> / MOVEY,<dy> 驱动下位机微调，直到 |x-W/2|<=ALIGN_TOL 且 |y-H/2|<=ALIGN_DY_TOL
 ALIGN_ON          = True    # False = 只报告，不主动发 MOVE（中心稳定就带偏差回复）
 ALIGN_MODE        = "movexy"  # movexy=MOVEXY,dx,dy 双轴并行；split=MOVE + MOVEY
-ALIGN_ONE_SHOT    = True    # True = 只发一轮 MOVEXY（或 MOVE/MOVEY）就回复
-ALIGN_ONE_SHOT_OK = 1       # 兼容旧配置；当前 DISC 回复的 ok 固定为 1
-# ---- 回复策略：回读已彻底移除 ----
-#   现在 D/E、F、H 发完 MOVE/MOVEY/MOVEXY 立即返回「动作前」的 x/y/dx，绝不再回读。
-#   理由：回读要等机构停稳（ONE_SHOT_VERIFY 0.6~2.5s），是为诊断而生的功能；
-#   比赛/现场只要最快响应，移动是否正确由上位机自己按刚发的步长推算。
+ALIGN_ONE_SHOT    = True    # True = 最多发一轮 MOVEXY（或 MOVE/MOVEY），D/E 等待视觉复核
+ALIGN_ONE_SHOT_OK = 1       # 保留旧配置键；D/E 主动对齐结果由复核决定
+DISC_OK_ON_DETECTION = False  # D/E 联调：有识别坐标的 DISC 可统一回 ok=1
+# D/E 主动对齐在发出动作后复核；F/H 一次性模式沿用动作前坐标。
 ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 5px
 ALIGN_GAIN        = 0.65    # 比例系数：按实测 k≈1.48 取 1/k；先走大部分，第二轮只补残差
 ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 0
@@ -231,14 +229,14 @@ ALIGN_DX_OFFSET   = 2       # E 目标 x=318（应用 D 的 21:55 实测修正�
 # 现场反馈「D/E 放置时偏画面右」→ 目标 x 再左移 5px：
 #   dx = cx − 320 + offset，offset +5 → 收敛后 cx ≈ 313（比原来左 5px）
 ALIGN_DX_OFFSET_D = 7       # D 专用：目标 x=313（原 2 → 7，左移 5px）
-ALIGN_DX_OFFSET_E = 7       # E 专用：同上（原来 None 走全局 2）
+ALIGN_DX_OFFSET_E = 0       # E 专用：现场指定偏移
 # ---- 垂直方向（MOVEY）：与水平轴独立配置 ----
 ALIGN_DY_ON       = True    # False = 不校正垂直偏差，只发 MOVE
 ALIGN_DY_TOL      = 5       # 垂直对齐容差(px)
 ALIGN_DY_OFFSET   = 40      # E 目标 y=200（应用 D 的 21:55 实测修正）
-ALIGN_DY_OFFSET_D = 40      # D 专用：目标 y=200（按 21:55 实测 +10px 修正）
+ALIGN_DY_OFFSET_D = 40      # D 专用：目标 y=200，恢复前调前的偏移
 ALIGN_DY_OFFSET_E = None    # E 专用；None = 用 ALIGN_DY_OFFSET
-MOVEY_SCALE       = 0.86    # E 实测过冲比 107/92 → 1/1.163 ≈ 0.86
+MOVEY_SCALE       = 1.0     # D/E/F 的 Y 轴附加系数
 ALIGN_INVERT_DY_D = False   # D：MOVEY 方向（反了就置 True）
 ALIGN_INVERT_DY_E = False   # E：MOVEY 方向（反了就置 True）
 MOVE_ECHO_HOLD_MS = 0       # 发完 MOVE 后屏幕回显停留时间(ms)；0=不停留（响应最快）
@@ -260,10 +258,11 @@ SERIAL_LOG_ON  = True
 SERIAL_LOG_DIR = "/root/yyb_mover_serial"
 SERIAL_LOG_RAW = True       # True=同时记录原始帧 hex
 
-# ============================== 串口（MaixCAM2）==============================
-# 唯一来源：protocol.py 会读这里。
+# ============================== 串口 / GPIO I²C（MaixCAM2）==============================
+# 唯一来源：protocol.py 会读这里。当前现场保留 GPIO I²C：A1=SCL、A0=SDA、地址 0x42。
+# 下面仍保留 UART4 注释仅作为接线备选，切换时必须同时改 UART_DEV、PIN_* 和 UART_FUNC_*。
 #
-#   ★ 默认采用 UART4（底部 6P 1.25mm 座）：
+#   ★ UART4 备选（底部 6P 1.25mm 座）：
 #       A21 = UART4_TX → STM32 PD2 (UART5_RX)
 #       A22 = UART4_RX ← STM32 PC12(UART5_TX)
 #       设备路径 /dev/ttyS4
@@ -272,11 +271,11 @@ SERIAL_LOG_RAW = True       # True=同时记录原始帧 hex
 #       之后 MaixVision 的 UART 连接会失效，改用 网络(TCP) / SSH 连板子。
 #
 #   备选 UART2（左侧 2x6 座）：B0=TX / B1=RX / /dev/ttyS2（见文件末尾注释）
-UART_DEV = "/dev/ttyS4"
-PIN_TX = "A21"
-PIN_RX = "A22"
-UART_FUNC_TX = "UART4_TX"
-UART_FUNC_RX = "UART4_RX"
+UART_DEV = "i2c-gpio-master:0x42"
+PIN_TX = "A1"
+PIN_RX = "A0"
+UART_FUNC_TX = "GPIOA1"
+UART_FUNC_RX = "GPIOA0"
 UART_BAUDRATE = 115200      # STM32 端必须同步 115200
 
 # ============================== 启动重试 ==============================
@@ -299,10 +298,11 @@ SHOW_PREVIEW = True         # 屏幕显示 + MaixVision 预览
 # ---- 摄像头补光灯（MaixCAM2 板载照明 LED）----
 #   B25 = 照明 LED（高电平点亮）。别用 PWM6 调亮度：PWM6 与 A30(UART1) 二选一，
 #   会和 Maix 通信协议抢引脚。
-#   ★ 现状：**只在 D/E、H（近距离对盘）期间点亮**，任务前后自动开关；
+#   ★ 现状：J、H（物料识别/近距离对盘）期间点亮，任务前后自动开关；
 #     其它命令（A/T/C/F/G）、空闲时都不亮。
 DISC_LIGHT_ON  = False     # False = D/E 不点灯（现场要求：D/E 区关灯）
 PLATE_LIGHT_ON = True      # False = H 也不点灯
+J_LIGHT_ON     = True      # False = J 物料停稳查询不点灯
 CAM_LIGHT_PIN  = "B25"
 CAM_LIGHT_FUNC = "GPIOB25"
 VERBOSE = True              # 打印识别过程
@@ -360,7 +360,7 @@ AI_CLASS_TO_COLOR = {"red": "1", "yellow": "2", "blue": "3", "green": "4"}
 AI_MIN_PROB = 0.60          # AI 判色置信度下限；低于它退回阈值判色
 AI_LOCATE_MARGIN = 8        # 送进分类器前把色块外扩的像素（给模型一点上下文）
 AI_PREFER_CV = False        # True=强制以阈值判色为准，AI 只记录（A/B 对比排查用）
-AI_DEBUG_PROB = False       # True=每次 AI 判色都打印 (label, prob)，用来定 AI_MIN_PROB
+AI_DEBUG_PROB = True        # True=每次 AI 判色都打印 (label, prob)，用来定 AI_MIN_PROB
 
 # ============================== 障碍物（前进状态，命令字 'G'）==============================
 # 官方赛道障碍物：黑色，φ50×100mm。黑色 = L 很低。
@@ -371,7 +371,7 @@ OBST_MERGE_MARGIN = 8                  # 合并碎块
 OBST_WIDTH_MM = 50.0                   # 障碍物物理宽度(mm)，用于估距
 OBST_CLEAR_FRAMES = 3                  # 连续 N 帧没看到 → 判定"前方无障碍"(CLEAR)
 OBST_STABLE_FRAMES = 5                 # 障碍物中心稳定帧数（行进中连续问，要快）
-OBST_TIMEOUT_MS = 3000                 # 兜底超时，超时按无障碍回
+OBST_TIMEOUT_MS = 3000                 # 检测超时，返回 NONE,G
 
 # ============================== 物料盘下弧对齐（命令字 'H'）==============================
 # 场景：物料盘（白色带孔圆盘）太大，画面只能拍到它的下弧，圆心落在画面外（y 为负）。
@@ -399,7 +399,7 @@ PLATE_ARC_DEG       = (-20.0, 200.0)  # 采样角度范围(度)，覆盖可见�
 #   SKIP_BOTTOM_ALT = 备用尝试跳过的角度；SKIP_ALT_ON 控制是否启用备用尝试。
 PLATE_ARC_SKIP_BOTTOM_DEG = 0.0
 PLATE_ARC_SKIP_BOTTOM_ALT = 30.0
-PLATE_ARC_SKIP_ALT_ON     = False   # 最简版：不做备用尝试（省一轮拟合）
+PLATE_ARC_SKIP_ALT_ON     = True    # 主候选失效时，允许跳过被遮挡的底部弧段重试
 # ---- 弧模型：盘是平面圆，镜头斜视 → 投影是「轴对齐椭圆」而不是圆 ----
 #   实测 12 张真实下弧图：边缘半径随角度极差约 12px（底部最小、±45° 最大），
 #   圆拟合残差 ~3~4px，最低点比真实低 ~3.5px，且绿圆在两侧明显翘离盘缘。
@@ -469,8 +469,17 @@ PLATE_IN_BACK_LO    = 14.0     # 内侧取样带：从边缘往里 14~34 px
 PLATE_IN_BACK_HI    = 34.0
 # ---- 内侧亮度校验（用校验而不是过滤：不改变落点口径，只否掉假弧）----
 PLATE_INSIDE_CHECK     = True
-PLATE_INSIDE_MIN_RATIO = 0.60   # 至少 60% 的射线内侧是盘面亮度
+PLATE_INSIDE_MIN_RATIO = 0.50   # 至少 50% 的射线内侧是盘面亮度，适配新场地试调
 PLATE_INSIDE_RAYS      = 40
+PLATE_RIM_SUPPORT_CHECK = True   # 整条拟合弧校验，不筛掉拟合点，保留原落点口径
+PLATE_RIM_MIN_CONTRAST = 6.0     # 盘面内带相对外带最低亮度差
+PLATE_RIM_MIN_DROP     = 8.0     # 预测边缘附近径向向外下降沿最低强度
+PLATE_RIM_MIN_SUPPORT  = 0.30    # 同时满足绝对亮度/对比/方向的有效射线比例
+PLATE_RIM_MIN_SIDE_RAYS = 2      # 两侧各需支持；画外不可见的一侧不强求
+PLATE_RIM_MIN_SPAN_DEG = 55.0    # 支持弧跨度下限，拒绝短弧误拟合
+PLATE_RIM_MIN_RUN      = 3       # 至少一段连续三射线，允许中间遮挡形成两段
+PLATE_ARC_COVERAGE_CHECK = True  # 拟合完成后检查点分布，不改变拟合结果
+PLATE_ARC_MIN_SPAN_DEG = 55.0
 PLATE_INSIDE_ON_FAIL   = "reject"  # reject=直接作废回 NONE（假弧害处远大于 NONE）
 PLATE_COARSE_INSIDE    = True   # 粗定位（RANSAC）也要求「内侧是盘面」，挡掉弯电缆
 # ---- 底部加密采样（最低点就在这段弧上，点密了 cx/b 才被钉住）----
@@ -513,9 +522,14 @@ PLATE_DY_OFFSET     = 0
 #   ssh root@<板子> "rm -f /tmp/plate_bias"                            # 恢复默认
 # 支持 # 注释、空行；数值不合法的行忽略。H 启动日志会打印实际生效值与来源。
 PLATE_BIAS_FILE     = "/tmp/plate_bias"
+# D/E/F share this temporary file; offset target = (W/2-dx, H/2-dy).
+# Missing E-specific values retain the global ALIGN_DX/DY_OFFSET fallback.
 PLATE_BIAS_CACHE_MS = 500     # 文件检查缓存(ms)，避免逐帧 stat
 PLATE_BIAS_KEYS     = ("PLATE_TARGET_X", "PLATE_TARGET_Y",
-                       "PLATE_DX_OFFSET", "PLATE_DY_OFFSET")
+                       "PLATE_DX_OFFSET", "PLATE_DY_OFFSET",
+                       "ALIGN_DX_OFFSET_D", "ALIGN_DX_OFFSET_E",
+                       "ALIGN_DY_OFFSET_D", "ALIGN_DY_OFFSET_E",
+                       "STACK_ALIGN_DX_OFFSET", "STACK_ALIGN_DY_OFFSET")
 PLATE_TOL_X         = 6        # 水平容差(px)
 PLATE_TOL_Y         = 6        # 垂直容差(px)
 PLATE_STABLE_FRAMES = 3        # 进入容差后连续 N 帧稳定才回 ok=1
@@ -528,12 +542,26 @@ PLATE_MAX_ITER      = 3        # 非 one-shot 时的最大微调轮数
 PLATE_INVERT_X      = False    # 水平方向反了置 True（不要改 STM32 符号）
 PLATE_INVERT_Y      = False    # 垂直方向反了置 True
 # ---- H 调试抓图（关键帧 + meta.jsonl，放在 APP 目录外，升级不丢）----
-PLATE_DEBUG_SAVE    = False     # 已采到足够真帧；现场崩过，先关掉（每帧 JPEG 编码也吃 C 内存池）
+PLATE_DEBUG_SAVE    = True      # 新场地排查：保存关键原图与候选诊断
 PLATE_DEBUG_DIR     = "/root/yyb_mover_data/plate_debug"
-PLATE_DEBUG_MAX_FRAMES = 16    # 单次 H 最多存多少张图
-PLATE_DEBUG_QUALITY = 85
-PLATE_DEBUG_KEEP_TASKS = 10    # 只保留最近 N 次 H 的目录
-PLATE_DEBUG_MIN_INTERVAL_MS = 100
+PLATE_DEBUG_MAX_FRAMES = 3     # 只采关键帧，减少 JPEG 内存池压力
+PLATE_DEBUG_QUALITY = 75
+PLATE_DEBUG_KEEP_TASKS = 0     # 重装复调期间保留历次记录
+PLATE_DEBUG_MIN_INTERVAL_MS = 500
+
+# H 物料中心差分档。目标 y 使用对外坐标，与旧 H 盘缘标定独立。
+H_MATERIAL_MODE = False      # 板端 h_material.json 的 mode 可覆盖，下一条 H 起生效
+H_MATERIAL_ROI = ROI_MATERIAL
+H_MATERIAL_TARGET_Y = 318    # 试调累计前移约 5 cm；gain=0.65 时 Y 指令约减 51
+H_MATERIAL_TOL_Y = 6
+H_MATERIAL_COLOR_FRAMES = 3
+H_MATERIAL_CENTER_FRAMES = 3
+H_MATERIAL_GAIN = 0.65
+H_MATERIAL_INVERT_MOVE = False
+H_MATERIAL_STEP_MAX = 0     # 0 = 不限制单轴步长
+H_MATERIAL_MAX_MOVES = 3
+H_MATERIAL_SETTLE_MS = 1200
+H_MATERIAL_TIMEOUT_MS = 8000  # 仅兼容旧配置文件，新 H 不使用总超时
 
 # ============================== 启动延时：改为「画面稳定」判定 ==============================
 # 收到 D/E、F、H 后不再死等固定毫秒，而是等画面连续稳定后再读第一帧：
@@ -546,3 +574,15 @@ SCENE_SETTLE_FRAMES = 3        # 连续 N 帧画面变化 < 阈值 → 判定已
 SCENE_SETTLE_FRAMES_D = 5      # D 区单独加严：5 帧判稳（D 的最低位最怕运动模糊）
 SCENE_SETTLE_DIFF   = 3.0      # 降采样(32x24)灰度均差阈值；越小越严、越大越松
 SCENE_SETTLE_MIN_MS = 20       # 至少等这么久，防止刚收到命令就误判稳定（100→40→20）
+
+# H direction release is prepared locally and awaits deployment.
+H_DIRECTION_PACKET_ENABLED = True
+H_DIRECTION_FALLBACK = 1  # 0=顺时针，1=逆时针；自动判向不足时采用
+
+# J 全图物料停稳查询，单位采用对外图像像素和毫秒。
+MATERIAL_STATE_REPORT_MS = 500  # 本地日志间隔，不再发送过程包
+MATERIAL_STATE_HOLD_MS = 300
+MATERIAL_STATE_TOL_PX = 3.0
+MATERIAL_STATE_MIN_FRAMES = 3
+MATERIAL_STATE_MAX_GAP_MS = 150
+MATERIAL_STATE_CONFIRM_MS = 100  # 全部可见物料连续稳定多久后发终包

@@ -331,8 +331,21 @@ check("非法数值行忽略（仍用 config）",
       b["PLATE_DY_OFFSET"] == config.PLATE_DY_OFFSET, str(b))
 check("'=' 两侧空格/行内注释可用", b["PLATE_DX_OFFSET"] == 7, str(b))
 
+with open(_biasf, "w") as f:
+    f.write("ALIGN_DX_OFFSET_D=12\nALIGN_DY_OFFSET_E=53\n"
+            "STACK_ALIGN_DX_OFFSET=-4\nSTACK_ALIGN_DY_OFFSET=49\n"
+            "PLATE_TARGET_X=nan\nPLATE_DY_OFFSET=inf\nALIGN_DX_OFFSET_E=-inf\n")
+b = tasks._plate_bias()
+check("D/E/F runtime overrides", b["ALIGN_DX_OFFSET_D"] == 12 and
+      b["ALIGN_DY_OFFSET_E"] == 53 and b["STACK_ALIGN_DX_OFFSET"] == -4 and
+      b["STACK_ALIGN_DY_OFFSET"] == 49, str(b))
+check("non-finite rejected", b["PLATE_TARGET_X"] == config.PLATE_TARGET_X and
+      b["PLATE_DY_OFFSET"] == config.PLATE_DY_OFFSET and
+      b["ALIGN_DX_OFFSET_E"] == config.ALIGN_DX_OFFSET_E, str(b))
 os.remove(_biasf)
 b = tasks._plate_bias()
+check("E None falls back to global", b["ALIGN_DY_OFFSET_E"] == config.ALIGN_DY_OFFSET,
+      str(b))
 check("删除文件 → 恢复 config",
       b["PLATE_DY_OFFSET"] == config.PLATE_DY_OFFSET, str(b))
 
@@ -484,6 +497,69 @@ check("几何校验：半径越界 → report 模式也作废（不回假圆）"
 
 (config.PLATE_MAX_RMS, config.PLATE_QUALITY_GATE,
  config.PLATE_COARSE_LOCATE) = _old_g
+
+print("\n== 内侧拒绝后的候选回退 ==")
+from unittest.mock import patch
+
+def _candidate_fit(img, cx, cy, radius, *args, **kwargs):
+    candidate_meta = args[5]
+    candidate_meta.update(model="ellipse", a=330.0, rms=1.0, npts=80)
+    return (cx, -32.0, 330.0)
+
+def _candidate_inside(img, cx, cy, a, b, meta=None, gray=None):
+    ratio = 0.0 if cx < 320 else 1.0
+    meta.update(inside_need=180, inside_rays=32)
+    return ratio, 180, 32
+
+def _unsupported_rim(img, cx, cy, a, b, meta=None, gray=None):
+    meta.update(rim_check="fail", inside_reason="short-support", rim_span=10,
+                inside_need=180, inside_rays=32)
+    return 1.0, 180, 32
+
+def _short_arc_fit(img, cx, cy, radius, *args, **kwargs):
+    args[5].update(reason="arc-support", arc_span=12, arc_bins=2, arc_sides=[1, 0])
+    return None
+
+with patch.object(config, "PLATE_COARSE_LOCATE", True), \
+     patch.object(config, "PLATE_INSIDE_CHECK", True), \
+     patch.object(config, "PLATE_INSIDE_ON_FAIL", "reject"), \
+     patch.object(config, "PLATE_ARC_SKIP_ALT_ON", True), \
+     patch.object(config, "PLATE_LOW_CHECK", False), \
+     patch.object(vision, "_fit_arc_once", side_effect=_candidate_fit), \
+     patch.object(vision, "check_inside_bright", side_effect=_candidate_inside), \
+     patch.object(vision, "coarse_disc_prior", return_value=(330, -32, 330, 60)) as coarse:
+    m = {}
+    res = vision.find_disc_arc(FakeArcImage(310, -32, 330), 310, -32, 330, meta=m)
+    check("内侧失败后尝试备用skip及粗定位", res is not None and
+          m.get("prior_used") == "coarse" and len(m["tries"]) == 3 and coarse.call_count == 1, str(m))
+    coarse.reset_mock()
+    with patch.object(vision, "check_inside_bright", return_value=(1.0, 180, 32)):
+        m = {}
+        res = vision.find_disc_arc(FakeArcImage(310, -32, 330), 310, -32, 330, meta=m)
+        check("正常候选保持一次拟合快路径，不跑粗定位", res is not None and
+              len(m["tries"]) == 1 and coarse.call_count == 0, str(m.get("prior_used")))
+    with patch.object(vision, "check_inside_bright", side_effect=[(0.0, 180, 32), (1.0, 180, 32)]):
+        m = {}
+        res = vision.find_disc_arc(FakeArcImage(310, -32, 330), 310, -32, 330, meta=m)
+        check("备用skip通过后不再跑粗定位", res is not None and
+              m.get("prior_used") == "config/skip30" and coarse.call_count == 0, str(m.get("prior_used")))
+    with patch.object(vision, "check_inside_bright", return_value=(0.0, 180, 32)):
+        m = {}
+        res = vision.find_disc_arc(FakeArcImage(310, -32, 330), 310, -32, 330, meta=m)
+        check("所有候选内侧全暗时仍拒绝", res is None and m.get("rejected") is True,
+              str(m.get("reason")))
+    with patch.object(vision, "check_inside_bright", side_effect=_unsupported_rim):
+        m = {}
+        res = vision.find_disc_arc(FakeArcImage(310, -32, 330), 310, -32, 330, meta=m)
+        check("亮度通过但盘缘证据失败时拒绝并保留真实ratio", res is None and
+              m.get("inside_ratio") == 1.0 and m.get("reason") == "rim-fail(short-support)" and
+              all(t.get("rim_span") == 10 for t in m["tries"]), str(m.get("reason")))
+    with patch.object(vision, "_fit_arc_once", side_effect=_short_arc_fit):
+        m = {}
+        res = vision.find_disc_arc(FakeArcImage(310, -32, 330), 310, -32, 330, meta=m)
+        check("短弧无拟合结果时tries仍保留分段诊断", res is None and
+              all(t.get("arc_span") == 12 and t.get("arc_bins") == 2 and
+                  t.get("arc_sides") == [1, 0] for t in m["tries"]), str(m.get("reason")))
 
 print()
 if FAILED:

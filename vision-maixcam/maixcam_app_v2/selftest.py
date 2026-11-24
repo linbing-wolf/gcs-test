@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """selftest.py —— 本地自检：用假 maix 模块导入本项目 + 校验帧协议（在 PC 上跑）"""
 import sys, os, types
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -100,7 +101,13 @@ sys.modules["maix"] = maix
 sys.modules["maix.peripheral.pinmap"] = pinmap
 
 # ---------------- 导入项目模块 ----------------
-import config, protocol, vision, tasks, main, precision, ai_model
+import config, protocol, vision, tasks, precision, ai_model
+
+with (
+    patch.object(config, "SERIAL_LOG_ON", False),
+    patch.object(config, "UART_DEV", "/dev/ttyS2"),
+):
+    import main
 print("[OK] import config/protocol/vision/tasks/main/precision/ai_model")
 
 # ---------------- 帧编解码往返 ----------------
@@ -125,6 +132,70 @@ print("[OK] 粘连/半帧/噪声处理")
 bad = bytearray(f); bad[5] ^= 0xFF
 assert p.feed(bytes(bad)) == []
 print("[OK] CRC 检错")
+
+# 错误长度可能覆盖后续真帧。损坏候选校验失败后重新找帧头。
+reset = protocol.encode_frame("R")
+assert p.feed(b"\xaa\x55\x20" + bytes(34 - len(reset)) + reset) == [b"R"]
+
+# 长度未满足时应等待分片，超时后再尝试恢复已经收到的真帧。
+assert p.feed(b"\xaa\x55\xff" + reset) == []
+p._last_ms -= 500
+assert p.feed(b"") == [b"R"]
+binary_payload = b"prefix" + reset + b"suffix"
+binary_frame = protocol.encode_frame(binary_payload)
+assert p.feed(binary_frame[:-3]) == []
+assert p.feed(binary_frame[-3:]) == [binary_payload]
+max_payload = b"A" * protocol.MAX_PAYLOAD
+assert p.feed(protocol.encode_frame(max_payload)) == [max_payload]
+try:
+    protocol.encode_frame(max_payload + b"B")
+except ValueError:
+    pass
+else:
+    raise AssertionError("过长载荷被静默截断")
+print("[OK] 错误长度恢复与二进制载荷分片")
+
+# 短写只续发剩余字节，失败不记录为成功。
+with patch.object(config, "SERIAL_LOG_ON", False):
+    tx_link = protocol.VisionLink("/dev/ttyS2", use_pinmap=False)
+tx_link.ser = Mock()
+tx_link.slog = Mock()
+tx_link.ser.write.side_effect = [2, len(reset) - 2]
+assert tx_link.send_payload("R") == reset
+assert [call.args[0] for call in tx_link.ser.write.call_args_list] == [reset, reset[2:]]
+tx_link.slog.tx.assert_called_once_with("R", reset)
+
+tx_link.slog.tx.reset_mock()
+tx_link.ser.write.side_effect = [2, -1]
+try:
+    tx_link.send_payload("R")
+except OSError:
+    pass
+else:
+    raise AssertionError("负写入结果未报告")
+tx_link.slog.tx.assert_not_called()
+
+with patch.object(protocol.time, "monotonic", side_effect=[0, 0, 1]):
+    tx_link.ser.write.side_effect = [0]
+    try:
+        tx_link.send_payload("R")
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("零进度写入未超时")
+tx_link.slog.tx.assert_not_called()
+
+tx_link.ser.read.side_effect = [OSError("temporary"), OSError("temporary"), reset]
+assert tx_link.poll_command() is None
+assert tx_link.poll_command() is None
+assert tx_link.poll_command() == "R"
+events = [call.args[0] for call in tx_link.slog.event.call_args_list]
+assert events.count("LINK RX FAILED: temporary") == 1
+assert events.count("LINK RX RECOVERED") == 1
+tx_link.close()
+tx_link.close()
+tx_link.ser.close.assert_called_once_with()
+print("[OK] TX 短写、失败、超时和 RX 恢复记录")
 
 # ---------------- 命令解析 ----------------
 assert protocol.parse_command("C,1") == ("C", "1")

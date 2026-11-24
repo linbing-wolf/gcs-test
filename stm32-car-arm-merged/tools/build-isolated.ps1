@@ -1,8 +1,10 @@
-param([string]$CompilerBin='D:\keil5\ARM\ARMCC\bin')
+param([string]$CompilerBin='D:\keil5\ARM\ARMCC\bin',[switch]$VisionHMaterialTest)
 $ErrorActionPreference='Stop'
 $armBuildRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $armProjectDir=Join-Path $armBuildRoot 'keil'
-$armBuildRelative='evidence/merged-keil-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+$armBuildName=if($VisionHMaterialTest){'merged-keil-h-material-'}else{'merged-keil-'}
+$armBuildRelative='evidence/'+$armBuildName+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+$armExtraDefines=if($VisionHMaterialTest){@('-DVISION_H_MATERIAL_TEST=1')}else{@()}
 $armBuildOut=Join-Path $armBuildRoot $armBuildRelative
 [void][IO.Directory]::CreateDirectory($armBuildOut)
 $armBuildProject=[xml](Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $armProjectDir 'TableNavigation.uvprojx'))
@@ -34,7 +36,7 @@ try {
         $armObject=$armBuildRelative+'/'+$armUnits+'_'+[IO.Path]::GetFileNameWithoutExtension($armSource)+'.o'
         if($armFile.FileType -eq '1'){
             Invoke-ArmTool 'armcc.exe' (@('--cpu','Cortex-M4.fp.sp','--c99','--apcs=interwork','-g','-O0',
-                '-DSTM32F40_41xxx','-DUSE_STDPERIPH_DRIVER')+$armIncludes+@('-c',$armSource,'-o',$armObject))
+                '-DSTM32F40_41xxx','-DUSE_STDPERIPH_DRIVER')+$armExtraDefines+$armIncludes+@('-c',$armSource,'-o',$armObject))
         }else{
             Invoke-ArmTool 'armasm.exe' @('--cpu','Cortex-M4.fp.sp','--apcs=interwork','-g',$armSource,'-o',$armObject)
         }
