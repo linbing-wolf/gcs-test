@@ -27,6 +27,7 @@ payload 文本约定：
   F            码垛中心/双轴对齐       → STACK,x,y,dx,ok (高度由下位机自己算)
   G            前方障碍物              → OBST,x,y,w,h,dist / CLEAR
   H            物料盘下弧对齐          → DISC,x,y,dx,ok（x,y=盘最低点）
+  J            全图物料停稳持续查询     → 等待期间静默，停稳后只回一次 MSTATE,1,...（无总超时）
   R            复位/重新握手            → READY
   Z            结束                    → OK
 失败统一回：NONE[,<tag>]    异常回：ERR,<msg>
@@ -50,6 +51,8 @@ payload 文本约定：
   视觉端上电会发一次 READY 作为「我就绪了」的提示；但**正式握手由下位机发 R 触发**
   （视觉端可能比下位机先启动，先发的那次 READY 会丢）。
 """
+
+import time
 
 from maix import uart, pinmap
 
@@ -88,6 +91,7 @@ CMD_FORWARD = "G"
 CMD_RESET = "R"
 CMD_END = "Z"
 CMD_PLATE = "H"
+CMD_MATERIAL_STATE = "J"
 
 
 def crc8(data):
@@ -107,7 +111,9 @@ def encode_frame(payload):
     """把字符串/bytes 打包成一帧"""
     if isinstance(payload, str):
         payload = payload.encode("utf-8")
-    payload = bytes(payload)[:MAX_PAYLOAD]
+    payload = bytes(payload)
+    if len(payload) > MAX_PAYLOAD:
+        raise ValueError("payload exceeds %d bytes" % MAX_PAYLOAD)
     body = bytes([len(payload)]) + payload
     return bytes([FRAME_H1, FRAME_H2]) + body + bytes([crc8(body), FRAME_TAIL])
 
@@ -115,8 +121,7 @@ def encode_frame(payload):
 class FrameParser:
     """流式拆帧：喂任意字节，吐出完整 payload（bytes）列表
 
-    半帧超时：如果缓冲里有残留、且超过 frame_timeout_ms 没再收到字节，
-    就丢弃这段残留（否则断线/重启时的一条半帧会把后面的正常帧吞掉）。
+    半帧超时后重新搜索缓冲内完整帧，随后清除残留。
     """
 
     def __init__(self, frame_timeout_ms=200):
@@ -129,22 +134,30 @@ class FrameParser:
 
     def feed(self, data):
         now = ticks_ms()
-        # 半帧超时清理（只可能发生在两次 feed 之间）
+        out = []
         if (self.buf and self.frame_timeout_ms > 0
                 and (now - self._last_ms) > self.frame_timeout_ms):
-            print("[!] 半帧超时(%dms)，丢弃 %d 字节" %
+            print("[!] 半帧超时(%dms)，重新扫描 %d 字节" %
                   (now - self._last_ms, len(self.buf)))
-            self.buf = bytearray()
             self.bad += 1
-        self._last_ms = now
-        self.buf += bytes(data)
-        out = []
+            # 伪帧头可能遮住缓冲区内已经完整的合法帧。
+            self._drain(out, expired=True)
+            self.buf.clear()
+        if data:
+            self._last_ms = now
+            self.buf.extend(bytes(data))
+            self._drain(out)
+        return out
+
+    def _drain(self, out, expired=False):
+        header = bytes([FRAME_H1, FRAME_H2])
         while True:
-            i = self.buf.find(bytes([FRAME_H1, FRAME_H2]))
+            i = self.buf.find(header)
             if i < 0:
-                # 没找到帧头：只留最后 1 字节（可能是半个 0xAA）
-                if len(self.buf) > 1:
+                if self.buf and self.buf[-1] == FRAME_H1:
                     del self.buf[:-1]
+                else:
+                    self.buf.clear()
                 break
             if i > 0:
                 del self.buf[:i]
@@ -153,6 +166,10 @@ class FrameParser:
             ln = self.buf[2]
             total = 3 + ln + 2          # 头2 + LEN1 + payload + CRC1 + TAIL1
             if len(self.buf) < total:
+                if expired:
+                    del self.buf[0]
+                    continue
+                # 正常分片保留原候选，因为二进制载荷可以包含帧头。
                 break
             payload = bytes(self.buf[3:3 + ln])
             crc = self.buf[3 + ln]
@@ -160,11 +177,12 @@ class FrameParser:
             if tail == FRAME_TAIL and crc == crc8(bytes([ln]) + payload):
                 out.append(payload)
                 self.ok += 1
+                del self.buf[:total]
             else:
                 print("[!] 坏帧丢弃: crc/tail 不符")
                 self.bad += 1
-            del self.buf[:total]
-        return out
+                # 长度字段可能损坏，只跳过失败的帧头。
+                del self.buf[0]
 
 
 def _pin_now(pin):
@@ -179,6 +197,11 @@ class VisionLink:
     """与 STM32 的串口链路：发变长帧 + 收命令帧"""
 
     def __init__(self, dev=UART_DEV, baud=UART_BAUDRATE, use_pinmap=True):
+        open_transport = uart.UART
+        if dev == "i2c-gpio-master:0x42":
+            from i2c_transport import I2CTransport
+            open_transport = I2CTransport
+            use_pinmap = False
         if use_pinmap:
             for pin, func in ((PIN_TX, UART_FUNC_TX), (PIN_RX, UART_FUNC_RX)):
                 try:
@@ -198,7 +221,7 @@ class VisionLink:
                 except Exception as e:
                     print("[!] pinmap %s -> %s 异常: %s（继续，但 UART 可能不通）" % (pin, func, e))
         try:
-            self.ser = uart.UART(dev, baud)
+            self.ser = open_transport(dev, baud)
         except Exception as e:
             # 启动重试：现场插拔/系统服务还没让出串口时很有用
             retries = 3
@@ -217,7 +240,7 @@ class VisionLink:
                     sleep_ms(delay)
                 if attempt < retries:
                     try:
-                        self.ser = uart.UART(dev, baud)
+                        self.ser = open_transport(dev, baud)
                         break
                     except Exception as e2:
                         e = e2
@@ -235,8 +258,12 @@ class VisionLink:
             _fto = int(getattr(_cfg, "FRAME_TIMEOUT_MS", 200))
         except Exception:
             _fto = 200
+        if _fto > 0:
+            _fto = max(_fto, getattr(self.ser, "frame_timeout_ms", 0))
         self.parser = FrameParser(_fto)
         self._rxq = []          # 已解出的命令，待消费
+        self._last_read_error = None
+        self._closed = False
         try:
             import config as _lc
             _on = bool(getattr(_lc, "SERIAL_LOG_ON", True))
@@ -250,7 +277,25 @@ class VisionLink:
     # ---------------- 发送 ----------------
     def send_payload(self, payload):
         pkt = encode_frame(payload)
-        self.ser.write(pkt)
+        sent = 0
+        deadline = time.monotonic() + 0.25
+        try:
+            while sent < len(pkt):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("write timeout")
+                remaining = len(pkt) - sent
+                count = self.ser.write(pkt[sent:])
+                if type(count) is not int or not 0 <= count <= remaining:
+                    raise OSError("invalid write count %r for %d bytes" % (count, remaining))
+                if count == 0:
+                    sleep_ms(1)
+                    continue
+                sent += count
+        except Exception as exc:
+            msg = "LINK TX FAILED %d/%d bytes: %s" % (sent, len(pkt), exc)
+            self.slog.event(msg)
+            print("[!] " + msg)
+            raise
         self.slog.tx(payload, pkt)
         if _verbose():
             print("[发送] %r  <- %s" % (pkt.hex(" "), payload))
@@ -263,25 +308,47 @@ class VisionLink:
             return self._rxq.pop(0)
         try:
             data = self.ser.read()
-        except Exception:
-            return None
+        except Exception as exc:
+            now = ticks_ms()
+            if self._last_read_error is None or now - self._last_read_error >= 1000:
+                msg = "LINK RX FAILED: %s" % exc
+                self.slog.event(msg)
+                print("[!] " + msg)
+                self._last_read_error = now
+            data = b""
+        else:
+            if self._last_read_error is not None:
+                self.slog.event("LINK RX RECOVERED")
+                self._last_read_error = None
         if data:
             self.slog.rx_raw(data)
-            for p in self.parser.feed(data):
-                s = p.decode("utf-8", "ignore")
-                self._rxq.append(s)
-                self.slog.rx(s)
+        if data or self.parser.buf:
+            for p in self.parser.feed(data or b""):
+                try:
+                    command = p.decode("utf-8")
+                except UnicodeDecodeError:
+                    self.slog.event("LINK RX INVALID UTF-8: %s" % p.hex(" "))
+                    self.parser.bad += 1
+                    continue
+                self._rxq.append(command)
+                self.slog.rx(command)
         if self._rxq:
             return self._rxq.pop(0)
         return None
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         self.slog.event("LINK CLOSE")
-        self.slog.close()
         try:
             self.ser.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            msg = "LINK CLOSE FAILED: %s" % exc
+            self.slog.event(msg)
+            print("[!] " + msg)
+        finally:
+            self.slog.close()
 
 
 def _verbose():
@@ -294,6 +361,9 @@ def _verbose():
 
 def preflight():
     """启动自检：串口设备 + 引脚功能"""
+    if UART_DEV == "i2c-gpio-master:0x42":
+        print("[自检] GPIO I2C A1/A0 @ 0x42")
+        return
     print("-" * 60)
     print("[自检] 串口 %s @ %d | 引脚 %s=%s, %s=%s"
           % (UART_DEV, UART_BAUDRATE, PIN_TX, UART_FUNC_TX, PIN_RX, UART_FUNC_RX))
@@ -352,6 +422,32 @@ def pack_task(g1, g3):
 
 def pack_pick(color, x, y):
     return "PICK,%s,%d,%d" % (str(color), int(x), int(y))
+
+
+def pack_h_colors(first, second):
+    return "COLORS,%s,%s" % (first, second)
+
+
+def pack_material_state(records, done=False):
+    """MSTATE,done,n[,color,x,y,state], state 0=moving, 1=stopped, 2=unknown."""
+    if type(done) is not bool or (done and (not records or any(r[3] != 1 for r in records))):
+        raise ValueError("invalid terminal material state")
+    if len(records) > 4:
+        raise ValueError("too many material colors")
+    fields = ["MSTATE", str(int(done)), str(len(records))]
+    seen = set()
+    for code, x, y, state in records:
+        if (not is_color_code(str(code)) or str(code) in seen
+                or type(state) is not int or state not in (0, 1, 2)):
+            raise ValueError("invalid material state record")
+        seen.add(str(code))
+        fields.extend((str(code), str(int(x)), str(int(y)), str(state)))
+    return ",".join(fields)
+
+
+def pack_h_disc(x, y, dx, first, second):
+    """新 H 终包：保留坐标和偏差，末尾按到达顺序给出两色。"""
+    return "DISC,%d,%d,%d,%s,%s" % (int(x), int(y), int(dx), first, second)
 
 
 def pack_disc(x, y, dx=0, ok=1):

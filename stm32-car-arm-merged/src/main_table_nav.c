@@ -87,6 +87,8 @@ static uint8_t test_mode;                /* 0：导航/全程；1：平移标定
 static uint16_t test_distance = CAR_TEST_DISTANCE_MM;
 static uint16_t test_rpm = CAR_TEST_RPM;
 static uint16_t turn_rpm = CAR_TURN_RPM;
+static int16_t imu_trim_forward_tenths, imu_trim_left_tenths;
+static uint8_t imu_extra_enable = 1;
 static Motion drive;                    /* 当前单段运动状态、脉冲、估时、命令代号。 */
 static Navigation nav;                  /* 人工查表导航的节点、道路、错误状态。 */
 static NavState reported_nav = NAV_FAULT;
@@ -144,7 +146,7 @@ typedef struct
     uint8_t station_shift, station_relock; /* 粗加工子动作及完成后的四轮互锁交接。 */
     uint8_t transition_ready; /* 仅本段通过距离/航向/四轮停稳后，可向下一段传递一次。 */
     BodyAxis travel_axis;     /* 连续平移轴：默认前后；仅授权段/手动l/r使用横移。 */
-    uint16_t lateral_rpm;
+    uint16_t translation_rpm_limit;
     uint8_t station_align_pending; /* 工位已走到，但尚未完成右侧朝向和停稳确认。 */
     int8_t travel_sign;       /* 平移方向：+1前/左，-1后/右；行程仍为正数。 */
     uint16_t remaining_mm, action_mm;
@@ -154,6 +156,7 @@ typedef struct
     VelocityPhase velocity_phase;
     uint8_t velocity_query_index, velocity_waiting, velocity_sent;
     uint32_t velocity_ms, control_ms, phase_ms, zero_ms, stopped_ms, log_ms;
+    uint32_t traction_log_ms;
     uint32_t baseline_after_ms; /* 编码器基线必须采样于已确认的停稳区间内。 */
     uint32_t wheel_start_ms[4];
     int16_t wheel_rpm[4];
@@ -169,7 +172,40 @@ typedef struct
     uint8_t road_path_count, return_index, obstacle_phase, obstacle_leg_active, obstacle_node, obstacle_preflight;
     int32_t forward_mrpm;      /* 直行速度斜坡，0.001RPM；仅在可提交速度批次时推进。 */
     uint32_t forward_profile_ms, control_dt_ms;
-    int16_t forward_ref_rpm, forward_cmd_rpm, turn_ref_rpm, turn_cmd_rpm;
+    int16_t forward_ref_rpm, forward_cmd_rpm, left_ref_rpm, left_cmd_rpm;
+    int16_t turn_ref_rpm, turn_cmd_rpm;
+    int16_t course_cross_rpm, slip_cross_rpm;
+    int32_t wheel_forward_rpm, wheel_left_rpm;
+    int32_t slip_cross_mrpm;
+    uint32_t slip_ms;
+    int32_t accel_calib_sum_mg[2];
+    int16_t accel_bias_mg[2];
+    float accel_lpf_mg[2];
+    float accel_velocity_mm_s;
+    int32_t accel_v_side_mm_s;
+    float accel_pos_side_mm;
+    float projected_left_mm, projected_forward_mm;
+    float xy_velocity[2], xy_displacement[2], xy_reference_left_mm_s;
+    uint32_t xy_ms, xy_sequence;
+    uint8_t xy_seeded;
+    int16_t xy_left_rpm, xy_forward_rpm;
+    uint8_t lateral_projection_active;
+    int32_t lateral_slip_angle_cdeg;
+    int32_t lateral_extra_target_mm;
+    uint8_t lateral_extra_frozen;
+    int64_t projection_counts[4];
+    int32_t projection_yaw_cdeg, raw_lateral_mm;
+    int16_t accel_trim_rpm;
+    int32_t lateral_heading_base_cdeg, lateral_heading_bias_cdeg;
+    uint32_t accel_int_ms;
+    uint32_t accel_int_sequence;
+    uint32_t accel_trace_sequence, accel_trace_count, accel_trace_missing;
+    int16_t accel_trace_min[2], accel_trace_max[2];
+    uint8_t accel_trace_seen;
+    uint32_t accel_calib_sequence;
+    uint8_t accel_calib_samples;
+    uint8_t accel_calib_ready;
+    uint8_t accel_lpf_seeded;
     struct {
         uint32_t sequence, samples, min_ms, max_ms;
         int32_t min_cdeg, max_cdeg, min_mm, max_mm;
@@ -208,6 +244,9 @@ static HeadingSample heading_snapshot(void)
     sample = heading_sensor.sample;
     __enable_irq();
     sample.yaw_cdeg = heading_wrap_cdeg((int32_t)sample.yaw_cdeg * CAR_IMU_YAW_SIGN);
+#if CHASSIS_IMU_EXPERIMENT
+    sample.gyro_z_cdeg_s *= CAR_IMU_YAW_SIGN;
+#endif
     return sample;
 }
 
@@ -236,7 +275,9 @@ int route_test_imu_rx(uint8_t byte, uint8_t uart_error)
 {
 #if CAR_IMU_UART_ENABLED
     if (uart_error) {
-        heading_sensor_invalidate(&heading_sensor);
+        /* 200 Hz 下偶发单字节噪声/过载不应抹掉上一份有效采样。
+         * 丢弃当前字节并重新找帧头；若错误持续，航向/陀螺仪自然超时。 */
+        heading_sensor.count = 0;
         if (run_active && run.imu_mode) imu_uart_fault = 1;
         return 1;
     }
@@ -326,10 +367,41 @@ static void run_recover_receive(void)
 }
 
 /* ===== 3. 串口收发与毫秒计时 ===== */
+#if !defined(NAV_ENTRY_HOST_TEST) && CAR_DEBUG_UART_SOFT_PB0_PB1
+static uint32_t soft_uart_bit_cycles;
+
+static void soft_uart_wait_until(uint32_t deadline)
+{
+    while ((int32_t)(DWT->CYCCNT - deadline) < 0)
+    {
+    }
+}
+
+static void soft_uart_send_byte(uint8_t value)
+{
+    uint32_t deadline = DWT->CYCCNT + soft_uart_bit_cycles;
+    uint8_t bit;
+    GPIO_ResetBits(GPIOB, GPIO_Pin_0);
+    soft_uart_wait_until(deadline);
+    for (bit = 0; bit < 8u; bit++)
+    {
+        if (value & (uint8_t)(1u << bit)) GPIO_SetBits(GPIOB, GPIO_Pin_0);
+        else GPIO_ResetBits(GPIOB, GPIO_Pin_0);
+        deadline += soft_uart_bit_cycles;
+        soft_uart_wait_until(deadline);
+    }
+    GPIO_SetBits(GPIOB, GPIO_Pin_0);
+    deadline += soft_uart_bit_cycles;
+    soft_uart_wait_until(deadline);
+}
+#endif
+
 static void send_byte(uint8_t b)
 {
 #ifdef NAV_ENTRY_HOST_TEST
     entry_host_send_byte(b);
+#elif CAR_DEBUG_UART_SOFT_PB0_PB1
+    soft_uart_send_byte(b);
 #else
     USART_SendData(USART3, b);
     while (USART_GetFlagStatus(USART3, USART_FLAG_TXE) == RESET)
@@ -478,7 +550,8 @@ static void scanner_init(uint32_t baud)
     __enable_irq();
 #ifndef NAV_ENTRY_HOST_TEST
     irq.NVIC_IRQChannel = USART1_IRQn;
-    irq.NVIC_IRQChannelPreemptionPriority = 1;
+    /* Keep PB1 software-UART sampling above the IMU byte interrupt. */
+    irq.NVIC_IRQChannelPreemptionPriority = 0;
     irq.NVIC_IRQChannelSubPriority = 1;
     irq.NVIC_IRQChannelCmd = ENABLE;
     NVIC_Init(&irq);
@@ -609,6 +682,65 @@ static void queue_byte(uint8_t value)
 static void uart_init(void)
 {
     GPIO_InitTypeDef gpio;
+#if CAR_DEBUG_UART_SOFT_PB0_PB1
+    EXTI_InitTypeDef exti;
+    NVIC_InitTypeDef irq;
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_SYSCFG, ENABLE);
+    GPIO_StructInit(&gpio);
+    gpio.GPIO_Mode = GPIO_Mode_OUT;
+    gpio.GPIO_Pin = GPIO_Pin_0;
+    gpio.GPIO_Speed = GPIO_Speed_50MHz;
+    gpio.GPIO_OType = GPIO_OType_PP;
+    gpio.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_Init(GPIOB, &gpio);
+    GPIO_SetBits(GPIOB, GPIO_Pin_0);
+    gpio.GPIO_Mode = GPIO_Mode_IN;
+    gpio.GPIO_Pin = GPIO_Pin_1;
+    GPIO_Init(GPIOB, &gpio);
+    SYSCFG_EXTILineConfig(EXTI_PortSourceGPIOB, EXTI_PinSource1);
+    EXTI_StructInit(&exti);
+    exti.EXTI_Line = EXTI_Line1;
+    exti.EXTI_Mode = EXTI_Mode_Interrupt;
+    exti.EXTI_Trigger = EXTI_Trigger_Falling;
+    exti.EXTI_LineCmd = ENABLE;
+    EXTI_Init(&exti);
+    irq.NVIC_IRQChannel = EXTI1_IRQn;
+    irq.NVIC_IRQChannelPreemptionPriority = 1;
+    irq.NVIC_IRQChannelSubPriority = 0;
+    irq.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&irq);
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    soft_uart_bit_cycles = SystemCoreClock / CAR_DEBUG_UART_BAUD;
+}
+
+void EXTI1_IRQHandler(void)
+{
+    uint32_t sample;
+    uint8_t bit, value = 0;
+    if (EXTI_GetITStatus(EXTI_Line1) == RESET) return;
+    EXTI_ClearITPendingBit(EXTI_Line1);
+    sample = DWT->CYCCNT + soft_uart_bit_cycles / 2u;
+    soft_uart_wait_until(sample);
+    if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_1)) return;
+    sample += soft_uart_bit_cycles;
+    for (bit = 0; bit < 8u; bit++)
+    {
+        soft_uart_wait_until(sample);
+        if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_1)) value |= (uint8_t)(1u << bit);
+        sample += soft_uart_bit_cycles;
+    }
+    soft_uart_wait_until(sample);
+    if (GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_1)) queue_byte(value);
+    else
+    {
+        rx_overflow = 1;
+        stop_pending = 1;
+    }
+}
+#else
     USART_InitTypeDef uart;
     NVIC_InitTypeDef irq;
     /* 当前载板串口：PB10=USART3_TX，PB11=USART3_RX，USART3挂在APB1。 */
@@ -648,6 +780,7 @@ void USART3_IRQHandler(void)
         stop_pending = 1;
     }
 }
+#endif
 
 #endif
 static int read_byte(uint8_t *value)
@@ -775,11 +908,12 @@ static void run_status(void)
     if (run.translation_only) {
         text("[shift closed-loop] ");
         text(run.state == RUN_DONE ? "DONE_BY_IMU_ENCODER" : names[run.state]);
-        text(run.travel_sign > 0 ? " travel=LEFT" : " travel=RIGHT");
+        if (run.travel_axis == BODY_LEFT) text(run.travel_sign > 0 ? " travel=LEFT" : " travel=RIGHT");
+        else text(run.travel_sign > 0 ? " travel=FORWARD" : " travel=BACKWARD");
         text(" distance_mm="); signed_number(run.progress_mm);
         text(" target_mm="); number(run.remaining_mm ? run.remaining_mm : run.action_mm);
         text(" error_cdeg="); signed_number(run.heading_control.error_cdeg);
-        text(" rpm_limit="); number(run.lateral_rpm);
+        text(" rpm_limit="); number(run.translation_rpm_limit);
         text(" ack="); number(run.acks);
         text(" ready="); number(run.ready);
         text("; physical_path=unconfirmed\r\n");
@@ -870,16 +1004,131 @@ static void feedback_status(void)
     }
 }
 
+static uint32_t imu_active_baud = CAR_IMU_UART_BAUD;
+
+#ifndef NAV_ENTRY_HOST_TEST
+static void imu_uart_priority(void)
+{
+    /* JY901B may run at 200 Hz; its USART2 ISR must not preempt PB1 RX. */
+    NVIC_SetPriority(USART2_IRQn,
+        NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 1u, 0u));
+}
+#endif
+
 static void imu_status(void)
 {
     HeadingSample sample = heading_snapshot();
     text("[imu] uart_enabled="); number(CAR_IMU_UART_ENABLED);
     text(" fresh="); number(heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS));
+    text(" baud="); number(imu_active_baud);
     text(" yaw_cdeg="); signed_number(sample.yaw_cdeg);
     text(" age_ms="); number(clock_ms - sample.received_ms);
     text(" samples="); number(sample.sequence);
     text(" checksum_errors="); number(heading_sensor.checksum_errors);
     text("\r\n");
+}
+
+static int parse_uint(const char *s, uint16_t *value);
+
+#ifndef NAV_ENTRY_HOST_TEST
+static uint8_t imu_baud_code(uint32_t baud)
+{
+    if (baud == 230400u) return 7u;
+    if (baud == 460800u) return 8u;
+    if (baud == 921600u) return 9u;
+    return 6u;
+}
+#endif
+
+/* 临时切换JY901B和USART2波特率；不发送SAVE，失败自动退回原波特率。 */
+static int imu_baud_command(const char *command_text)
+{
+    uint32_t baud;
+    if (strncmp(command_text, "imu baud ", 9)) return 0;
+    if (!strcmp(command_text + 9, "115200")) baud = 115200u;
+    else if (!strcmp(command_text + 9, "230400")) baud = 230400u;
+    else if (!strcmp(command_text + 9, "460800")) baud = 460800u;
+    else if (!strcmp(command_text + 9, "921600")) baud = 921600u;
+    else {
+        text("[imu] baud rejected: 115200/230400/460800/921600\r\n");
+        return 1;
+    }
+#ifdef NAV_ENTRY_HOST_TEST
+    text("[imu] baud host test only; baud="); number(baud);
+    text("; not sent\r\n");
+#else
+    uint32_t old_baud;
+    uint32_t sequence;
+    if (run_active || drive.state == MOTION_RUNNING
+        || arm_lock.state || arm_enabled()) {
+        text("[imu] baud rejected: chassis/arm busy\r\n");
+        return 1;
+    }
+    {
+        uint8_t unlock[5] = {0xffu, 0xaau, 0x69u, 0x88u, 0xb5u};
+        uint8_t frame[5] = {0xffu, 0xaau, 0x04u, 0u, 0x00u};
+        extern void Uart2Send(unsigned char *data, unsigned int size);
+        extern void Usart2Init(unsigned int baud);
+        old_baud = imu_active_baud;
+        sequence = heading_sensor.sample.sequence;
+        frame[3] = imu_baud_code(baud);
+        Uart2Send(unlock, sizeof(unlock));
+        delay_ms(10);
+        Uart2Send(frame, sizeof(frame));
+        delay_ms(50);
+        Usart2Init((unsigned int)baud);
+        imu_uart_priority();
+        delay_ms(300);
+        if (heading_sensor.sample.sequence != sequence) {
+            imu_active_baud = baud;
+            text("[imu] baud="); number(baud);
+            text("; not saved; power cycle restores 115200\r\n");
+            return 1;
+        }
+        /* 新波特率收不到帧：按新波特率把模块改回旧值，再恢复USART2。 */
+        frame[3] = imu_baud_code(old_baud);
+        Uart2Send(unlock, sizeof(unlock));
+        delay_ms(10);
+        Uart2Send(frame, sizeof(frame));
+        delay_ms(50);
+        Usart2Init((unsigned int)old_baud);
+        imu_uart_priority();
+        delay_ms(100);
+        imu_active_baud = old_baud;
+        text("[imu] baud change failed; restored "); number(old_baud);
+        text(" (power cycle if sensor is silent)\r\n");
+    }
+#endif
+    return 1;
+}
+
+/* 临时切换JY901B输出率；不发送SAVE，断电或显式改回50Hz即恢复。 */
+static int imu_rate_command(const char *command_text)
+{
+    uint16_t hz;
+    if (strncmp(command_text, "imu rate ", 9)) return 0;
+    if (!parse_uint(command_text + 9, &hz)
+        || (hz != 50u && hz != 100u && hz != 200u)) {
+        text("[imu] rate rejected: 50/100/200 Hz\r\n");
+        return 1;
+    }
+#ifdef NAV_ENTRY_HOST_TEST
+    text("[imu] rate host test only; not sent\r\n");
+#else
+    {
+        uint8_t rate = hz == 200u ? 0x0bu : (hz == 100u ? 0x09u : 0x08u);
+        uint8_t unlock[5] = {0xffu, 0xaau, 0x69u, 0x88u, 0xb5u};
+        uint8_t frame[5] = {0xffu, 0xaau, 0x03u, rate, 0x00u};
+        extern void Uart2Send(unsigned char *data, unsigned int size);
+        Uart2Send(unlock, sizeof(unlock));
+        delay_ms(10);
+        Uart2Send(frame, sizeof(frame));
+        delay_ms(10);
+    }
+    text("[imu] temporary output rate="); number(hz);
+    text("Hz; not saved; imu rate 50 restores\r\n");
+#endif
+    return 1;
 }
 
 static void run_wait_feedback(const char *reason);
@@ -899,6 +1148,9 @@ static void run_fault(const char *reason)
     else if (can_rx_fault & 2u) reason = "CAN transmit mailbox full; command incomplete";
     else if (can_rx_fault & 1u) reason = "CAN hardware FIFO overrun; feedback lost";
     run_active = 0;
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode) heading_experiment_reset(&run.heading_control);
+#endif
     if (run.station_enabled) {station_abort();vision_cancel_pick();if (arm_enabled()) {arm_stop();arm_lock.state=3;}}
     else if (!run.turn_only && !run.translation_only) station_clear_task();
     run.state = RUN_FAULT;
@@ -1133,9 +1385,10 @@ static int start_heading_turn(int16_t relative_degrees, uint16_t rpm)
 }
 
 /* 单次横移与导航复用同一速度状态机；无新IMU时拒绝，不能静默退回脉冲模式。 */
-static int start_heading_shift(int32_t mm, uint16_t rpm)
+static int start_heading_translation(int32_t mm, uint16_t rpm, BodyAxis axis, uint8_t experiment_mode)
 {
     HeadingSample sample = heading_snapshot();
+    uint16_t rpm_ceiling = experiment_mode ? IMUTEST_MAX_TRANSLATION_RPM : CAR_LATERAL_MAX_RPM;
     if (run_active || stop_pending || drive.state == MOTION_RUNNING || !mm
         || !heading_sample_fresh(&sample, clock_ms, CAR_IMU_MAX_AGE_MS)) return 0;
     nav_stop(&nav);
@@ -1143,12 +1396,24 @@ static int start_heading_shift(int32_t mm, uint16_t rpm)
     pose_set = nav.position_confirmed = 0;
     memset(&run, 0, sizeof(run));
     run.imu_mode = run.translation_only = 1;
-    run.travel_axis = BODY_LEFT;
+    run.travel_axis = axis;
     run.travel_sign = mm > 0 ? 1 : -1;
     run.remaining_mm = (uint16_t)(mm > 0 ? mm : -mm);
-    run.lateral_rpm = rpm > CAR_LATERAL_MAX_RPM ? CAR_LATERAL_MAX_RPM : rpm;
+    run.translation_rpm_limit = rpm > rpm_ceiling ? rpm_ceiling : rpm;
     run.turn_rpm = CAR_TURN_CLOSED_LOOP_RPM;
     if (!heading_control_start(&run.heading_control, sample, 0, clock_ms)) return 0;
+    run.lateral_heading_base_cdeg = run.heading_control.target_cdeg;
+    run.lateral_projection_active = 0;
+#if CHASSIS_IMU_EXPERIMENT
+    run.heading_control.experiment_mode = experiment_mode;
+    run.accel_calib_sum_mg[0] = run.accel_calib_sum_mg[1] = 0;
+    run.accel_bias_mg[0] = run.accel_bias_mg[1] = 0;
+    run.accel_lpf_mg[0] = run.accel_lpf_mg[1] = 0;
+    run.accel_calib_samples = 0;
+    run.accel_calib_ready = 0;
+    run.accel_lpf_seeded = 0;
+    run.accel_int_ms = clock_ms;
+#endif
     run.state = RUN_PREFLIGHT;
     run.segment_ms = clock_ms;
     run.last_query_ms = clock_ms - CAR_VELOCITY_QUERY_MS;
@@ -1159,6 +1424,11 @@ static int start_heading_shift(int32_t mm, uint16_t rpm)
     run_active = 1;
     run_status();
     return 1;
+}
+
+static int start_heading_shift(int32_t mm, uint16_t rpm)
+{
+    return start_heading_translation(mm, rpm, BODY_LEFT, 0);
 }
 
 /* 工位内仅允许高位收回；两区索引/视觉微调允许保持各自观察角。
@@ -1189,9 +1459,8 @@ static int station_chassis_start_axis(int32_t mm,BodyAxis axis)
             || (uint32_t)(clock_ms - f->status_ms) > ARM_FEEDBACK_TIMEOUT_MS) return 0;
     }
     station_parent = run;
-    if (!start_heading_shift(mm, (uint16_t)index_rpm)) {run = station_parent;return 0;}
+    if (!start_heading_translation(mm, (uint16_t)index_rpm, axis, 0)) {run = station_parent;return 0;}
     run.station_shift = run.station_enabled = 1;
-    run.travel_axis = axis;
     run.plan = station_parent.plan;run.edge = station_parent.edge;run.job = station_parent.job;
     run.heading = run.target_heading = station_parent.heading;
     return 1;
@@ -1615,7 +1884,11 @@ static int run_velocity_stopped(void)
         MotorFeedback *f = &motor_feedback[i];
         uint32_t after_zero = f->speed_ms - run.zero_ms;
         station_log_wheel_speed(i,"stop");
-        if (run.obstacle_phase && (f->speed_rpm>CAR_VELOCITY_STOP_RPM || f->speed_rpm<-CAR_VELOCITY_STOP_RPM)) {
+        if ((run.obstacle_phase
+#if CHASSIS_IMU_EXPERIMENT
+             || run.heading_control.experiment_mode
+#endif
+            ) && (f->speed_rpm>CAR_VELOCITY_STOP_RPM || f->speed_rpm<-CAR_VELOCITY_STOP_RPM)) {
             run.stopped_ms=0;return 0; /* 主动obstacle要求真正停稳后才允许反向。 */
         }
         if (after_zero < CAR_HEADING_SETTLE_MS || after_zero > 0x7fffffffu) {
@@ -1678,6 +1951,16 @@ static int run_pass_straight(void)
     return 1;
 }
 
+static int32_t run_velocity_target_mm(void)
+{
+    int32_t target = run.action_mm;
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode && run.travel_axis == BODY_LEFT)
+        target += run.lateral_extra_target_mm;
+#endif
+    return target;
+}
+
 static int run_velocity_distance(void)
 {
     int64_t sum = 0;
@@ -1729,23 +2012,247 @@ static int run_velocity_distance(void)
            && run.progress_mm >= run.action_mm) {
         if (!run_pass_straight()) return 0;
     }
-    if (run.progress_mm < -CAR_DISTANCE_OVERRUN_MM
-        || (run.obstacle_phase != 1 && run.progress_mm > run.action_mm + CAR_DISTANCE_OVERRUN_MM)) return 0;
+    {
+        int32_t overrun = CAR_DISTANCE_OVERRUN_MM;
+#if CHASSIS_IMU_EXPERIMENT
+        if (run.heading_control.experiment_mode) overrun = CAR_EXPERIMENT_DISTANCE_OVERRUN_MM;
+#endif
+        if (run.progress_mm < -overrun
+            || (run.obstacle_phase != 1
+                && run.progress_mm > run_velocity_target_mm() + overrun)) return 0;
+    }
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode && run.travel_axis == BODY_LEFT) {
+        static const int8_t forward_sign[] = {-1, 1, 1, -1};
+        static const int8_t left_sign[] = {-1, -1, 1, 1};
+        const float scale = CAR_POSITION_PULSES_PER_REV / (4.0f * CAR_ENCODER_COUNTS_PER_REV);
+        float forward_counts = 0.0f, left_counts = 0.0f;
+        int32_t yaw = run.heading_control.progress_cdeg;
+        float angle = (yaw + run.projection_yaw_cdeg) * (3.14159265358979323846f / 36000.0f);
+        for (i = 0; i < MOTOR_COUNT; i++) {
+            int64_t counts = motor_feedback[i].position - run.encoder_start[i];
+            float delta = (float)(counts - run.projection_counts[i])
+                * run.encoder_sign[i] * run.travel_sign * left_sign[i];
+            run.projection_counts[i] = counts;
+            forward_counts += delta * forward_sign[i];
+            left_counts += delta * left_sign[i];
+        }
+        run.projection_yaw_cdeg = yaw;
+        run.projected_forward_mm += scale * (forward_counts / CALIBRATED_PPM_Y * cosf(angle)
+            - left_counts / CALIBRATED_PPM_X * sinf(angle));
+        run.projected_left_mm += scale * (forward_counts / CALIBRATED_PPM_Y * sinf(angle)
+            + left_counts / CALIBRATED_PPM_X * cosf(angle));
+        run.raw_lateral_mm = run.progress_mm;
+        run.progress_mm = (int32_t)(run.projected_left_mm * run.travel_sign);
+    }
+#endif
     return 1;
 }
 
 /* 以指令减速度和延迟预留计算可停车速度；不是对真实制动距离的测量。 */
-static int16_t run_forward_target(int32_t remaining)
+static int32_t run_braking_target(int32_t remaining, float ppm,
+                                  uint16_t decel_rpm_s, uint16_t lookahead_ms)
 {
     float mm_per_rpm_s, delay_rpm, braking_rpm;
     int32_t speed = remaining * CAR_DISTANCE_KP_X100 / 100;
     if (remaining <= CAR_DISTANCE_TOLERANCE_MM) return 0;
-    mm_per_rpm_s = CAR_POSITION_PULSES_PER_REV / (60.0f * CALIBRATED_PPM_Y);
-    delay_rpm = CAR_DRIVE_DECEL_RPM_PER_S * (CAR_DRIVE_BRAKE_LOOKAHEAD_MS / 1000.0f);
+    mm_per_rpm_s = CAR_POSITION_PULSES_PER_REV / (60.0f * ppm);
+    delay_rpm = decel_rpm_s * (lookahead_ms / 1000.0f);
     braking_rpm = sqrtf(delay_rpm * delay_rpm
-        + 2.0f * CAR_DRIVE_DECEL_RPM_PER_S * (remaining - CAR_DISTANCE_TOLERANCE_MM) / mm_per_rpm_s) - delay_rpm;
+        + 2.0f * decel_rpm_s * (remaining - CAR_DISTANCE_TOLERANCE_MM) / mm_per_rpm_s) - delay_rpm;
     if (speed > (int32_t)braking_rpm) speed = (int32_t)braking_rpm;
     if (speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
+    return speed;
+}
+
+#if CHASSIS_IMU_EXPERIMENT
+/* 航向有误差时，把世界坐标下的期望平移速度旋回当前车身坐标。
+ * 横移时输出前后分量，直行/后退时输出左右分量；只补偿几何路径，
+ * 不替代航向PID，也不靠刹车等待车身摆正。 */
+static int16_t run_course_cross_rpm(BodyAxis axis, int16_t primary, int32_t error_cdeg)
+{
+    float radians, cross;
+    if (!primary) return 0;
+    if (error_cdeg > CAR_HEADING_MAX_DRIFT_CDEG) error_cdeg = CAR_HEADING_MAX_DRIFT_CDEG;
+    if (error_cdeg < -CAR_HEADING_MAX_DRIFT_CDEG) error_cdeg = -CAR_HEADING_MAX_DRIFT_CDEG;
+    radians = (float)error_cdeg * (3.14159265358979323846f / 18000.0f);
+    cross = (axis == BODY_LEFT ? -(float)primary : (float)primary) * sinf(radians);
+    if (cross > CAR_COURSE_HOLD_MAX_RPM) cross = CAR_COURSE_HOLD_MAX_RPM;
+    if (cross < -CAR_COURSE_HOLD_MAX_RPM) cross = -CAR_COURSE_HOLD_MAX_RPM;
+    return (int16_t)(cross >= 0.0f ? cross + 0.5f : cross - 0.5f);
+}
+
+/* 用四轮反馈合成车身速度。反馈符号仅取幅值，方向采用刚下发的轮速命令，
+ * 避免驱动器速度回传方向约定影响；四轮任一失联时不参与修正。 */
+static int run_wheel_velocity(int32_t *forward_rpm, int32_t *left_rpm)
+{
+    int32_t wheel[4], maximum = 0;
+    uint8_t i;
+    for (i = 0; i < MOTOR_COUNT; i++) {
+        MotorFeedback *f = &motor_feedback[i];
+        int32_t speed;
+        if (!f->speed_valid || !run.wheel_rpm[i]
+            || (uint32_t)(clock_ms - f->speed_ms) > CAR_VELOCITY_FEEDBACK_MS) return 0;
+        speed = f->speed_rpm < 0 ? -f->speed_rpm : f->speed_rpm;
+        wheel[i] = run.wheel_rpm[i] > 0 ? speed : -speed;
+        if (speed > maximum) maximum = speed;
+    }
+    if (maximum < 10) return 0;
+    *forward_rpm = (-wheel[0] + wheel[1] + wheel[2] - wheel[3]) / 4;
+    *left_rpm = (-wheel[0] - wheel[1] + wheel[2] + wheel[3]) / 4;
+    return 1;
+}
+
+/* 交叉轴轮速反馈：某一轮打滑/滞后时，四轮合成速度会出现非期望轴分量。
+ * 直接在有速度时反向修正该分量，任务继续；不用停车确认。 */
+static int16_t run_slip_cross_feedback(BodyAxis axis, int16_t desired_cross_rpm)
+{
+    int32_t forward_rpm, left_rpm, observed, error, elapsed, correction;
+    float alpha;
+    if (!run_wheel_velocity(&forward_rpm, &left_rpm)) return 0;
+    run.wheel_forward_rpm = forward_rpm;
+    run.wheel_left_rpm = left_rpm;
+    observed = axis == BODY_LEFT ? forward_rpm : left_rpm;
+    error = observed - desired_cross_rpm;
+    elapsed = (int32_t)(clock_ms - run.slip_ms);
+    if (elapsed <= 0 || elapsed > 200) alpha = 0.0f;
+    else alpha = expf(-(float)elapsed / (float)CAR_SLIP_FILTER_MS);
+    run.slip_cross_mrpm = (int32_t)(alpha * (float)run.slip_cross_mrpm
+                                    + (1.0f - alpha) * (float)(error * 1000));
+    run.slip_ms = clock_ms;
+    correction = -(run.slip_cross_mrpm * CAR_SLIP_FB_GAIN_X100) / (1000 * 100);
+    if (correction > CAR_SLIP_FB_MAX_RPM) correction = CAR_SLIP_FB_MAX_RPM;
+    if (correction < -CAR_SLIP_FB_MAX_RPM) correction = -CAR_SLIP_FB_MAX_RPM;
+    return (int16_t)correction;
+}
+
+/* 静态时平均加速度零偏；只在进入速度环前采集，避免把运动加速度当零偏。 */
+static void run_accel_calibrate(const HeadingSample *sample, uint32_t now_ms)
+{
+    if (run.accel_calib_ready || !sample->accel_valid
+        || (uint32_t)(now_ms - sample->accel_ms) > 100u) return;
+    if (run.accel_calib_samples
+        && run.accel_calib_sequence == sample->accel_sequence) return;
+    run.accel_calib_sequence = sample->accel_sequence;
+    run.accel_calib_sum_mg[0] += sample->accel_mg[0];
+    run.accel_calib_sum_mg[1] += sample->accel_mg[1];
+    run.accel_calib_samples++;
+    if (run.accel_calib_samples >= CAR_ACCEL_CALIB_SAMPLES) {
+        run.accel_bias_mg[0] =
+            (int16_t)(run.accel_calib_sum_mg[0] / run.accel_calib_samples);
+        run.accel_bias_mg[1] =
+            (int16_t)(run.accel_calib_sum_mg[1] / run.accel_calib_samples);
+        run.accel_calib_ready = 1;
+    }
+}
+
+/* 加速度计侧向闭环：低通后的加速度先积成速度，再慢积成位移。
+ * 位移环只做有限修正；若零偏仍有残差，泄漏和限幅保证不会无限推车。 */
+static int16_t run_accel_side_feedback(BodyAxis axis, uint32_t now_ms)
+{
+    HeadingSample sample = heading_snapshot();
+    uint32_t elapsed = sample.accel_ms - run.accel_int_ms;
+    uint8_t index = axis == BODY_LEFT ? 0u : 1u;
+    float dt, accel, velocity, alpha, lpf_alpha, dynamic_mg;
+    int32_t rpm;
+    if (!run.accel_calib_ready && run.accel_calib_samples) {
+        run.accel_bias_mg[0] =
+            (int16_t)(run.accel_calib_sum_mg[0] / run.accel_calib_samples);
+        run.accel_bias_mg[1] =
+            (int16_t)(run.accel_calib_sum_mg[1] / run.accel_calib_samples);
+        run.accel_calib_ready = 1;
+    }
+    if (!sample.accel_valid || (uint32_t)(now_ms - sample.accel_ms) > 100u) {
+        run.accel_v_side_mm_s = 0;
+        run.accel_velocity_mm_s = 0.0f;
+        run.accel_pos_side_mm = 0.0f;
+        run.accel_lpf_seeded = 0;
+        return 0;
+    }
+    if (!run.accel_calib_ready) return 0;
+    if (run.accel_lpf_seeded && sample.accel_sequence == run.accel_int_sequence)
+        return run.accel_trim_rpm;
+    run.accel_int_ms = sample.accel_ms;
+    run.accel_int_sequence = sample.accel_sequence;
+    if (!run.accel_lpf_seeded || elapsed > 100u) {
+        run.accel_lpf_mg[index] = run.accel_bias_mg[index];
+        run.accel_lpf_seeded = 1;
+        run.accel_velocity_mm_s = 0.0f;
+        run.accel_v_side_mm_s = 0;
+        run.accel_pos_side_mm = 0.0f;
+        return 0;
+    }
+    if (!elapsed) return run.accel_trim_rpm;
+    dt = (float)elapsed / 1000.0f;
+    lpf_alpha = expf(-(float)elapsed / (float)CAR_ACCEL_LPF_MS);
+    run.accel_lpf_mg[index] = lpf_alpha * run.accel_lpf_mg[index]
+        + (1.0f - lpf_alpha) * sample.accel_mg[index];
+    dynamic_mg = (float)(run.accel_lpf_mg[index] - run.accel_bias_mg[index]);
+    if (dynamic_mg < CAR_ACCEL_SIDE_DEADBAND_MG
+        && dynamic_mg > -CAR_ACCEL_SIDE_DEADBAND_MG) dynamic_mg = 0.0f;
+    accel = dynamic_mg * 0.00980665f;
+    alpha = expf(-dt / (CAR_ACCEL_SIDE_LEAK_MS / 1000.0f));
+    velocity = alpha * (run.accel_velocity_mm_s + accel * dt * 1000.0f);
+    if (velocity > CAR_ACCEL_SIDE_MAX_MM_S) velocity = CAR_ACCEL_SIDE_MAX_MM_S;
+    if (velocity < -CAR_ACCEL_SIDE_MAX_MM_S) velocity = -CAR_ACCEL_SIDE_MAX_MM_S;
+    run.accel_v_side_mm_s = (int32_t)velocity;
+    run.accel_velocity_mm_s = velocity;
+    run.accel_pos_side_mm = expf(-dt / (CAR_ACCEL_POS_LEAK_MS / 1000.0f))
+        * (run.accel_pos_side_mm + velocity * dt);
+    if (run.accel_pos_side_mm > CAR_ACCEL_POS_LIMIT_MM)
+        run.accel_pos_side_mm = CAR_ACCEL_POS_LIMIT_MM;
+    if (run.accel_pos_side_mm < -CAR_ACCEL_POS_LIMIT_MM)
+        run.accel_pos_side_mm = -CAR_ACCEL_POS_LIMIT_MM;
+    rpm = -(run.accel_v_side_mm_s / CAR_ACCEL_SIDE_DIV_MM_S);
+    if (rpm > CAR_ACCEL_SIDE_MAX_RPM) rpm = CAR_ACCEL_SIDE_MAX_RPM;
+    if (rpm < -CAR_ACCEL_SIDE_MAX_RPM) rpm = -CAR_ACCEL_SIDE_MAX_RPM;
+    return (int16_t)rpm;
+}
+
+static void run_lateral_accel_xy(const HeadingSample *sample, float sine, float cosine,
+                                 int16_t reference_left)
+{
+    float speed = reference_left * (CAR_POSITION_PULSES_PER_REV / (60.0f * CALIBRATED_PPM_X));
+    uint32_t elapsed = sample->accel_ms - run.xy_ms;
+    float acceleration[2], dt, decay, forward, left;
+    uint8_t axis;
+    if (!run.accel_calib_ready || !sample->accel_valid || clock_ms - sample->accel_ms > 100u
+        || !run.xy_seeded || elapsed > 100u) {
+        memset(run.xy_velocity, 0, sizeof(run.xy_velocity));
+        memset(run.xy_displacement, 0, sizeof(run.xy_displacement));
+        run.xy_seeded = run.accel_calib_ready && sample->accel_valid
+            && clock_ms - sample->accel_ms <= 100u;
+    } else {
+        if (!elapsed || run.xy_sequence == sample->accel_sequence) return;
+        dt = elapsed / 1000.0f;
+        decay = expf(-(float)elapsed / CAR_ACCEL_SIDE_LEAK_MS);
+        forward = (sample->accel_mg[0] - run.accel_bias_mg[0]) * 9.80665f;
+        left = (sample->accel_mg[1] - run.accel_bias_mg[1]) * 9.80665f;
+        acceleration[0] = forward * cosine - left * sine;
+        acceleration[1] = forward * sine + left * cosine
+            - (speed - run.xy_reference_left_mm_s) / dt;
+        for (axis = 0; axis < 2u; axis++) {
+            float residual = acceleration[axis];
+            float noise = CAR_ACCEL_SIDE_DEADBAND_MG * 9.80665f;
+            if (fabsf(residual) < noise) residual = 0.0f;
+            run.xy_velocity[axis] = fmaxf(-CAR_ACCEL_SIDE_MAX_MM_S,
+                fminf(CAR_ACCEL_SIDE_MAX_MM_S, decay * (run.xy_velocity[axis] + residual * dt)));
+            run.xy_displacement[axis] = fmaxf(-CAR_ACCEL_POS_LIMIT_MM,
+                fminf(CAR_ACCEL_POS_LIMIT_MM,
+                    expf(-(float)elapsed / CAR_ACCEL_POS_LEAK_MS) * run.xy_displacement[axis]
+                    + run.xy_velocity[axis] * dt));
+        }
+    }
+    run.xy_ms = sample->accel_ms;
+    run.xy_sequence = sample->accel_sequence;
+    run.xy_reference_left_mm_s = speed;
+}
+#endif
+
+static int16_t run_forward_target(int32_t remaining)
+{
+    int32_t speed = run_braking_target(remaining, CALIBRATED_PPM_Y,
+        CAR_DRIVE_DECEL_RPM_PER_S, CAR_DRIVE_BRAKE_LOOKAHEAD_MS);
     if (speed > (run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM))
         speed = run.obstacle_phase == 2 ? CAR_OBSTACLE_RETURN_RPM : CAR_RUN_RPM;
     if (run.station_shift) {
@@ -1753,15 +2260,23 @@ static int16_t run_forward_target(int32_t remaining)
         if (speed > index_rpm) speed = index_rpm;
     }
     if (run.encoder_ready != 15u && speed > CAR_ENCODER_LEARN_RPM) speed = CAR_ENCODER_LEARN_RPM;
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode && speed > run.translation_rpm_limit)
+        speed = run.translation_rpm_limit;
+#endif
     return (int16_t)(speed * run.travel_sign);
 }
 
-static int16_t run_forward_slew(int16_t desired)
+static int16_t run_translation_slew(int16_t desired, uint16_t accel_rpm_s,
+                                    uint16_t decel_rpm_s)
 {
     uint32_t elapsed = clock_ms - run.forward_profile_ms;
-    int32_t target = (desired < 0 ? -(int32_t)desired : desired) * 1000;
-    uint32_t rate = target > run.forward_mrpm ? CAR_DRIVE_ACCEL_RPM_PER_S : CAR_DRIVE_DECEL_RPM_PER_S;
+    int32_t target = (int32_t)desired * 1000;
+    uint32_t rate;
     int32_t change;
+    if ((target < 0 && run.forward_mrpm > 0) || (target > 0 && run.forward_mrpm < 0)) target = 0;
+    rate = (target < 0 ? -target : target) > (run.forward_mrpm < 0 ? -run.forward_mrpm : run.forward_mrpm)
+        ? accel_rpm_s : decel_rpm_s;
     /* 串口输出或ACK等待后不追补大步进；保持单次指令变化量有界。 */
     if (elapsed > CAR_DRIVE_SLEW_MAX_DT_MS) elapsed = CAR_DRIVE_SLEW_MAX_DT_MS;
     change = (int32_t)(rate * elapsed);
@@ -1773,7 +2288,7 @@ static int16_t run_forward_slew(int16_t desired)
         if (run.forward_mrpm < target) run.forward_mrpm = target;
     }
     run.forward_profile_ms = clock_ms;
-    return (int16_t)(run.forward_mrpm / 1000 * run.travel_sign);
+    return (int16_t)(run.forward_mrpm / 1000);
 }
 
 /* 每个处理到的新IMU样本只记一次；打印窗口清零不重记同一序号。 */
@@ -1813,11 +2328,60 @@ static void run_velocity_log(void)
     else text(run.travel_sign < 0 ? " travel=BACKWARD" : " travel=FORWARD");
     text(" ack="); number(run.acks);
     text(" fresh_mask="); number(run.ready);
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode) {
+        HeadingSample sample = heading_snapshot();
+        text(" imutest_mode="); number(run.heading_control.experiment_mode);
+        text(" gyro_raw_cdeg_s="); signed_number(sample.gyro_z_cdeg_s);
+        text(" gyro_age_ms="); signed_number(sample.gyro_valid ? (int32_t)(clock_ms - sample.gyro_ms) : -1);
+        text(" i_mrpm="); signed_number((int32_t)(1000.0f * run.heading_control.integral_rpm));
+        text(" accel_mg=");
+        for (i = 0; i < 3u; i++) {if (i) text(","); signed_number(sample.accel_mg[i]);}
+        text(" accel_age_ms="); signed_number(sample.accel_valid ? (int32_t)(clock_ms - sample.accel_ms) : -1);
+        text(" accel_seq="); number(sample.accel_sequence);
+        if (run.accel_trace_count) {
+            text(" accel_window="); number(run.accel_trace_count);
+            text(","); number(run.accel_trace_missing);
+            for (i = 0; i < 2u; i++) {
+                text(","); signed_number(run.accel_trace_min[i]);
+                text(","); signed_number(run.accel_trace_max[i]);
+            }
+            run.accel_trace_count = run.accel_trace_missing = 0;
+        }
+        if (sample.accel_valid) {
+            float magnitude = sqrtf((float)sample.accel_mg[0] * sample.accel_mg[0]
+                                  + (float)sample.accel_mg[1] * sample.accel_mg[1]
+                                  + (float)sample.accel_mg[2] * sample.accel_mg[2]);
+            int32_t dynamic = (int32_t)(magnitude - 1000.0f);
+            if (dynamic < 0) dynamic = -dynamic;
+            text(" accel_dyn_mg="); number((uint32_t)dynamic);
+        }
+        text(" course_rpm="); signed_number(run.course_cross_rpm);
+        text(" slip_rpm="); signed_number(run.slip_cross_rpm);
+        text(" accel_v_side="); signed_number(run.accel_v_side_mm_s);
+        text(" accel_pos_mm="); signed_number((int32_t)run.accel_pos_side_mm);
+        text(" projected_forward_mm="); signed_number((int32_t)run.projected_forward_mm);
+        text(" raw_lateral_mm="); signed_number(run.raw_lateral_mm);
+        text(" xy_accel_mm="); signed_number((int32_t)run.xy_displacement[1]);
+        text(","); signed_number((int32_t)run.xy_displacement[0]);
+        text(" xy_trim_rpm="); signed_number(run.xy_left_rpm);
+        text(","); signed_number(run.xy_forward_rpm);
+        text(" projection="); number(run.lateral_projection_active);
+        text(" slip_angle_cdeg="); signed_number(run.lateral_slip_angle_cdeg);
+        text(" extra_target_mm="); signed_number(run.lateral_extra_target_mm);
+        text(" lateral_bias_cdeg="); signed_number(run.lateral_heading_bias_cdeg);
+        text(" accel_trim_rpm="); signed_number(run.accel_trim_rpm);
+        text(" wheel_vf="); signed_number(run.wheel_forward_rpm);
+        text(" wheel_vl="); signed_number(run.wheel_left_rpm);
+    }
+#endif
     if (run.continuation_mm) {text(" continue_mm=");number(run.continuation_mm);}
-    if (run.travel_axis == BODY_FORWARD && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD)) {
+    if (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD) {
+        int16_t axis_ref = run.travel_axis == BODY_LEFT ? run.left_ref_rpm : run.forward_ref_rpm;
+        int16_t axis_cmd = run.travel_axis == BODY_LEFT ? run.left_cmd_rpm : run.forward_cmd_rpm;
         text(" t_ms="); number(clock_ms);
-        text(" v_ref="); signed_number(run.forward_ref_rpm);
-        text(" v_cmd="); signed_number(run.forward_cmd_rpm);
+        text(" v_ref="); signed_number(axis_ref);
+        text(" v_cmd="); signed_number(axis_cmd);
         text(" turn_ref="); signed_number(run.turn_ref_rpm);
         text(" turn_cmd="); signed_number(run.turn_cmd_rpm);
         text(" control_dt_ms="); number(run.control_dt_ms);
@@ -1864,7 +2428,7 @@ static void run_return_next(void)
     leg = run.road_path[--run.return_index];
     run.travel_axis = leg.axis;run.travel_sign = (int8_t)-leg.sign;
     run.target_heading = leg.heading;run.remaining_mm = leg.mm;run.continuation_mm = 0;
-    run.lateral_rpm = CAR_OBSTACLE_RETURN_RPM < CAR_LATERAL_MAX_RPM
+    run.translation_rpm_limit = CAR_OBSTACLE_RETURN_RPM < CAR_LATERAL_MAX_RPM
                       ? CAR_OBSTACLE_RETURN_RPM : CAR_LATERAL_MAX_RPM;
     run.station_align_pending = run.finishing = run.transition_ready = 0;
     run.obstacle_phase = 2;
@@ -1904,6 +2468,9 @@ static int run_obstacle_request(void)
 static void run_wait_feedback(const char *reason)
 {
     run_warning(reason);
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode) heading_experiment_reset(&run.heading_control);
+#endif
     run.forward_mrpm=0;run.forward_profile_ms=clock_ms;run.phase_ms=clock_ms;
     if ((run.state!=RUN_PREFLIGHT || run.velocity_sent)
         && !run_velocity_send(0,0,0)) {run_fault("velocity batch submit failed");return;}
@@ -1918,6 +2485,27 @@ static void run_velocity_update(void)
     uint8_t drive_heading, control_due;
     int16_t forward = 0, left = 0, turn = 0;
     HeadingSample sample = heading_snapshot();
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode && run.velocity_phase != VELOCITY_FORWARD
+        && run.velocity_phase != VELOCITY_STOP_FORWARD)
+        run_accel_calibrate(&sample, clock_ms);
+    if (run.heading_control.experiment_mode && run.velocity_phase == VELOCITY_FORWARD
+        && sample.accel_valid && (!run.accel_trace_seen
+            || sample.accel_sequence != run.accel_trace_sequence)) {
+        if (run.accel_trace_seen)
+            run.accel_trace_missing += sample.accel_sequence - run.accel_trace_sequence - 1u;
+        run.accel_trace_seen = 1;
+        run.accel_trace_sequence = sample.accel_sequence;
+        for (i = 0; i < 2u; i++) {
+            int16_t value = sample.accel_mg[i];
+            if (!run.accel_trace_count || value < run.accel_trace_min[i])
+                run.accel_trace_min[i] = value;
+            if (!run.accel_trace_count || value > run.accel_trace_max[i])
+                run.accel_trace_max[i] = value;
+        }
+        run.accel_trace_count++;
+    }
+#endif
     while (run_read_frame(&frame)) {
         uint8_t address = (uint8_t)(frame.id >> 8);
         if (!run_record_frame(&frame)) continue;
@@ -1928,7 +2516,10 @@ static void run_velocity_update(void)
                 if (run.acks == ALL_MOTORS_MASK) run.velocity_waiting = 0;
             }
         }
+        /* 起步500ms内忽略驱动状态：上一段的尾帧或刚使能的状态可能晚到，
+         * 直接判故障会把正常的下一段卡死。 */
         if (frame.data[0] == MOTOR_STATUS_COMMAND
+            && (uint32_t)(clock_ms - run.phase_ms) > 500u
             && (!(frame.data[1] & MOTOR_FLAG_ENABLED) || (frame.data[1] & (MOTOR_FLAG_STALLED | MOTOR_FLAG_PROTECTED)))) {
             run_fault("motor disabled or stalled");return;
         }
@@ -1956,6 +2547,11 @@ static void run_velocity_update(void)
     if (!run_velocity_feedback_fresh()) {
         run_wait_feedback("four-wheel feedback incomplete/stale; awaiting feedback");return;
     }
+#if CHASSIS_IMU_EXPERIMENT
+    if (!heading_experiment_gyro(&run.heading_control, sample, clock_ms)) {
+        run_fault("IMU experiment gyro stale/invalid");return;
+    }
+#endif
     if (run.alignment_waiting) {run.alignment_waiting=0;run_begin_alignment();return;}
     if (run.obstacle_phase == 1) {
         if ((uint32_t)(clock_ms - run.phase_ms) >= CAR_HEADING_TIMEOUT_MS) {
@@ -2008,7 +2604,11 @@ static void run_velocity_update(void)
         run.encoder_ready = 0;
         run.progress_mm = 0;run.action_mm = run.remaining_mm;run.encoder_offset_mm = 0;
         run.forward_mrpm = 0;run.forward_profile_ms = clock_ms;
-        run.forward_ref_rpm = run.forward_cmd_rpm = run.turn_ref_rpm = run.turn_cmd_rpm = 0;
+        run.forward_ref_rpm = run.forward_cmd_rpm = run.left_ref_rpm = run.left_cmd_rpm = 0;
+        run.turn_ref_rpm = run.turn_cmd_rpm = 0;
+        run.course_cross_rpm = run.slip_cross_rpm = 0;
+        run.slip_cross_mrpm = 0;
+        run.slip_ms = clock_ms;
         run.control_dt_ms = 0;
         memset(&run.heading_window, 0, sizeof(run.heading_window));
         run.velocity_phase = VELOCITY_FORWARD;run.state = RUN_MOVING;
@@ -2019,30 +2619,101 @@ static void run_velocity_update(void)
         if (!run_velocity_distance()) {run_fault("encoder distance overrun/reversed");return;}
         run_heading_window_sample();
         if (run.velocity_phase == VELOCITY_FORWARD) {
-            int32_t remaining = (int32_t)run.action_mm - run.progress_mm + run.continuation_mm;
+            int32_t remaining = run_velocity_target_mm() - run.progress_mm
+                                + run.continuation_mm;
             if (run.heading_control.error_cdeg > CAR_HEADING_MAX_DRIFT_CDEG || run.heading_control.error_cdeg < -CAR_HEADING_MAX_DRIFT_CDEG) {
                 run_fault("IMU excessive translation heading error");return;
             }
             if (run.travel_axis == BODY_LEFT) {
                 int32_t speed = remaining * CAR_DISTANCE_KP_X100 / 100;
-                int32_t max_rpm = run.lateral_rpm ? run.lateral_rpm : CAR_LATERAL_MAX_RPM;
+                int32_t max_rpm = run.translation_rpm_limit ? run.translation_rpm_limit : CAR_LATERAL_MAX_RPM;
                 if (run.encoder_ready != 15u && max_rpm > CAR_ENCODER_LEARN_RPM) max_rpm = CAR_ENCODER_LEARN_RPM;
-                if (remaining <= CAR_DISTANCE_TOLERANCE_MM && remaining >= -CAR_DISTANCE_TOLERANCE_MM)
+                if (
+#if CHASSIS_IMU_EXPERIMENT
+                    (run.heading_control.experiment_mode
+                     && remaining <= CAR_DISTANCE_TOLERANCE_MM)
+                    || (!run.heading_control.experiment_mode
+                        && remaining <= CAR_DISTANCE_TOLERANCE_MM
+                        && remaining >= -CAR_DISTANCE_TOLERANCE_MM)
+#else
+                    remaining <= CAR_DISTANCE_TOLERANCE_MM
+                    && remaining >= -CAR_DISTANCE_TOLERANCE_MM
+#endif
+                )
+                {
+                    run.lateral_extra_frozen = 1;
                     run.velocity_phase = VELOCITY_STOP_FORWARD;
+                }
                 else {
+#if CHASSIS_IMU_EXPERIMENT
+                    if (run.heading_control.experiment_mode) {
+                        int32_t terminal_mm = remaining < 0 ? -remaining : remaining;
+                        int32_t terminal_cap = terminal_mm <= CAR_LATERAL_FINAL_MM
+                            ? CAR_LATERAL_FINAL_RPM
+                            : terminal_mm <= CAR_LATERAL_CLOSE_MM
+                                ? CAR_LATERAL_CLOSE_RPM
+                                : terminal_mm <= CAR_LATERAL_NEAR_MM
+                                    ? CAR_LATERAL_NEAR_RPM : 0;
+                        speed = remaining < 0
+                            ? -run_braking_target(-remaining, CALIBRATED_PPM_X,
+                                CAR_LATERAL_DECEL_RPM_PER_S, CAR_LATERAL_BRAKE_LOOKAHEAD_MS)
+                            : run_braking_target(remaining, CALIBRATED_PPM_X,
+                                CAR_LATERAL_DECEL_RPM_PER_S, CAR_LATERAL_BRAKE_LOOKAHEAD_MS);
+                        if (terminal_cap && (speed > terminal_cap || speed < -terminal_cap))
+                            speed = speed < 0 ? -terminal_cap : terminal_cap;
+                    }
+#endif
                     if (speed >= 0 && speed < CAR_DISTANCE_MIN_RPM) speed = CAR_DISTANCE_MIN_RPM;
                     if (speed < 0 && speed > -CAR_DISTANCE_MIN_RPM) speed = -CAR_DISTANCE_MIN_RPM;
                     if (speed > max_rpm) speed = max_rpm;
                     if (speed < -max_rpm) speed = -max_rpm;
+#if CHASSIS_IMU_EXPERIMENT
+                    if (run.heading_control.experiment_mode) {
+                        int32_t min_abs = 0x7fffffff, max_abs = 0;
+                        uint8_t fresh = 1;
+                        for (i = 0; i < MOTOR_COUNT; i++) {
+                            int32_t observed = motor_feedback[i].speed_rpm;
+                            if (!motor_feedback[i].speed_valid
+                                || (uint32_t)(clock_ms - motor_feedback[i].speed_ms) > CAR_VELOCITY_FEEDBACK_MS) {
+                                fresh = 0; break;
+                            }
+                            if (observed < 0) observed = -observed;
+                            if (observed < min_abs) min_abs = observed;
+                            if (observed > max_abs) max_abs = observed;
+                        }
+                        if (fresh && max_abs >= CAR_LATERAL_TRACTION_MIN_RPM
+                            && min_abs * 100 < max_abs * CAR_LATERAL_TRACTION_SPREAD_PCT) {
+                            int32_t cap = min_abs + CAR_LATERAL_TRACTION_MARGIN_RPM;
+                            if (cap < CAR_LATERAL_TRACTION_FLOOR_RPM) cap = CAR_LATERAL_TRACTION_FLOOR_RPM;
+                            if (speed > cap) speed = cap;
+                            if (speed < -cap) speed = -cap;
+                            if ((uint32_t)(clock_ms - run.traction_log_ms) >= CAR_CONTROL_LOG_MS) {
+                                run.traction_log_ms = clock_ms;
+                                text("[lateral traction sync] min_rpm="); number(min_abs);
+                                text(" max_rpm="); number(max_abs);
+                                text(" cap_rpm="); number(cap); text("\r\n");
+                            }
+                        }
+                    }
+#endif
                     left = (int16_t)(speed * run.travel_sign);
                 }
             } else if (remaining <= CAR_DISTANCE_TOLERANCE_MM) run.velocity_phase = VELOCITY_STOP_FORWARD;
             else {
                 forward = run_forward_target(remaining);
             }
+#if CHASSIS_IMU_EXPERIMENT
+        } else if (run.travel_axis == BODY_LEFT
+                   && ((run.heading_control.experiment_mode
+                        && run.progress_mm < run_velocity_target_mm() - CAR_DISTANCE_TOLERANCE_MM)
+                       || (!run.heading_control.experiment_mode
+                           && ((run_velocity_target_mm() - run.progress_mm > CAR_DISTANCE_TOLERANCE_MM)
+                               || run.progress_mm - run_velocity_target_mm() > CAR_DISTANCE_TOLERANCE_MM)))) {
+#else
         } else if (run.travel_axis == BODY_LEFT
                    && ((int32_t)run.action_mm - run.progress_mm > CAR_DISTANCE_TOLERANCE_MM
                        || run.progress_mm - (int32_t)run.action_mm > CAR_DISTANCE_TOLERANCE_MM)) {
+#endif
             /* 减速/末端纠角产生的行程漂移必须重新收敛，不能在距离超差时报告完成。 */
             run.velocity_phase = VELOCITY_FORWARD;
             run.stopped_ms = 0;
@@ -2053,12 +2724,56 @@ static void run_velocity_update(void)
     control_due = (uint32_t)(clock_ms - run.control_ms) >= CAR_VELOCITY_CONTROL_MS && !run.velocity_waiting;
     if (drive_heading) {
         run.forward_ref_rpm = forward;
-        forward = control_due ? run_forward_slew(forward) : (int16_t)(run.forward_mrpm / 1000 * run.travel_sign);
+        forward = control_due ? run_translation_slew(forward,
+            CAR_DRIVE_ACCEL_RPM_PER_S, CAR_DRIVE_DECEL_RPM_PER_S)
+            : (int16_t)(run.forward_mrpm / 1000);
         /* 行驶时连续阻尼；前进指令归零后，沿用已验证的停车对齐/停稳判据。 */
         turn = forward ? heading_control_drive_rpm(&run.heading_control, CAR_HEADING_DRIVE_TRIM_RPM)
                        : heading_control_rpm(&run.heading_control, run.turn_rpm);
-    } else turn = heading_control_rpm(&run.heading_control, run.turn_rpm);
+#if CHASSIS_IMU_EXPERIMENT
+        if (run.heading_control.experiment_mode) {
+            int16_t experiment_turn = heading_experiment_drive(&run.heading_control, forward,
+                run.velocity_phase == VELOCITY_FORWARD && run.encoder_ready == ALL_MOTORS_MASK);
+            if (forward) turn = experiment_turn;
+        }
+#endif
+    } else {
+        turn = heading_control_rpm(&run.heading_control, run.turn_rpm);
+#if CHASSIS_IMU_EXPERIMENT
+        if (run.heading_control.experiment_mode && run.travel_axis == BODY_LEFT
+            && (run.velocity_phase == VELOCITY_FORWARD || run.velocity_phase == VELOCITY_STOP_FORWARD)) {
+            int16_t experiment_turn;
+            left = control_due ? run_translation_slew(left,
+                CAR_LATERAL_ACCEL_RPM_PER_S, CAR_LATERAL_DECEL_RPM_PER_S)
+                : (int16_t)(run.forward_mrpm / 1000);
+            experiment_turn = heading_experiment_drive(&run.heading_control, left,
+                left != 0 && run.encoder_ready == ALL_MOTORS_MASK);
+            if (left) turn = experiment_turn;
+            else if (run.velocity_phase == VELOCITY_STOP_FORWARD) {
+                int32_t residual = 0;
+                for (i = 0; i < MOTOR_COUNT; i++) {
+                    int32_t speed = motor_feedback[i].speed_rpm;
+                    if (speed < 0) speed = -speed;
+                    if (speed > residual) residual = speed;
+                }
+                /* 指令已归零但车身仍有余速：只用小角度阻尼压制甩尾，
+                 * 余速低于阈值立即释放，避免把车重新驱动起来。 */
+                if (run.heading_control.error_cdeg > CAR_HEADING_TOLERANCE_CDEG
+                    || run.heading_control.error_cdeg < -CAR_HEADING_TOLERANCE_CDEG) {
+                    turn = heading_control_drive_rpm(&run.heading_control,
+                        CAR_LATERAL_SETTLE_TRIM_RPM);
+                } else if (residual > CAR_LATERAL_SETTLE_MIN_RPM) {
+                    int16_t settle_limit = (int16_t)(residual / 2);
+                    if (settle_limit > CAR_LATERAL_SETTLE_TRIM_RPM)
+                        settle_limit = CAR_LATERAL_SETTLE_TRIM_RPM;
+                    turn = heading_control_drive_rpm(&run.heading_control, (uint16_t)settle_limit);
+                } else turn = 0;
+            }
+        }
+#endif
+    }
     run.turn_ref_rpm = turn;
+    if (run.travel_axis == BODY_LEFT) run.left_ref_rpm = left;
     if (forward || left) {
         int16_t primary = left ? left : forward;
         int16_t limit = (int16_t)((primary < 0 ? -primary : primary) - 1);
@@ -2067,17 +2782,187 @@ static void run_velocity_update(void)
         if (turn < -limit) turn = -limit;
     }
     if (left) {
-        int16_t per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
+        int16_t per_m;
+#if CHASSIS_IMU_EXPERIMENT
+        if (run.heading_control.experiment_mode)
+            per_m = left > 0 ? CAR_EXPERIMENT_LEFT_FORWARD_MM_PER_M
+                             : CAR_EXPERIMENT_RIGHT_FORWARD_MM_PER_M;
+        else
+#endif
+            per_m = left > 0 ? LEFT_FORWARD_MM_PER_M : RIGHT_FORWARD_MM_PER_M;
         /* 沿用前移mm/米的经验补偿，换算为轮速；此项不是位置观测。 */
         float trim = (float)(left > 0 ? left : -left) * per_m * CALIBRATED_PPM_Y
                      / (1000.0f * CALIBRATED_PPM_X);
         forward = (int16_t)(trim >= 0 ? trim + 0.5f : trim - 0.5f);
     }
+#if CHASSIS_IMU_EXPERIMENT
+    if (run.heading_control.experiment_mode && run.velocity_phase == VELOCITY_FORWARD
+        && (left || forward)) {
+        if (run.travel_axis == BODY_LEFT) {
+            float heading_radians = run.heading_control.progress_cdeg
+                * (3.14159265358979323846f / 18000.0f);
+            float heading_sine = sinf(heading_radians);
+            float heading_cosine = cosf(heading_radians);
+            float correction = -run.projected_forward_mm / CAR_PROJECTED_FORWARD_MM_PER_RPM;
+            float limit = (left < 0 ? -left : left) * 0.25f;
+            float reference_left = left;
+            float reference_forward;
+            float accel_limit = fminf(limit, CAR_ACCEL_SIDE_MAX_RPM);
+            float forward_accel_limit = fminf(limit, CAR_ACCEL_FORWARD_MAX_RPM);
+            int32_t remaining = (int32_t)run.action_mm - run.progress_mm;
+            int32_t heading_cdeg = run.heading_control.progress_cdeg;
+            int32_t heading_abs = heading_cdeg < 0 ? -heading_cdeg : heading_cdeg;
+            int32_t slip_abs;
+            int32_t effective_cdeg;
+            float projection_radians, sine;
+            if (control_due) run_lateral_accel_xy(&sample, heading_sine, heading_cosine, left);
+            if (fabsf(run.projected_left_mm) >= CAR_ACCEL_SLIP_START_MM
+                && fabsf(run.xy_displacement[0]) >= CAR_ACCEL_SLIP_MIN_MM) {
+                float scaled_slip = -run.xy_displacement[0]
+                    * CAR_ACCEL_SLIP_GAIN_X100 / 100.0f;
+                float slip = atan2f(scaled_slip, fabsf(run.projected_left_mm) + 1.0f)
+                    * (18000.0f / 3.14159265358979323846f);
+                int32_t candidate = (int32_t)slip;
+                int32_t held_abs = run.lateral_slip_angle_cdeg < 0
+                    ? -run.lateral_slip_angle_cdeg : run.lateral_slip_angle_cdeg;
+                if (candidate > CAR_ACCEL_SLIP_MAX_CDEG)
+                    candidate = CAR_ACCEL_SLIP_MAX_CDEG;
+                if (candidate < -CAR_ACCEL_SLIP_MAX_CDEG)
+                    candidate = -CAR_ACCEL_SLIP_MAX_CDEG;
+                int32_t candidate_abs = candidate < 0 ? -candidate : candidate;
+                if (candidate_abs > held_abs
+                    && (!run.lateral_slip_angle_cdeg
+                        || (candidate > 0) == (run.lateral_slip_angle_cdeg > 0)))
+                    run.lateral_slip_angle_cdeg = candidate;
+            }
+            slip_abs = run.lateral_slip_angle_cdeg < 0
+                ? -run.lateral_slip_angle_cdeg : run.lateral_slip_angle_cdeg;
+            effective_cdeg = heading_abs >= slip_abs ? heading_cdeg : run.lateral_slip_angle_cdeg;
+            if (!run.lateral_projection_active
+                && (heading_abs >= CAR_LATERAL_HEADING_TRIGGER_CDEG
+                    || slip_abs >= CAR_LATERAL_HEADING_TRIGGER_CDEG))
+                run.lateral_projection_active = 1;
+            else if (run.lateral_projection_active
+                     && heading_abs <= CAR_LATERAL_HEADING_RELEASE_CDEG
+                     && slip_abs <= CAR_LATERAL_HEADING_RELEASE_CDEG)
+                run.lateral_projection_active = 0;
+            projection_radians = effective_cdeg
+                * (3.14159265358979323846f / 18000.0f);
+            sine = sinf(projection_radians);
+            accel_limit *= fmaxf(0.0f, fminf(1.0f, remaining / (float)CAR_LATERAL_NEAR_MM));
+            forward_accel_limit *= fmaxf(0.0f, fminf(1.0f, remaining / (float)CAR_LATERAL_NEAR_MM));
+            run.xy_forward_rpm = (int16_t)roundf(fmaxf(-forward_accel_limit, fminf(forward_accel_limit,
+                -run.xy_displacement[0] / CAR_ACCEL_AXIS_MM_PER_RPM)));
+            run.xy_left_rpm = (int16_t)roundf(fmaxf(-accel_limit, fminf(accel_limit,
+                -run.xy_displacement[1] / CAR_ACCEL_AXIS_MM_PER_RPM)));
+            if (limit > CAR_LATERAL_PROJECTION_MAX_RPM) limit = CAR_LATERAL_PROJECTION_MAX_RPM;
+            if (correction > limit) correction = limit;
+            if (correction < -limit) correction = -limit;
+            if (run.lateral_projection_active) {
+                float slip_mag = sqrtf(run.xy_displacement[0] * run.xy_displacement[0]
+                    + run.xy_displacement[1] * run.xy_displacement[1]);
+                /* 只在首次减速前更新：一旦进入停车段就冻结，
+                 * 避免"追加目标→多跑→积分再涨→再追加"的正反馈。 */
+                if (imu_extra_enable && !run.lateral_extra_frozen) {
+                    int32_t extra = (int32_t)((slip_mag - CAR_ACCEL_DISTANCE_DEADBAND_MM)
+                        * CAR_ACCEL_DISTANCE_GAIN_X100 / 100.0f);
+                    if (extra < 0) extra = 0;
+                    if (extra > CAR_ACCEL_DISTANCE_MAX_MM)
+                        extra = CAR_ACCEL_DISTANCE_MAX_MM;
+                    if (extra > run.lateral_extra_target_mm)
+                        run.lateral_extra_target_mm = extra;
+                }
+                reference_left += run.xy_left_rpm;
+                reference_forward = correction + run.xy_forward_rpm;
+                run.course_cross_rpm = (int16_t)roundf(reference_left
+                    * (CALIBRATED_PPM_Y / CALIBRATED_PPM_X) * sine);
+                if (run.course_cross_rpm > CAR_LATERAL_PROJECTION_MAX_RPM)
+                    run.course_cross_rpm = CAR_LATERAL_PROJECTION_MAX_RPM;
+                if (run.course_cross_rpm < -CAR_LATERAL_PROJECTION_MAX_RPM)
+                    run.course_cross_rpm = -CAR_LATERAL_PROJECTION_MAX_RPM;
+                reference_forward += run.course_cross_rpm;
+                if (reference_forward > CAR_LATERAL_PROJECTION_MAX_RPM)
+                    reference_forward = CAR_LATERAL_PROJECTION_MAX_RPM;
+                if (reference_forward < -CAR_LATERAL_PROJECTION_MAX_RPM)
+                    reference_forward = -CAR_LATERAL_PROJECTION_MAX_RPM;
+                forward = (int16_t)roundf(forward + reference_forward);
+                left = (int16_t)roundf(reference_left);
+            } else {
+                run.course_cross_rpm = 0;
+            }
+            if (left > run.translation_rpm_limit + CAR_LATERAL_PROJECTION_MAX_RPM)
+                left = run.translation_rpm_limit + CAR_LATERAL_PROJECTION_MAX_RPM;
+            if (left < -(int32_t)(run.translation_rpm_limit + CAR_LATERAL_PROJECTION_MAX_RPM))
+                left = -(int16_t)(run.translation_rpm_limit + CAR_LATERAL_PROJECTION_MAX_RPM);
+        }
+        if (control_due) {
+            int16_t course;
+            if (run.travel_axis == BODY_LEFT) {
+                int16_t desired_cross = forward;
+                run.slip_cross_rpm = run_slip_cross_feedback(BODY_LEFT, desired_cross);
+                run.accel_trim_rpm = 0;
+                {
+                    int32_t remaining = (int32_t)run.action_mm - run.progress_mm
+                                        + run.continuation_mm;
+                    int32_t bias = CAR_LATERAL_YAW_SIGN * (int32_t)(run.accel_pos_side_mm
+                        * CAR_LATERAL_YAW_GAIN_X1000 * 100 / 1000.0f);
+                    if (remaining < CAR_LATERAL_YAW_TAPER_MM && remaining > 0)
+                        bias = bias * remaining / CAR_LATERAL_YAW_TAPER_MM;
+                    else if (remaining <= 0) bias = 0;
+                    if (bias > CAR_LATERAL_YAW_MAX_CDEG) bias = CAR_LATERAL_YAW_MAX_CDEG;
+                    if (bias < -CAR_LATERAL_YAW_MAX_CDEG) bias = -CAR_LATERAL_YAW_MAX_CDEG;
+                    run.lateral_heading_bias_cdeg = bias;
+                    run.heading_control.target_cdeg = run.lateral_heading_base_cdeg + bias;
+                }
+            } else {
+                course = run_course_cross_rpm(BODY_FORWARD, forward, run.heading_control.error_cdeg);
+                run.course_cross_rpm = course;
+                run.slip_cross_rpm = run_slip_cross_feedback(BODY_FORWARD, course);
+                run.accel_trim_rpm = run_accel_side_feedback(BODY_FORWARD, clock_ms);
+                run.lateral_heading_bias_cdeg = 0;
+                /* 只有平移例程才把航向目标锁在起步基准上；
+                 * 转向例程的目标是相对角(如9000)，不能被这里清零。 */
+                if (run.translation_only)
+                    run.heading_control.target_cdeg = run.lateral_heading_base_cdeg;
+            }
+        }
+        if (run.travel_axis == BODY_LEFT)
+            forward = (int16_t)(forward + run.slip_cross_rpm
+                                + run.accel_trim_rpm);
+        else
+            left = (int16_t)(run.course_cross_rpm + run.slip_cross_rpm + run.accel_trim_rpm);
+        /* 世界系地面偏流补偿：两个小分量按段注入，量值在十分之一RPM内可调。 */
+        if (run.velocity_phase == VELOCITY_FORWARD
+            && (imu_trim_forward_tenths || imu_trim_left_tenths)) {
+            forward = (int16_t)(forward
+                + (imu_trim_forward_tenths + (imu_trim_forward_tenths > 0 ? 5 : -5)) / 10);
+            left = (int16_t)(left
+                + (imu_trim_left_tenths + (imu_trim_left_tenths > 0 ? 5 : -5)) / 10);
+        }
+    } else {
+        run.course_cross_rpm = run.slip_cross_rpm = run.accel_trim_rpm = 0;
+        run.slip_cross_mrpm = 0;
+        run.slip_ms = clock_ms;
+        run.accel_v_side_mm_s = 0;
+        run.accel_pos_side_mm = 0.0f;
+        run.accel_lpf_seeded = 0;
+        run.xy_seeded = 0;
+        run.xy_left_rpm = run.xy_forward_rpm = 0;
+        run.lateral_projection_active = 0;
+        run.lateral_slip_angle_cdeg = 0;
+        run.accel_int_ms = clock_ms;
+        run.lateral_heading_bias_cdeg = 0;
+        if (run.translation_only)
+            run.heading_control.target_cdeg = run.lateral_heading_base_cdeg;
+    }
+#endif
     if (control_due) {
         run.control_dt_ms = clock_ms - run.control_ms;
         run.control_ms = clock_ms;
         if (!run_velocity_send(forward, left, turn)) {run_fault("velocity batch submit failed");return;}
-        run.forward_cmd_rpm = forward;run.turn_cmd_rpm = turn;
+        if (run.travel_axis == BODY_LEFT) run.left_cmd_rpm = left;
+        else run.forward_cmd_rpm = forward;
+        run.turn_cmd_rpm = turn;
     }
     if (!forward && !left && !turn && run_velocity_stopped() && run.heading_control.stable_samples >= CAR_HEADING_STABLE_SAMPLES
         && (uint32_t)(run.heading_control.sample_ms - run.heading_control.stable_ms) >= CAR_HEADING_STABLE_MS) {
@@ -2259,6 +3144,12 @@ static int parse_node(const char *s, uint8_t *node)
 
 static void help(void)
 {
+#if CHASSIS_IMU_EXPERIMENT
+    text("IMU TEST: imutest | imutest pd/gyro/pid | imutest f/b/l/r/turnl/turnr\r\n");
+    text("IMU TEST: imutest dist 50..2000 (mm) | imutest rpm 10.." CAR_STRING_VALUE(IMUTEST_MAX_TRANSLATION_RPM) "\r\n");
+#endif
+    text("IMU: imu | imu rate 50/100/200 | imu baud 115200/230400/460800/921600\r\n");
+    text("IMU: rate/baud are temporary; power cycle restores 115200 / 50 Hz\r\n");
     text("ARM: arm on (wait four-wheel stop) | arm status | arm pose SLIDE LIFT YAW CLAW\r\n");
     text("ARM: arm slide/lift/yaw N | arm open/close | arm pick/place/cycle | arm home\r\n");
     text("ARM: arm platform pose DEG | arm platform 1/2/3 | arm stop | arm off (park first)\r\n");
@@ -2433,6 +3324,144 @@ static int screen_command(const char *s)
     text("[screen] display update requested\r\n");return 1;
 }
 
+static int imu_experiment_command(const char *command_text)
+{
+#if CHASSIS_IMU_EXPERIMENT
+    static uint8_t mode = IMUTEST_PD;
+    static uint16_t distance_mm = IMUTEST_DISTANCE_MM;
+    static uint16_t translation_rpm = IMUTEST_FORWARD_RPM;
+    static uint16_t pid_gains[] = {CAR_DRIVE_HEADING_KP_X100, (uint16_t)(IMUTEST_I_KI * 100.0f), CAR_DRIVE_HEADING_KD_X100};
+    HeadingSample sample;
+    int accepted;
+#endif
+    if (strcmp(command_text, "imutest") && strncmp(command_text, "imutest ", 8)) return 0;
+#if CHASSIS_IMU_EXPERIMENT
+    if (!strcmp(command_text, "imutest")) {
+        sample = heading_snapshot();
+        text("[imutest v2] pd | gyro | pid | f | b | l | r | turnl | turnr; mode="); number(mode);
+        text(" dist_mm="); number(distance_mm);
+        text(" rpm_limit="); number(translation_rpm);
+        text(" gyro_cdeg_s="); signed_number(sample.gyro_z_cdeg_s);
+        text(" gyro_age_ms="); signed_number(sample.gyro_valid ? (int32_t)(clock_ms - sample.gyro_ms) : -1);
+        text(" accel_mg=");
+        signed_number(sample.accel_mg[0]); text(",");
+        signed_number(sample.accel_mg[1]); text(",");
+        signed_number(sample.accel_mg[2]);
+        text(" accel_age_ms="); signed_number(sample.accel_valid ? (int32_t)(clock_ms - sample.accel_ms) : -1);
+        text(" kp100="); number(pid_gains[0]);
+        text(" ki100="); number(pid_gains[1]);
+        text(" kd100="); number(pid_gains[2]);
+        text(" gyro_seq="); number(sample.gyro_sequence);
+        text(" gyro_ms="); number(sample.gyro_ms);
+        text("\r\n"); return 1;
+    }
+    if (arm_lock.state || arm_enabled()) {
+        text("[imutest rejected: arm session owns motion]\r\n"); return 1;
+    }
+    if (run_active || stop_pending || run.state == RUN_STATION
+        || drive.state == MOTION_RUNNING || drive.state == MOTION_WAIT_CONFIRM) {
+        text("[imutest rejected: chassis busy]\r\n"); return 1;
+    }
+    if (!strcmp(command_text, "imutest clear")) {
+        uint8_t address;
+        for (address = 1u; address <= MOTOR_COUNT; address++) {
+            Emm_V5_Reset_Clog_Pro(address);
+            delay_ms(5);
+            Emm_V5_En_Control(address, true, false);
+            delay_ms(5);
+        }
+        text("[imutest] stall protection cleared and drivers re-enabled; verify no obstruction\r\n");
+        return 1;
+    }
+    if (!strncmp(command_text, "imutest dist ", 13)) {
+        uint16_t value;
+        if (!parse_uint(command_text + 13, &value) || value < 50u || value > 2000u) {
+            text("[imutest rejected: dist 50..2000 mm]\r\n"); return 1;
+        }
+        distance_mm = value;
+        text("[imutest] dist_mm="); number(distance_mm); text("\r\n"); return 1;
+    }
+    if (!strncmp(command_text, "imutest rpm ", 12)) {
+        uint16_t value;
+        if (!parse_uint(command_text + 12, &value) || value < 10u || value > IMUTEST_MAX_TRANSLATION_RPM) {
+            text("[imutest rejected: rpm 10.." CAR_STRING_VALUE(IMUTEST_MAX_TRANSLATION_RPM) "]\r\n"); return 1;
+        }
+        translation_rpm = value;
+        text("[imutest] rpm_limit="); number(translation_rpm); text("\r\n"); return 1;
+    }
+    if (!strncmp(command_text, "imutest trim ", 13)) {
+        long fwd, lft;
+        if (sscanf(command_text + 13, "%ld %ld", &fwd, &lft) != 2
+            || fwd < -100 || fwd > 100 || lft < -100 || lft > 100) {
+            text("[imutest rejected: trim forward/left -100..100 tenths-rpm]\r\n"); return 1;
+        }
+        imu_trim_forward_tenths = (int16_t)fwd;
+        imu_trim_left_tenths = (int16_t)lft;
+        text("[imutest] trim_tenths="); signed_number((int32_t)fwd);
+        text(","); signed_number((int32_t)lft); text("\r\n");
+        return 1;
+    }
+    if (!strncmp(command_text, "imutest extra ", 14)) {
+        uint16_t value;
+        if (!parse_uint(command_text + 14, &value) || value > 1u) {
+            text("[imutest rejected: extra 0/1]\r\n"); return 1;
+        }
+        imu_extra_enable = (uint8_t)value;
+        text("[imutest] accel_extra="); number(value); text("\r\n");
+        return 1;
+    }
+    if (!strncmp(command_text, "imutest k", 9) && strlen(command_text) >= 11 && command_text[10] == ' ') {
+        uint16_t value;
+        char gain = command_text[9];
+        unsigned index = gain == 'p' ? 0u : (gain == 'i' ? 1u : 2u);
+        if ((gain != 'p' && gain != 'i' && gain != 'd')
+            || !parse_uint(command_text + 11, &value)
+            || (gain == 'p' ? (value < 20u || value > 300u) : value > 100u)) {
+            text("[imutest rejected: kp 20..300; ki/kd 0..100, gains x100]\r\n"); return 1;
+        }
+        pid_gains[index] = value;
+        text("[imutest] gain_x100="); number(value); text("\r\n"); return 1;
+    }
+    if (!strcmp(command_text, "imutest pd")) mode = IMUTEST_PD;
+    else if (!strcmp(command_text, "imutest gyro")) mode = IMUTEST_GYRO;
+    else if (!strcmp(command_text, "imutest pid")) mode = IMUTEST_PID;
+    else {
+        int forward = !strcmp(command_text, "imutest f");
+        int backward = !strcmp(command_text, "imutest b");
+        int left = !strcmp(command_text, "imutest l");
+        int right = !strcmp(command_text, "imutest r");
+        int turn_left = !strcmp(command_text, "imutest turnl");
+        int turn_right = !strcmp(command_text, "imutest turnr");
+        if (!forward && !backward && !left && !right && !turn_left && !turn_right) {
+            text("[imutest rejected: unknown action]\r\n"); return 1;
+        }
+        sample = heading_snapshot();
+        if (mode >= IMUTEST_GYRO && (!sample.gyro_valid
+            || clock_ms - sample.gyro_ms > IMUTEST_GYRO_MAX_AGE_MS)) {
+            text("[imutest rejected: fresh gyro 0x52 required]\r\n"); return 1;
+        }
+        if (forward || backward || left || right) {
+            accepted = start_heading_translation((forward || left) ? distance_mm : -(int32_t)distance_mm,
+                translation_rpm, (left || right) ? BODY_LEFT : BODY_FORWARD, mode);
+            if (accepted && mode == IMUTEST_PID) {
+                run.heading_control.pid_kp_x100 = pid_gains[0];
+                run.heading_control.pid_ki_x100 = pid_gains[1];
+                run.heading_control.pid_kd_x100 = pid_gains[2];
+            }
+        } else {
+            accepted = start_heading_turn(turn_left ? 90 : -90, IMUTEST_TURN_RPM);
+            if (accepted) run.heading_control.experiment_mode = mode;
+        }
+        text(accepted ? "[imutest accepted]\r\n" : "[imutest rejected: check chassis and IMU]\r\n");
+        return 1;
+    }
+    text("[imutest] mode="); number(mode); text("\r\n");
+#else
+    text("[imutest unavailable: load the chassis IMU experiment firmware]\r\n");
+#endif
+    return 1;
+}
+
 /* 先处理公共命令和模式切换，再交给当前模式；只裁剪首尾空白。 */
 static void command(char *command_text)
 {
@@ -2448,6 +3477,7 @@ static void command(char *command_text)
     * trimmed_end = 0;
     if (! * command_text)
         return;
+    if (imu_experiment_command(command_text)) return;
     if(screen_command(command_text))return;
     if (!strcmp(command_text, "info"))
     {
@@ -2462,6 +3492,8 @@ static void command(char *command_text)
         imu_status();
         return;
     }
+    if (imu_rate_command(command_text)) return;
+    if (imu_baud_command(command_text)) return;
     if (!strcmp(command_text, "qr")) {scanner_status();return;}
     if (!strcmp(command_text, "qr init")) {scanner_init(scanner.baud ? scanner.baud : CAR_SCANNER_UART_BAUD);return;}
     if (!strcmp(command_text, "qr baud 9600") || !strcmp(command_text, "qr baud 115200")) {
@@ -2620,6 +3652,9 @@ static void firmware_step(void)
         {
             run_active = 0;
             run.state = RUN_STOPPED;
+#if CHASSIS_IMU_EXPERIMENT
+            if (run.heading_control.experiment_mode) heading_experiment_reset(&run.heading_control);
+#endif
             run_clear_rx();
         }
         nav_stop(&nav);
@@ -2722,6 +3757,13 @@ int main(void)
     delay_init(168);
     board_init();
     uart_init();
+#if CHASSIS_IMU_EXPERIMENT
+#if CAR_DEBUG_UART_SOFT_PB0_PB1
+    text("\r\n[imutest v2 boot] soft UART PB0-TX/PB1-RX 115200 8N1\r\n");
+#else
+    text("\r\n[imutest v2 boot] USART3 PB10-TX/PB11-RX 115200 8N1\r\n");
+#endif
+#endif
     clock_init_ms();
     arm_init();
     vision_init();station_init();hmi_init(clock_ms);
@@ -2733,11 +3775,13 @@ int main(void)
     {
         extern void Usart2Init(unsigned int baud);
         Usart2Init(CAR_IMU_UART_BAUD);
+        imu_uart_priority();
     }
 #endif
     if (!motion_init(&drive, &io, &config) || !nav_init(&nav, 0, HEAD_Y_POS, &port))
-        for (;;)
     {
+        text("[boot fault: motion/navigation init failed]\r\n");
+        for (;;) {}
     }
     motion_stop(&drive);
     for (i = 1; i <= MOTOR_COUNT; i++)
@@ -2750,6 +3794,9 @@ int main(void)
     text("[drive] version=20261020-merge2-r36; STACK x/y correction; MOVE pixels\r\n");
     text("Place at a known node, verify physical heading, then pose/heading/go.\r\n");
     help();
+#if CHASSIS_IMU_EXPERIMENT
+    text("[imutest v2 ready] send imutest + CR or LF\r\n");
+#endif
     /* 每轮只处理一个字节，使运动状态与停止请求持续获得处理。 */
     for (;;)
         firmware_step();

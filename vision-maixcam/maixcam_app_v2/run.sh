@@ -1,10 +1,8 @@
 #!/bin/sh
-# run.sh —— 在 MaixCAM2 上跑视觉程序（不依赖 MaixVision，拔掉 USB 也能跑）
-#
-#   sh /root/maixcam_app_v2/run.sh          # 前台运行，日志写 finder.log
-#   sh /root/maixcam_app_v2/run.sh &        # 后台运行
-#   tail -f /root/maixcam_app_v2/finder.log # 看日志
+# Run on MaixCAM2. Follow finder.log from another terminal for live output.
 cd "$(dirname "$0")" || exit 1
-echo "=== $(date) start ===" >> finder.log
-python3 -u main.py 2>&1 | tee -a finder.log
-echo "=== $(date) exit code: $? ===" >> finder.log
+printf '=== %s start ===\n' "$(date)" >> finder.log || exit 1
+python3 -u main.py >> finder.log 2>&1
+status=$?
+printf '=== %s exit code: %s ===\n' "$(date)" "$status" >> finder.log
+exit "$status"

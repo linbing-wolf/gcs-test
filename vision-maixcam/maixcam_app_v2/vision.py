@@ -393,6 +393,16 @@ def check_inside_bright(img, cx, cy, a, b, meta=None, gray=None,
                (lvl - float(getattr(config, "PLATE_IN_MARGIN", 18.0)))
                if lvl is not None else 0.0)
     ok = tot = 0
+    support = []
+    contrasts = []
+    drops = []
+
+    def sample(radius, ca, sa):
+        x, y = int(round(cx + ca * radius)), int(round(cy + sa * radius))
+        if not (0 <= x < W and 0 <= y < H):
+            return None
+        return float(gray[y, x]) if gray is not None else _pixel_luma(img, x, y)
+
     for i in range(max(6, n_rays)):
         ang = a0 + (a1 - a0) * i / max(1, n_rays - 1)
         ca, sa = math.cos(ang), math.sin(ang)
@@ -413,14 +423,81 @@ def check_inside_bright(img, cx, cy, a, b, meta=None, gray=None,
         if not vals:
             continue
         tot += 1
-        if sum(vals) / len(vals) >= need:
+        inner = sum(vals) / len(vals)
+        if inner >= need:
             ok += 1
+        outside = [sample(rc + d, ca, sa) for d in (6., 10., 14.)]
+        outside = [float(v) for v in outside if v is not None]
+        edge = [sample(rc + d, ca, sa) for d in (-6., -4., -2., 0., 2., 4., 6.)]
+        pairs = [(float(edge[j]), float(edge[j + 1])) for j in range(len(edge)-1)
+                 if edge[j] is not None and edge[j+1] is not None]
+        drop = max([v0-v1 for v0, v1 in pairs] or [0.])
+        contrast = inner - sum(outside)/len(outside) if outside else 0.
+        contrasts.append(contrast)
+        drops.append(drop)
+        # Whole-rim validation preserves calibrated geometry; no fit-point filtering.
+        valid = (inner >= need and
+                 contrast >= float(getattr(config, "PLATE_RIM_MIN_CONTRAST", 6.)) and
+                 drop >= float(getattr(config, "PLATE_RIM_MIN_DROP", 8.)))
+        support.append((math.degrees(ang), valid, bool(outside and pairs)))
     if tot <= 0:
         return None
     if meta is not None:
         meta["inside_need"] = round(need, 1)
         meta["inside_rays"] = tot
-    return (float(ok) / float(tot), need, tot)
+    ratio = float(ok) / float(tot)
+    if bool(getattr(config, "PLATE_RIM_SUPPORT_CHECK", True)):
+        good = [angle for angle, valid, _ in support if valid]
+        side_min = int(getattr(config, "PLATE_RIM_MIN_SIDE_RAYS", 2))
+        left = sum(angle < 80. for angle in good)
+        right = sum(angle > 100. for angle in good)
+        span = max(good)-min(good) if good else 0.
+        run = longest = 0
+        for _, valid, _ in support:
+            run = run+1 if valid else 0
+            longest = max(longest, run)
+        support_ratio = len(good)/float(tot)
+        reason = None
+        visible_left = sum(angle < 80. and eligible for angle, _, eligible in support)
+        visible_right = sum(angle > 100. and eligible for angle, _, eligible in support)
+        if ((visible_left >= side_min and left < side_min) or
+                (visible_right >= side_min and right < side_min)):
+            reason = "rim-one-sided"
+        elif span < float(getattr(config, "PLATE_RIM_MIN_SPAN_DEG", 55.)):
+            reason = "rim-short-span"
+        elif longest < int(getattr(config, "PLATE_RIM_MIN_RUN", 3)):
+            reason = "rim-fragmented"
+        elif support_ratio < float(getattr(config, "PLATE_RIM_MIN_SUPPORT", .30)):
+            reason = "rim-low-support"
+        if meta is not None:
+            meta.update(rim_support=round(support_ratio, 3), rim_span=round(span, 1),
+                        rim_sides=[left, right], rim_longest_run=longest,
+                        rim_visible_sides=[visible_left, visible_right],
+                        rim_contrast=round(sum(contrasts)/len(contrasts), 1),
+                        rim_drop=round(sum(drops)/len(drops), 1),
+                        rim_check="fail" if reason else "ok")
+            if reason:
+                meta["inside_reason"] = reason
+    return (ratio, need, tot)
+
+
+def _arc_distribution_ok(pts, cx, cy, a, b, meta=None):
+    """Reject short/one-sided fits without changing their fitted coordinates."""
+    if not bool(getattr(config, "PLATE_ARC_COVERAGE_CHECK", True)):
+        return True
+    angles = [math.degrees(math.atan2((y-cy)/b, (x-cx)/a))
+              for x, y in pts if y >= cy]
+    left = sum(angle < 80. for angle in angles)
+    right = sum(angle > 100. for angle in angles)
+    span = max(angles)-min(angles) if angles else 0.
+    bins = len(set(int(angle//15.) for angle in angles))
+    valid = (left >= 3 and right >= 3 and bins >= 4 and
+             span >= float(getattr(config, "PLATE_ARC_MIN_SPAN_DEG", 55.)))
+    if meta is not None:
+        meta.update(arc_span=round(span, 1), arc_bins=bins, arc_sides=[left, right])
+        if not valid:
+            meta["reason"] = "arc-coverage"
+    return valid
 
 
 def _arc_edge_points_np(gray, cx, cy, r, band, rays, step, min_grad, a0, a1,
@@ -1023,6 +1100,8 @@ def _fit_arc_once(img, cx, cy, r, bands=None, rays=None, step=None,
                 meta["model"] = "circle"
                 meta["rms"] = round(_circle_rms(pts, cx, cy, r), 2)
                 meta["npts"] = len(pts)
+    if not _arc_distribution_ok(pts, cx, cy, ea or r, eb or r, meta=meta):
+        return None
     if meta is not None:
         meta["reason"] = "ok(%s,npts=%d)" % (meta.get("model", "?"),
                                              meta.get("npts", 0))
@@ -1094,24 +1173,54 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     def _try(tag, px, py, pr, skip=None):
         """试一轮：返回 (rank, rms, tag, res, meta_of_this_try)；失败返回 None。
 
-        rank: 0=可信且几何合理；1=低置信但几何合理；2=几何不合理（不可用）。
+        rank: 0=可信；1=质量低置信；2=几何拒绝；3=内侧亮度拒绝。
         """
         m2 = {}
         res = _fit_arc_once(img, px, py, pr, bands, rays, step, min_grad,
                             arc_deg, m2, skip_bottom_deg=skip, gray=gray_all)
         label = tag if not skip else "%s/skip%g" % (tag, skip)
         if res is None:
-            tries.append({"prior": label, "reason": str(m2.get("reason", ""))[:40]})
+            tries.append({"prior": label, "reason": str(m2.get("reason", "")),
+                          **{k: v for k, v in m2.items()
+                             if k.startswith(("arc_", "rim_"))}})
             return None
         rms = float(m2.get("rms", 0.0))
         npts = int(m2.get("npts", 0))
         credible = (not gate) or (rms <= max_rms and npts >= min_pts)
         g_ok, g_why = _geom_ok(res)
+        inside_ok = True
+        if g_ok and bool(getattr(config, "PLATE_INSIDE_CHECK", True)):
+            chk = check_inside_bright(img, float(res[0]), float(res[1]),
+                                      float(m2.get("a") or res[2]), float(res[2]),
+                                      meta=m2, gray=gray_all)
+            if chk is not None:
+                ratio, need, tot = chk
+                minr = float(getattr(config, "PLATE_INSIDE_MIN_RATIO", 0.60))
+                brightness_ok = ratio >= minr
+                rim_ok = m2.get("rim_check") != "fail"
+                inside_ok = brightness_ok and rim_ok
+                m2["inside_ratio"] = round(ratio, 2)
+                m2["inside_check"] = "ok" if brightness_ok else "fail"
+                if not brightness_ok:
+                    m2["reason"] = "inside-fail(%.2f<%.2f, need=%.0f, n=%d)" % (
+                        ratio, minr, need, tot)
+                elif not rim_ok:
+                    m2["reason"] = "rim-fail(%s)" % m2.get("inside_reason", "unsupported")
         tries.append({"prior": label, "rms": rms, "npts": npts,
-                      "credible": bool(credible), "geom": g_ok,
+                      "credible": bool(credible and inside_ok and g_ok), "geom": g_ok,
+                      "inside_check": m2.get("inside_check", "skipped"),
+                      "inside_ratio": m2.get("inside_ratio"),
+                      "inside_need": m2.get("inside_need"),
+                      "inside_rays": m2.get("inside_rays"),
+                      "inside_reason": m2.get("inside_reason"),
+                      "reason": m2.get("reason", ""),
+                      **{k: v for k, v in m2.items()
+                         if k.startswith(("arc_", "rim_"))},
                       "low": [round(res[0], 1), round(res[1] + res[2], 1)],
                       **({} if g_ok else {"geom_why": g_why})})
         rank = 0 if (credible and g_ok) else (1 if g_ok else 2)
+        if g_ok and not inside_ok:
+            rank = 3
         return (rank, rms, label, res, m2)
 
     base_skip = float(getattr(config, "PLATE_ARC_SKIP_BOTTOM_DEG", 0.0))
@@ -1183,6 +1292,11 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
     for k, v in m2.items():
         d[k] = v
     d["prior_used"] = tag
+    if rank == 3:
+        mode2 = str(getattr(config, "PLATE_INSIDE_ON_FAIL", "reject")).strip().lower()
+        if mode2 in ("reject", "none", "strict"):
+            d["rejected"] = True
+            return None
 
     # ---- 底点交叉校验：局部直测 vs 椭圆外推 ----
     # 两个独立估计（全局拟合 / 局部直测）差得太多，说明这一帧的拟合可疑 →
@@ -1227,30 +1341,8 @@ def find_disc_arc(img, cx, cy, r, bands=None, rays=None, step=None,
                         abs(_dxm), abs(_dym), _ok2,
                         "" if _ok2 else ("/" + _why2))
 
-    d["low_conf"] = bool(gate and rank != 0) or bool(_mismatch)
+    d["low_conf"] = bool(gate and rank != 0) or rank == 3 or bool(_mismatch)
 
-    # ---- 内侧亮度校验：拟合出的弧内侧必须是盘面 ----
-    # 电缆/立柱/阴影也能拟合出"合理"的弧（最低点偏 +60~80px），但内侧是暗的。
-    if bool(getattr(config, "PLATE_INSIDE_CHECK", True)):
-        chk = check_inside_bright(img, float(res[0]), float(res[1]),
-                                  float(d.get("a") or res[2]), float(res[2]),
-                                  meta=d, gray=gray_all)
-        if chk is not None:
-            ratio, need, tot = chk
-            d["inside_ratio"] = round(ratio, 2)
-            _minr = float(getattr(config, "PLATE_INSIDE_MIN_RATIO", 0.60))
-            if ratio < _minr:
-                d["inside_check"] = "fail"
-                mode2 = str(getattr(config, "PLATE_INSIDE_ON_FAIL",
-                                    "reject")).strip().lower()
-                if mode2 in ("reject", "none", "strict"):
-                    d["reason"] = "inside-fail(%.2f<%.2f, need=%.0f, n=%d)" % (
-                        ratio, _minr, need, tot)
-                    d["rejected"] = True
-                    return None
-                d["low_conf"] = True
-            else:
-                d["inside_check"] = "ok"
     if gate and rank != 0:
         # 现场要求：不准确也要执行完 → 默认 "report"（只标记低置信，照常返回最佳猜测）
         # 想恢复「不可信就回 NONE」的严格模式：PLATE_GATE_MODE="reject"
@@ -1603,7 +1695,20 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         meta["ring"] = None
         meta["refine_reason"] = ""
         meta["refine_points"] = 0
+        meta["hough_batches"] = []
+    # Try the tiled template search first. Legacy candidates remain available on a miss or error.
+    if bool(getattr(config, "DISC_TEMPLATE_ON", True)):
+        try:
+            from disc_template_locator import locate
+            max_jump = float(getattr(config, "DISC_TRACK_MAX_JUMP", 0) or 0)
+            direct = locate(img, meta, roi=roi, prefer=prefer, max_jump=max_jump)
+            if direct is not None:
+                return direct
+        except Exception as exc:
+            if meta is not None:
+                meta["tpl_error"] = "full-template:%s" % exc
     t0 = ticks_ms()
+    template_cache = {}
 
     def _accept(p, src):
         """内容校验：候选圆附近必须能匹配到数字“2”，否则丢弃。
@@ -1620,7 +1725,14 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         m2 = {}
         _sh = float(getattr(config, "DISC_TEMPLATE_MAX_SHIFT", 22.0))
         _lim = min(_sh, max(12.0, 0.35 * float(p[2])))
-        if verify_target2(img, p[0], p[1], meta=m2, max_shift=_lim):
+        cache_key = (float(p[0]), float(p[1]), _lim)
+        cached = template_cache.get(cache_key)
+        if cached is None:
+            accepted = verify_target2(img, p[0], p[1], meta=m2, max_shift=_lim)
+            template_cache[cache_key] = (accepted, m2)
+        else:
+            accepted, m2 = cached
+        if accepted:
             if meta is not None:
                 meta.update(m2)
             tpl = m2.get("tpl")
@@ -1679,6 +1791,105 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
                     meta["ms"] = ticks_ms() - t0
                 return p
 
+    def _accept_hough_batch(circles):
+        """Run cluster/refinement/content validation for one bounded tile."""
+        if circles:
+            pick = circles
+            # 连续性：上一次圆心附近至少有两个候选时才用，避免锁死单个假圆
+            max_jump = float(getattr(config, "DISC_TRACK_MAX_JUMP", 0) or 0)
+            if prefer is not None and max_jump > 0:
+                near = [c for c in circles
+                        if ((c.x() - prefer[0]) ** 2 + (c.y() - prefer[1]) ** 2) ** 0.5 <= max_jump]
+                if len(near) >= 2:
+                    pick = near
+            pick = sorted(pick, key=lambda c: c.r(), reverse=True)
+            if meta is not None:
+                meta["near_count"] = len(pick)
+
+            # ---- 圆心聚类：同心环的圆心应该重合，成员最多的簇才是目标 ----
+            # 旧逻辑取「半径最大的圆」；ROI 裁掉靶子上半部时会拟合出偏下的大假圆。
+            max_in = max(8, int(getattr(config, "DISC_CLUSTER_MAX_INPUT", 80)))
+            if len(pick) > max_in:
+                pick = pick[:max_in]
+            cluster_px = float(getattr(config, "DISC_CLUSTER_PX", 15))
+            best_cluster = None
+            for c in pick:
+                members = [o for o in pick
+                           if ((o.x() - c.x()) ** 2 + (o.y() - c.y()) ** 2) ** 0.5 <= cluster_px]
+                if best_cluster is None or len(members) > len(best_cluster):
+                    best_cluster = members
+            if best_cluster:
+                pick = best_cluster
+            if meta is not None:
+                meta["cluster"] = [[int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
+                                   for c in pick[:12]]
+                meta["cluster_n"] = len(pick)
+
+            # 簇内中位数作为粗中心/半径（比最大圆稳得多）
+            xs = sorted(c.x() for c in pick)
+            ys = sorted(c.y() for c in pick)
+            rs = sorted(c.r() for c in pick)
+            cx = xs[len(xs) // 2]
+            cy = ys[len(ys) // 2]
+            r = rs[len(rs) // 2]
+
+            attempts = []
+            # 先拟合簇中位数
+            if refine:
+                m2 = {}
+                f = refine_disc_center(img, cx, cy, r, meta=m2)
+                attempts.append({"c": [int(cx), int(cy), int(r)], "mag": 0,
+                                 "fit": [int(f[0]), int(f[1]), int(f[2])] if f else None,
+                                 "why": m2.get("refine_reason", "")})
+                if f is not None:
+                    p = _accept(f, "cluster-refine")
+                    if p is not None:
+                        if meta is not None:
+                            meta.update(m2)
+                            meta["coarse"] = [int(cx), int(cy), int(r)]
+                            meta["picked"] = [int(cx), int(cy), int(r), 0]
+                            meta["refined"] = [int(p[0]), int(p[1]), int(p[2])]
+                            meta["src"] = "cluster-refine"
+                            meta["attempts"] = attempts
+                            meta["ms"] = ticks_ms() - t0
+                        return p
+
+            # 簇中位数拟合失败：再试簇内前几个候选
+            try_n = max(1, int(getattr(config, "DISC_REFINE_TRY", 2)))
+            if refine:
+                for c in pick[:try_n]:
+                    m2 = {}
+                    f = refine_disc_center(img, c.x(), c.y(), c.r(), meta=m2)
+                    attempts.append({"c": [int(c.x()), int(c.y()), int(c.r())],
+                                     "mag": _circle_mag(c),
+                                     "fit": [int(f[0]), int(f[1]), int(f[2])] if f else None,
+                                     "why": m2.get("refine_reason", "")})
+                    if f is not None:
+                        p = _accept(f, "refine")
+                        if p is not None:
+                            if meta is not None:
+                                meta.update(m2)
+                                meta["coarse"] = [int(c.x()), int(c.y()), int(c.r())]
+                                meta["picked"] = [int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
+                                meta["refined"] = [int(p[0]), int(p[1]), int(p[2])]
+                                meta["src"] = "refine"
+                                meta["attempts"] = attempts
+                                meta["ms"] = ticks_ms() - t0
+                            return p
+
+            # 都失败：用簇中位数（至少是多个同心环的共同中心），但仍要过“2”校验
+            p = _accept((cx, cy, r), "cluster")
+            if p is not None:
+                if meta is not None:
+                    meta["coarse"] = [int(p[0]), int(p[1]), int(p[2])]
+                    meta["picked"] = [int(p[0]), int(p[1]), int(p[2]), 0]
+                    meta["src"] = "cluster"
+                    meta["attempts"] = attempts
+                    meta["ms"] = ticks_ms() - t0
+                return p
+
+        return None
+
     circles = []
     try:
         # 霍夫累加器内存 ∝ ROI 面积。大 ROI 不能整块跑（会耗干 fast frame buffer stack），
@@ -1707,11 +1918,23 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
                 if meta is not None:
                     meta["circles_error"] = str(e)[:60]
                 circles = []
+            if meta is not None:
+                meta["hough_roi"] = _hr
+                meta["hough_tries"] = len(_tried)
+                meta["circles"] = [[int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
+                                   for c in sorted(circles, key=lambda c: c.r(), reverse=True)[:12]]
             if circles:
+                p = _accept_hough_batch(circles)
                 if meta is not None:
-                    meta["hough_use"] = "t=%d stride=%d,%d rstep=%d" % (
-                        _t, _sx, _sy, _sr)
-                break
+                    meta.setdefault("hough_batches", []).append({
+                        "roi": list(_hr) if _hr else [], "count": len(circles),
+                        "accepted": p is not None})
+                if p is not None:
+                    if meta is not None:
+                        meta["hough_use"] = "t=%d stride=%d,%d rstep=%d" % (
+                            _t, _sx, _sy, _sr)
+                        meta.pop("tpl_reject", None)
+                    return p
         if meta is not None and _tried:
             meta["hough_roi"] = _tried[-1]
             meta["hough_tries"] = len(_tried)
@@ -1726,101 +1949,6 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
     if meta is not None:
         meta["circles"] = [[int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
                            for c in sorted(circles, key=lambda c: c.r(), reverse=True)[:12]]
-
-    if circles:
-        pick = circles
-        # 连续性：上一次圆心附近至少有两个候选时才用，避免锁死单个假圆
-        max_jump = float(getattr(config, "DISC_TRACK_MAX_JUMP", 0) or 0)
-        if prefer is not None and max_jump > 0:
-            near = [c for c in circles
-                    if ((c.x() - prefer[0]) ** 2 + (c.y() - prefer[1]) ** 2) ** 0.5 <= max_jump]
-            if len(near) >= 2:
-                pick = near
-        pick = sorted(pick, key=lambda c: c.r(), reverse=True)
-        if meta is not None:
-            meta["near_count"] = len(pick)
-
-        # ---- 圆心聚类：同心环的圆心应该重合，成员最多的簇才是目标 ----
-        # 旧逻辑取「半径最大的圆」；ROI 裁掉靶子上半部时会拟合出偏下的大假圆。
-        max_in = max(8, int(getattr(config, "DISC_CLUSTER_MAX_INPUT", 80)))
-        if len(pick) > max_in:
-            pick = pick[:max_in]
-        cluster_px = float(getattr(config, "DISC_CLUSTER_PX", 15))
-        best_cluster = None
-        for c in pick:
-            members = [o for o in pick
-                       if ((o.x() - c.x()) ** 2 + (o.y() - c.y()) ** 2) ** 0.5 <= cluster_px]
-            if best_cluster is None or len(members) > len(best_cluster):
-                best_cluster = members
-        if best_cluster:
-            pick = best_cluster
-        if meta is not None:
-            meta["cluster"] = [[int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
-                               for c in pick[:12]]
-            meta["cluster_n"] = len(pick)
-
-        # 簇内中位数作为粗中心/半径（比最大圆稳得多）
-        xs = sorted(c.x() for c in pick)
-        ys = sorted(c.y() for c in pick)
-        rs = sorted(c.r() for c in pick)
-        cx = xs[len(xs) // 2]
-        cy = ys[len(ys) // 2]
-        r = rs[len(rs) // 2]
-
-        attempts = []
-        # 先拟合簇中位数
-        if refine:
-            m2 = {}
-            f = refine_disc_center(img, cx, cy, r, meta=m2)
-            attempts.append({"c": [int(cx), int(cy), int(r)], "mag": 0,
-                             "fit": [int(f[0]), int(f[1]), int(f[2])] if f else None,
-                             "why": m2.get("refine_reason", "")})
-            if f is not None:
-                p = _accept(f, "cluster-refine")
-                if p is not None:
-                    if meta is not None:
-                        meta.update(m2)
-                        meta["coarse"] = [int(cx), int(cy), int(r)]
-                        meta["picked"] = [int(cx), int(cy), int(r), 0]
-                        meta["refined"] = [int(p[0]), int(p[1]), int(p[2])]
-                        meta["src"] = "cluster-refine"
-                        meta["attempts"] = attempts
-                        meta["ms"] = ticks_ms() - t0
-                    return p
-
-        # 簇中位数拟合失败：再试簇内前几个候选
-        try_n = max(1, int(getattr(config, "DISC_REFINE_TRY", 2)))
-        if refine:
-            for c in pick[:try_n]:
-                m2 = {}
-                f = refine_disc_center(img, c.x(), c.y(), c.r(), meta=m2)
-                attempts.append({"c": [int(c.x()), int(c.y()), int(c.r())],
-                                 "mag": _circle_mag(c),
-                                 "fit": [int(f[0]), int(f[1]), int(f[2])] if f else None,
-                                 "why": m2.get("refine_reason", "")})
-                if f is not None:
-                    p = _accept(f, "refine")
-                    if p is not None:
-                        if meta is not None:
-                            meta.update(m2)
-                            meta["coarse"] = [int(c.x()), int(c.y()), int(c.r())]
-                            meta["picked"] = [int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
-                            meta["refined"] = [int(p[0]), int(p[1]), int(p[2])]
-                            meta["src"] = "refine"
-                            meta["attempts"] = attempts
-                            meta["ms"] = ticks_ms() - t0
-                        return p
-
-        # 都失败：用簇中位数（至少是多个同心环的共同中心），但仍要过“2”校验
-        p = _accept((cx, cy, r), "cluster")
-        if p is not None:
-            if meta is not None:
-                meta["coarse"] = [int(p[0]), int(p[1]), int(p[2])]
-                meta["picked"] = [int(p[0]), int(p[1]), int(p[2]), 0]
-                meta["src"] = "cluster"
-                meta["attempts"] = attempts
-                meta["ms"] = ticks_ms() - t0
-            return p
 
     if ring_fallback:
         c = find_ring_center(
@@ -2045,30 +2173,40 @@ def find_stack_color_center_ai(ai, img, roi, color_code,
                   (target, len(hits), best[1] if best[1] else None, best[0]))
         return None
 
-    # 相邻命中块聚成一簇；优先块数多的簇，再优先离 ROI 中心近的
+    # 完整连通分量：桥接块可能同时连接多个已有簇，必须全部合并。
+    # 固定输入次序也固定浮点求和与平局选择，避免扫描顺序影响输出。
     groups = []
     link = max(stride * 1.6, 12.0)
-    for h in hits:
+    for h in sorted(hits, key=lambda q: (q[1], q[0], q[2])):
+        joined = [h]
+        remaining = []
         for g in groups:
             if any((h[0] - q[0]) ** 2 + (h[1] - q[1]) ** 2 <= link * link for q in g):
-                g.append(h)
-                break
-        else:
-            groups.append([h])
+                joined.extend(g)
+            else:
+                remaining.append(g)
+        remaining.append(joined)
+        groups = remaining
     cx0, cy0 = x0 + rw / 2.0, y0 + rh / 2.0
-    groups.sort(key=lambda g: (-len(g),
-                               min((q[0] - cx0) ** 2 + (q[1] - cy0) ** 2 for q in g)))
-    g = groups[0]
-    if len(g) < min_tiles:
+    eligible = []
+    for group in groups:
+        if len(group) < min_tiles:
+            continue
+        if target == COLOR_BLUE:
+            max_tiles = max(1, int(getattr(config, "STACK_AI_BLUE_MAX_TILES", 6)))
+            group_cy = int(round(sum(q[1] * q[2] for q in group) / sum(q[2] for q in group)))
+            max_cy = int(getattr(config, "STACK_AI_BLUE_MAX_CY", 240))
+            if len(group) > max_tiles or group_cy > max_cy:
+                if getattr(config, "STACK_AI_DEBUG", False):
+                    print("[AI][F] 拒绝蓝色候选 tiles=%d cy=%d" % (len(group), group_cy))
+                continue
+        eligible.append(group)
+    if not eligible:
         return None
-    # 蓝色电控板/电池常占一大片，命中块数明显多；蓝色单独限制最大块数
-    if target == COLOR_BLUE:
-        max_tiles = max(1, int(getattr(config, "STACK_AI_BLUE_MAX_TILES", 6)))
-        if len(g) > max_tiles:
-            if getattr(config, "STACK_AI_DEBUG", False):
-                print("[AI][F] 拒绝蓝色大块 hits=%d > %d center=(%d,%d)"
-                      % (len(g), max_tiles, int(g[0][0]), int(g[0][1])))
-            return None
+    eligible.sort(key=lambda group: (-len(group),
+                                     min((q[0] - cx0) ** 2 + (q[1] - cy0) ** 2 for q in group),
+                                     min((q[1], q[0]) for q in group)))
+    g = eligible[0]
 
     wsum = sum(q[2] for q in g)
     cx = sum(q[0] * q[2] for q in g) / wsum

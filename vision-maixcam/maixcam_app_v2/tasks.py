@@ -11,7 +11,11 @@ tasks.py —— 各视觉任务（对应新流程里下位机要"询问"的每�
 from maix import image, app
 from timing import ticks_ms, sleep_ms
 import os
+import math
 import config
+import h_material_config
+import h_direction
+from material_state import MotionWindow
 import cam_light
 import precision
 import vision
@@ -20,7 +24,8 @@ import screen_echo
 from protocol import (pack_start, pack_task, pack_pick, pack_disc, pack_stack,
                       pack_none, parse_task_code, pack_obstacle, pack_clear,
                       pack_ready, pack_busy, pack_move, pack_movey,
-                      pack_movexy, parse_command, CMD_RESET)
+                      pack_movexy, pack_h_colors, pack_h_disc, pack_material_state,
+                      is_color_code, parse_command, CMD_RESET)
 
 
 def log(*a):
@@ -116,12 +121,19 @@ def _align_movexy_mode():
 _BIAS_CACHE = {"t": None, "vals": None, "sig": "", "src": "config"}
 
 
+def _bias_default(key):
+    value = getattr(config, key, None)
+    if value is None and key.startswith("ALIGN_"):
+        value = getattr(config, key.rsplit("_", 1)[0], 0)
+    return float(0 if value is None else value)
+
+
 def _plate_bias():
-    """H 的目标/偏置：config 默认值，可被运行时文件覆盖（现场调落点，免重编包）。
+    """D/E/F/H 的目标/偏置：config 默认值，可被运行时文件覆盖。
 
     覆盖文件逐行 `KEY=VALUE`（见 config.PLATE_BIAS_FILE / PLATE_BIAS_KEYS），
     只写要改的项即可；文件不存在/解析失败的行 → 该键仍用 config 默认。
-    结果按 PLATE_BIAS_CACHE_MS 缓存，避免逐帧读文件。
+    结果按 PLATE_BIAS_CACHE_MS 缓存；各任务在开始时读取一次，任务内固定。
     """
     c = _BIAS_CACHE
     now = ticks_ms()
@@ -131,7 +143,7 @@ def _plate_bias():
     keys = tuple(getattr(config, "PLATE_BIAS_KEYS",
                           ("PLATE_TARGET_X", "PLATE_TARGET_Y",
                            "PLATE_DX_OFFSET", "PLATE_DY_OFFSET")))
-    vals = {k: float(getattr(config, k, 0.0)) for k in keys}
+    vals = {k: _bias_default(k) for k in keys}
     src = "config"
     path = str(getattr(config, "PLATE_BIAS_FILE", "") or "")
     try:
@@ -146,18 +158,20 @@ def _plate_bias():
                     if k not in vals:
                         continue
                     try:
-                        vals[k] = float(v.split("#")[0].strip())
+                        value = float(v.split("#")[0].strip())
+                        if math.isfinite(value):
+                            vals[k] = value
                     except ValueError:
                         continue
             src = path
     except Exception:
         pass
     for k in keys:                      # 偏置按整数用
-        if k.endswith("_OFFSET"):
+        if "_OFFSET" in k:
             vals[k] = int(round(vals[k]))
     sig = ",".join("%s=%s" % (k, vals[k]) for k in keys)
     if c["t"] is None or sig != c["sig"] or src != c["src"]:
-        log("[H] 落点参数（%s）：%s" % (src, sig))
+        log("[ALIGN] 落点参数（%s）：%s" % (src, sig))
     c["vals"], c["sig"], c["src"], c["t"] = vals, sig, src, now
     return vals
 
@@ -461,7 +475,9 @@ def draw_item(img, item, label, color=image.COLOR_GREEN):
     if "w" in item and "h" in item:
         img.draw_rect(item["x"], item["y"], item["w"], item["h"], color, 2)
     img.draw_cross(item["cx"], item["cy"], image.COLOR_RED, 6, 2)
-    txt = label if "code" not in item else "%s c=%s" % (label, item["code"])
+    names = {"1": "RED", "2": "YELLOW", "3": "BLUE", "4": "GREEN"}
+    txt = "%s %s (%d,%d)" % (label, names.get(str(item.get("code")), ""),
+                               item["cx"], item["cy"])
     img.draw_string(item["x"], max(0, item["y"] - 16), txt, image.COLOR_YELLOW, 1)
 
 
@@ -476,6 +492,7 @@ def task_start(cam, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None, ctl=None, c
     道路结论要连续 ROAD_STABLE_FRAMES 帧一致才确认。
     """
     P = _pipeline(p)
+    P.reset("A")  # 每次任务独立，避免上次启停区坐标混入本次回包
     road_roi = P.roi(config.ROI_ROAD)
     start_roi = P.roi(config.ROI_START)
     log("[A] 启停区识别（右侧道路 → 区号）")
@@ -553,6 +570,7 @@ def task_task(code):
 # ======================================================================
 def task_pick(cam, clf, disp, color_code, timeout_ms=config.TASK_TIMEOUT_MS, p=None, ctl=None):
     P = _pipeline(p)
+    P.reset("C")  # 不同颜色/车位的原料任务不能共享历史坐标
     roi = P.roi(config.ROI_MATERIAL)
     tracker = StabilityTracker(config.STABLE_FRAMES, color_window=config.COLOR_WINDOW,
                                confidence=config.COLOR_CONFIDENCE)
@@ -666,6 +684,9 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     if dy_offset is None:
         dy_offset = getattr(config, "ALIGN_DY_OFFSET", 0)
     dy_offset = int(dy_offset)
+    bias = _plate_bias()
+    dx_offset = int(bias.get("ALIGN_DX_OFFSET_" + tag, dx_offset))
+    dy_offset = int(bias.get("ALIGN_DY_OFFSET_" + tag, dy_offset))
     settle = max(0, int(getattr(config, "ALIGN_SETTLE_MS", 200)))
     max_iter = max(1, int(getattr(config, "ALIGN_MAX_ITER", 8)))
     lost_limit = max(1, int(getattr(config, "DISC_LOST_FRAMES", 2)))
@@ -695,6 +716,12 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             rec.close(payload)
         return payload
 
+    def finish_unaligned(cx, cy, dx):
+        accepted = bool(getattr(config, "DISC_OK_ON_DETECTION", False))
+        if accepted:
+            log("[%s] 联调模式：识别到坐标，未完成对齐复核也回 ok=1" % tag)
+        return finish(pack_disc(cx, cy, dx, int(accepted)))
+
     def fields_of(c, cx, cy, dx, dy, meta, extra=None):
         f = {"iter": iters, "lost": lost, "stable": stable}
         if c is not None:
@@ -707,7 +734,8 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                       "inner_blobs", "inner_reason",
                       "tpl", "tpl_scale", "tpl_roi", "tpl_reject", "tpl_error",
                       "tpl_far", "center_src", "circles_error",
-                      "hough_roi", "hough_tries", "hough_use", "hough_thr"):
+                      "hough_roi", "hough_tries", "hough_use", "hough_thr",
+                      "hough_batches"):
                 if k in meta:
                     f[k] = meta[k]
         if extra:
@@ -740,6 +768,9 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
     stable = 0
     iters = 0
     lost = 0
+    oneshot = bool(getattr(config, "ALIGN_ONE_SHOT", False))
+    if oneshot:
+        max_iter = 1
     last_center = None
     first_frame = True
     while not app.need_exit():
@@ -827,7 +858,7 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                      force=first_frame)
             first_frame = False
 
-        # ---- 只报告模式：中心连续稳定就回，ok 表示是否在容差内 ----
+        # ---- 只报告模式：保留检测成功的回包语义 ----
         if not align_on:
             okc, _, _ = tracker.update(item)
             if okc:
@@ -860,7 +891,7 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                 if rec:
                     rec.snap(img, dict(f, action="timeout_stable"),
                              "final_timeout", force=True)
-                return finish(pack_disc(cx, cy, dx, 1))
+                return finish_unaligned(cx, cy, dx)
             continue
 
         # ---- 超差：发 MOVEXY（并行）或 MOVE / MOVEY（拆分）----
@@ -891,7 +922,7 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             if guard_hit:
                 axis, val = guard_hit
                 log("[%s] [保护] %s 连续同方向且 |%s| 持续增大（%s=%+d），"
-                    "停止发指令，回 DISC,...,1；发 R 可解除"
+                    "停止发指令；发 R 可解除"
                     % (tag, "MOVE" if axis == "x" else "MOVEY",
                        "dx" if axis == "x" else "dy",
                        "dx" if axis == "x" else "dy", val))
@@ -900,7 +931,7 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                              "guard_%s" % axis, force=True)
                 if disp:
                     disp.show(img)
-                return finish(pack_disc(cx, cy, dx, 1))
+                return finish_unaligned(cx, cy, dx)
             actions = _make_align_actions(x_out, y_out, sx_step, sy_step)
             parts = []
             if _align_movexy_mode():
@@ -937,31 +968,27 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             if disp:
                 disp.show(img)
             hold = int(getattr(config, "MOVE_ECHO_HOLD_MS", 250))
-            if hold > 0:
-                sleep_ms(hold)
-            if bool(getattr(config, "ALIGN_ONE_SHOT", False)):
-                sx_out, sy_out = P.smooth(tag, cx, cy)
-                ok = 1  # 回复 ok 固定为 1
-                reply_x, reply_y, reply_dx = sx_out, sy_out, dx
-                log("[%s] 一次性模式：已发 %s，去回读：直接回动作前偏差 dx=%+d"
-                    % (tag, " ".join(parts), dx))
-                if rec:
-                    rec.snap(img, dict(f, action="move_oneshot",
-                                       steps=[s for _, s, _ in actions]),
-                             "final_oneshot", force=True)
-
-                return finish(pack_disc(reply_x, reply_y, reply_dx, ok))
-            if settle:
-                sleep_ms(settle)
-            if ticks_ms() - t0 > timeout_ms:
+            wait_until = min(ticks_ms() + max(0, hold) + settle, t0 + timeout_ms)
+            while ticks_ms() < wait_until:
+                if app.need_exit():
+                    return finish(pack_none(tag))
+                if ctl is not None and not ctl.tick():
+                    return finish(pack_ready())
+                sleep_ms(max(0, min(20, wait_until - ticks_ms())))
+            # A move invalidates pre-move observations. One-shot still verifies
+            # fresh frames, but the iteration limit prevents a second move.
+            P.reset(tag)
+            tracker.reset()
+            last_center = None
+            if ticks_ms() - t0 >= timeout_ms:
                 log("[%s] 超时（微调中），带偏差回复" % tag)
                 if rec:
                     rec.snap(img, dict(f, action="timeout_move"),
                              "final_timeout", force=True)
-                return finish(pack_disc(cx, cy, dx, 1))
+                return finish_unaligned(cx, cy, dx)
             continue
 
-        if align_on and iters >= max_iter:
+        if align_on and iters >= max_iter and not oneshot:
             log("[%s] 微调 %d 次仍未对齐（dx=%+d dy=%+d），带偏差回复"
                 % (tag, iters, dx, dy))
             if rec:
@@ -969,7 +996,7 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
                          "final_fail", force=True)
             if disp:
                 disp.show(img)
-            return finish(pack_disc(cx, cy, dx, 1))
+            return finish_unaligned(cx, cy, dx)
 
         if disp:
             disp.show(img)
@@ -977,13 +1004,290 @@ def _task_disc_impl(cam, disp, roi, tag, timeout_ms=None, p=None, ctl=None):
             log("[%s] 超时" % tag)
             if rec:
                 rec.snap(img, dict(f, action="timeout"), "final_timeout", force=True)
-            return finish(pack_disc(cx, cy, dx, 1))
+            return finish_unaligned(cx, cy, dx)
     return finish(pack_none(tag))
 
 
 # ======================================================================
 # 任务 H：物料盘下弧对齐（盘太大只见下弧，以「最低点」为基准）
 # ======================================================================
+def task_material_state(cam, clf, disp, p=None, ctl=None):
+    """J entry: observe materials with the camera light on by default."""
+    light_on = bool(getattr(config, "J_LIGHT_ON", True)) and cam_light.on()
+    try:
+        return _task_material_state_impl(cam, clf, disp, p=p, ctl=ctl)
+    finally:
+        if light_on:
+            cam_light.off()
+
+
+def _task_material_state_impl(cam, clf, disp, p=None, ctl=None):
+    """J observes indefinitely and replies only after all visible colors stop."""
+    pipeline = _pipeline(p)
+    tracks = {}
+    next_report = 0
+    report_ms = max(50, int(config.MATERIAL_STATE_REPORT_MS))
+    confirm_ms = max(0, int(getattr(config, "MATERIAL_STATE_CONFIRM_MS", 1000)))
+    stable_since = None
+    stable_codes = ()
+    while not app.need_exit():
+        if ctl is not None and not ctl.tick():
+            return pack_ready()
+        img = cam.read()
+        grouped = {}
+        for item in clf.detect(img, None, pipeline.area(config.MIN_PIXELS)):
+            code = clf.resolve_code(img, item)
+            if is_color_code(code):
+                grouped.setdefault(code, []).append(item)
+        now = ticks_ms()
+        records = []
+        next_tracks = {}
+        drawings = []
+        for code in sorted(grouped):
+            candidates = grouped[code]
+            item = max(candidates, key=lambda candidate: candidate["pixels"])
+            window = tracks.get(code)
+            if window is None:
+                window = MotionWindow(config.MATERIAL_STATE_HOLD_MS,
+                                      config.MATERIAL_STATE_TOL_PX,
+                                      config.MATERIAL_STATE_MIN_FRAMES,
+                                      config.MATERIAL_STATE_MAX_GAP_MS)
+            x, y = pipeline.point(item["cx"], item["cy"])
+            state = window.update(now, x, y, trustworthy=len(candidates) == 1)
+            next_tracks[code] = window
+            records.append((code, x, y, state))
+            drawings.append((item, state))
+        tracks = next_tracks
+
+        codes = tuple(sorted(record[0] for record in records))
+        all_stopped = bool(records) and all(record[3] == 1 for record in records)
+        if all_stopped and (stable_since is None or codes != stable_codes):
+            stable_since = now
+            stable_codes = codes
+        elif not all_stopped:
+            stable_since = None
+            stable_codes = ()
+
+        done = (all_stopped and stable_since is not None
+                and now - stable_since >= confirm_ms)
+        if disp is not None:
+            for item, state in drawings:
+                draw_item(img, item, "J state=%d" % state)
+            disp.show(img)
+        if done:
+            payload = pack_material_state(records, done=True)
+            log("[J] 全部可见物料停稳，返回 %s" % payload)
+            return payload
+        if now >= next_report:
+            # Keep diagnostics visible without creating or sending a
+            # non-terminal MSTATE packet.
+            detail = " ".join("%s:(%d,%d),state=%d" % record for record in records)
+            log("[J] 等待中 %s" % (detail or "无有效物料"))
+            next_report = now + report_ms
+    return pack_none("J")
+
+
+def task_h_material(cam, clf, disp, p=None, ctl=None, settings=None):
+    """Observe two material arrivals, with a full-frame shortcut during motion."""
+    link = ctl.link if ctl is not None else None
+    if link is None:
+        return pack_none("H")
+
+    settings = h_material_config.defaults(config) if settings is None else settings
+    pipeline = _pipeline(p)
+    roi = pipeline.roi(config.H_MATERIAL_ROI)
+    min_pixels = pipeline.area(config.MIN_PIXELS)
+    color_frames = settings["color_frames"]
+    center_frames = settings["center_frames"]
+    target_x = config.W // 2
+    target_y = settings["target_y"]
+    tolerance = settings["tol_y"]
+    max_moves = settings["max_moves"]
+    rec = disc_debug.DiscDebug(
+        "H-material", config.PLATE_DEBUG_DIR,
+        max_frames=config.PLATE_DEBUG_MAX_FRAMES,
+        quality=config.PLATE_DEBUG_QUALITY,
+        keep_tasks=config.PLATE_DEBUG_KEEP_TASKS,
+        min_interval_ms=config.PLATE_DEBUG_MIN_INTERVAL_MS,
+        enabled=config.PLATE_DEBUG_SAVE,
+    )
+    rec.start()
+    result = pack_none("H")
+    colors = []
+    direction_enabled = bool(getattr(config, "H_DIRECTION_PACKET_ENABLED", False))
+    direction_tracker = h_direction.DirectionTracker(getattr(config, "H_DIRECTION_FALLBACK", 1))
+    direction_frozen = False
+    tracks = {}
+    stopped_colors = []
+    already_stopped = set()
+    moving_pair = ()
+    pair_frames = 0
+    shortcut = False
+    colors_sent = False
+    move_after = 0
+    moves = 0
+    rec.data({"target_x": target_x, "target_y": target_y, "roi": roi, "tolerance": tolerance,
+              "gain": settings["gain"], "invert": settings["invert_move"],
+              "max_step": settings["step_max"]}, "settings")
+    log("[H-material] 物料中心目标 (%s,%s)，开始采集颜色" % (target_x, target_y))
+    light_on = config.PLATE_LIGHT_ON and cam_light.on()
+    try:
+        while not app.need_exit():
+            if not ctl.tick():
+                result = pack_ready()
+                break
+            img = cam.read()
+            now = ticks_ms()
+            by_color = {}
+            pair_candidates = {}
+            width, height = img.width(), img.height()
+            edge_margin = 8
+            display_items = []
+            for item in clf.detect(img, None, min_pixels):
+                code = clf.resolve_code(img, item)
+                if not is_color_code(code):
+                    continue
+                display_items.append(item)
+                x, y = pipeline.point(item["cx"], item["cy"])
+                inside = (item["x"] >= edge_margin and item["y"] >= edge_margin
+                          and item["x"] + item["w"] <= width - edge_margin
+                          and item["y"] + item["h"] <= height - edge_margin)
+                candidate = {"code": code, "x": x, "y": y, "pixels": item["pixels"],
+                             "src": item.get("src"), "raw": (item["cx"], item["cy"]),
+                             "pair_eligible": inside}
+                if code not in by_color or item["pixels"] > by_color[code]["pixels"]:
+                    by_color[code] = candidate
+                if inside and (code not in pair_candidates or item["pixels"] > pair_candidates[code]["pixels"]):
+                    pair_candidates[code] = candidate
+
+            if direction_enabled:
+                direction_tracker.update(list(by_color.values()), now,
+                                         allow_motion=not direction_frozen)
+
+            stopped = []
+            moving_colors = set()
+            next_tracks = {}
+            for code, item in by_color.items():
+                detector, count = tracks.get(code, (None, 0))
+                if detector is None:
+                    detector = StopDetector(config.PICK_STOP_SPEED_PX_S, config.PICK_STOP_HOLD_MS)
+                stable, speed = detector.update(item["x"], item["y"], now)
+                count = count + 1 if stable and now >= move_after else 0
+                next_tracks[code] = (detector, count)
+                if not stable and speed > config.PICK_STOP_SPEED_PX_S:
+                    moving_colors.add(code)
+                rx, ry = item["raw"]
+                if count >= center_frames and (not roi or
+                        roi[0] <= rx < roi[0] + roi[2] and roi[1] <= ry < roi[1] + roi[3]):
+                    stopped.append(item)
+            tracks = next_tracks
+            stopped.sort(key=lambda item: item["raw"][0] if direction_enabled
+                         and direction_tracker.effective_direction == h_direction.CW else -item["x"])
+
+            if not colors and not stopped:
+                ordered = sorted(pair_candidates.values(), key=lambda item: -item["x"])
+                pair = (direction_tracker.order_pair(list(pair_candidates.values()))
+                        if direction_enabled else
+                        tuple(item["code"] for item in ordered) if len(ordered) == 2 else ())
+                if pair and pair == moving_pair:
+                    pair_frames += 1
+                else:
+                    moving_pair = pair if moving_colors.intersection(pair_candidates) else ()
+                    pair_frames = 1 if moving_pair else 0
+                if moving_pair and pair_frames >= color_frames:
+                    colors.extend(moving_pair)
+                    shortcut = True
+
+            terminal = None
+            correction = None
+            if len(colors) == 2:
+                terminal = next((item for item in stopped if item["code"] == colors[1]), None)
+            else:
+                if now >= move_after:
+                    already_stopped.intersection_update(by_color)
+                    already_stopped.difference_update(moving_colors)
+                if stopped and not stopped_colors:
+                    first = stopped[0]["code"]
+                    stopped_colors.append(first)
+                    colors.append(first)
+                    already_stopped.update(item["code"] for item in stopped[1:])
+                for item in stopped:
+                    code = item["code"]
+                    if code == stopped_colors[0]:
+                        correction = item
+                    elif code not in already_stopped:
+                        stopped_colors.append(code)
+                        colors.append(code)
+                        terminal = item
+                        break
+
+            if len(colors) == 2 and not colors_sent:
+                payload = (h_direction.pack_colors(*colors, direction_tracker.effective_direction)
+                           if direction_enabled else pack_h_colors(*colors))
+                link.send_payload(payload)
+                screen_echo.set_tx(payload)
+                colors_sent = True
+                if direction_enabled:
+                    direction_frozen = True
+                log("[H-material] 已发送 %s" % payload)
+
+            item = terminal or correction
+            center = (item["x"], item["y"]) if item is not None else None
+            dx = center[0] - target_x if center is not None else None
+            dy = center[1] - target_y if center is not None else None
+            x_out = dx is not None and abs(dx) > tolerance
+            y_out = dy is not None and abs(dy) > tolerance
+            fields = {"candidates": list(by_color.values()), "center": center,
+                      "dx": dx, "dy": dy, "distance_error": dy,
+                      "colors": list(colors), "stopped_colors": list(stopped_colors),
+                      "moving_pair": shortcut, "moves": moves,
+                      "direction_enabled": direction_enabled,
+                      "direction": direction_tracker.effective_direction,
+                      "direction_assumed": direction_tracker.direction is h_direction.UNKNOWN}
+            rec.snap(img, fields, "detect")
+            if disp is not None:
+                draw_roi(img, roi)
+                for display_item in display_items:
+                    draw_item(img, display_item, display_item.get("src", "cv").upper())
+                img.draw_string(2, 2, "H colors=%s dx=%s dy=%s" % (",".join(colors), dx, dy),
+                                image.COLOR_GREEN, 1)
+                disp.show(img)
+
+            if terminal is not None and (not (x_out or y_out) or max_moves == 0):
+                result = (h_direction.pack_disc(center[0], center[1], dx, *colors, direction_tracker.effective_direction)
+                          if direction_enabled else pack_h_disc(center[0], center[1], dx, *colors))
+                break
+            # Keep one correction available for the final material, which owns the result.
+            move_limit = max_moves if terminal is not None else max(0, max_moves - 1)
+            if (x_out or y_out) and now >= move_after and moves < move_limit:
+                gain = settings["gain"]
+                limit = settings["step_max"]
+                sx_step = _axis_step(dx, gain, 1, limit, 1.0, config.PLATE_INVERT_X) if x_out else 0
+                sy_step = _axis_step(dy, gain, 1, limit, 1.0, settings["invert_move"]) if y_out else 0
+                payload = pack_movexy(sx_step, sy_step)
+                link.send_payload(payload)
+                screen_echo.set_tx(payload)
+                direction_frozen = True
+                moves += 1
+                tracks.clear()
+                move_after = ticks_ms() + settings["settle_ms"]
+                rec.data(dict(fields, sent=payload), "move")
+                log("[H-material] dx=%+d dy=%+d 超差，发 %s" % (dx, dy, payload))
+                if terminal is not None and moves >= max_moves:
+                    result = (h_direction.pack_disc(center[0], center[1], dx, *colors, direction_tracker.effective_direction)
+                          if direction_enabled else pack_h_disc(center[0], center[1], dx, *colors))
+                    rec.data(dict(fields, moves=moves, reason="budget_exhausted"), "final_budget")
+                    log("[H-material] 纠偏次数用尽，带末轮动作前坐标回 %s" % result)
+                    break
+        return result
+    finally:
+        try:
+            rec.close(result, {"colors": colors, "moves": moves})
+        finally:
+            if light_on:
+                cam_light.off()
+
+
 def task_plate(cam, disp, timeout_ms=None, p=None, ctl=None):
     """任务 H：把物料盘的「最低点」对齐到目标位置（H 期间打开补光灯）。
 
@@ -1075,7 +1379,13 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
             for k in ("model", "a", "b", "k", "rms", "npts", "reason",
                       "low_ellipse", "low_direct", "low_delta", "low_check",
                       "low_used", "low_conf", "inside_ratio", "inside_check",
-                      "inside_need", "inside_rays"):
+                      "inside_need", "inside_rays", "tries", "prior_used",
+                      "coarse", "coarse_reject", "plate_level", "need_in",
+                      "inside_evidence", "arc_support", "occlusion",
+                      "inside_reason", "rim_support", "rim_span", "rim_sides",
+                      "rim_longest_run", "rim_contrast", "rim_drop",
+                      "arc_span", "arc_bins", "arc_sides", "rim_check",
+                      "rim_visible_sides"):
                 if k in meta:
                     f[k] = meta[k]
         if extra:
@@ -1113,6 +1423,9 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
             stable = 0
             if lost == 1:
                 _why = _detect_meta.get("m", {})
+                if rec is not None:
+                    rec.snap(img, {"action": "failed_raw", "lost": lost,
+                                   "diagnostic": dict(_why)}, "failed_raw")
                 log("[H] 本帧未得到可信下弧：%s%s"
                     % (str(_why.get("reason", "?"))[:60],
                        ("（内侧亮度通过率 %s）" % _why.get("inside_ratio"))
@@ -1121,14 +1434,16 @@ def _task_plate_impl(cam, disp, timeout_ms=None, p=None, ctl=None):
                             image.COLOR_RED, 2)
             if rec is not None:
                 rec.data({"iter": iters, "lost": lost,
-                          "model": getattr(config, "PLATE_ARC_MODEL", "ellipse")},
+                          "model": getattr(config, "PLATE_ARC_MODEL", "ellipse"),
+                          "diagnostic": dict(_detect_meta.get("m", {}))},
                          "no_arc")
             if disp:
                 disp.show(img)
             if lost >= lost_limit:
                 log("[H] 连续 %d 帧看不到下弧 → NONE" % lost)
                 if rec is not None:
-                    rec.snap(img, {"action": "final_none", "lost": lost},
+                    rec.snap(img, {"action": "final_none", "lost": lost,
+                                   "diagnostic": dict(_detect_meta.get("m", {}))},
                              "final_none", force=True)
                 return finish(pack_none("H"))
             if ticks_ms() - t0 > timeout_ms:
@@ -1393,8 +1708,9 @@ def task_stack(cam, clf, disp, timeout_ms=config.TASK_TIMEOUT_MS, p=None,
         step_max = max(step_min, step_max)
     tol = int(getattr(config, "STACK_ALIGN_TOL", 5))
     dy_tol = int(getattr(config, "STACK_ALIGN_DY_TOL", 5))
-    dx_offset = int(getattr(config, "STACK_ALIGN_DX_OFFSET", 0))
-    dy_offset = int(getattr(config, "STACK_ALIGN_DY_OFFSET", 0))
+    bias = _plate_bias()
+    dx_offset = int(bias.get("STACK_ALIGN_DX_OFFSET", getattr(config, "STACK_ALIGN_DX_OFFSET", 0)))
+    dy_offset = int(bias.get("STACK_ALIGN_DY_OFFSET", getattr(config, "STACK_ALIGN_DY_OFFSET", 0)))
     invert_x = bool(getattr(config, "STACK_INVERT_X", False))
     invert_y = bool(getattr(config, "STACK_INVERT_Y", False))
     need_stable = max(1, int(getattr(config, "ALIGN_STABLE_FRAMES", 3)))
@@ -1684,6 +2000,6 @@ def task_forward(cam, disp, timeout_ms=config.OBST_TIMEOUT_MS,
         if disp:
             disp.show(img)
         if ticks_ms() - t0 > timeout_ms:
-            log("[G] 超时，按无障碍处理")
-            return pack_clear()
-    return pack_clear()
+            log("[G] 超时，无法确认前方畅通")
+            return pack_none("G")
+    return pack_none("G")

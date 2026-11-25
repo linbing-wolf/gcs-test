@@ -15,6 +15,12 @@ typedef struct {
     uint8_t stable_samples;
     uint32_t started_ms, stable_ms, sample_sequence, sample_ms;
     const char *fault;
+#if CHASSIS_IMU_EXPERIMENT
+    uint8_t experiment_mode, gyro_seeded, integral_seeded;
+    uint32_t gyro_sequence, gyro_ms, integral_sequence, integral_ms;
+    float filtered_rate_cdeg_s, integral_rpm;
+    uint16_t pid_kp_x100, pid_ki_x100, pid_kd_x100;
+#endif
 } HeadingControl;
 
 int heading_control_start(HeadingControl *control, HeadingSample sample,
@@ -24,6 +30,12 @@ HeadingDecision heading_control_update(HeadingControl *control, HeadingSample sa
 int16_t heading_control_rpm(const HeadingControl *control, uint16_t max_rpm);
 /* 前进/后退保持航向；允许越过零误差前的角速度阻尼，不使用原地转向3RPM规则。 */
 int16_t heading_control_drive_rpm(const HeadingControl *control, uint16_t max_rpm);
+#if CHASSIS_IMU_EXPERIMENT
+enum { IMUTEST_OFF, IMUTEST_PD, IMUTEST_GYRO, IMUTEST_PID };
+void heading_experiment_reset(HeadingControl *control);
+int heading_experiment_gyro(HeadingControl *control, HeadingSample sample, uint32_t now_ms);
+int16_t heading_experiment_drive(HeadingControl *control, int16_t forward, int integrate);
+#endif
 /* forward>0为沿车头前进，turn>0为左转；输出正值对应原驱动dir=1。 */
 void heading_control_wheels(int16_t forward, int16_t turn, int16_t rpm[4]);
 /* left>0为车身左移；前进、横移、旋转叠加后统一限幅。 */

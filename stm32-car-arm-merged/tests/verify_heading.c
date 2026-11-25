@@ -321,7 +321,7 @@ static void continuous_lateral_tests(void)
         sprintf(buffer,"rpm %u",speeds[speed]);send_line(buffer);
         send_line(direction ? "r" : "l");
         CHECK(run_active && run.translation_only && run.travel_axis==BODY_LEFT);
-        CHECK(run.lateral_rpm==(speeds[speed]>60 ? 60 : speeds[speed]));
+        CHECK(run.translation_rpm_limit==(speeds[speed]>60 ? 60 : speeds[speed]));
         send_line("l");CHECK(strstr(output,"[rejected") && run_active);
         send_line("dist 100");CHECK(test_distance==distances[distance]);
         deadline=clock_ms+30000;

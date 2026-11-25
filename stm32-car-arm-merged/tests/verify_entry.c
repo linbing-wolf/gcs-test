@@ -16,7 +16,7 @@ typedef struct {
     bool absolute,synchronous;
 } SentPosition;
 static SentPosition sent[256];
-static uint32_t position_count,sync_count,stop_count,velocity_count;
+static uint32_t position_count,sync_count,stop_count,velocity_count,clog_reset_count;
 static uint32_t interrupt_at_position;
 static uint32_t fail_can_at_position;
 static char output[32768];
@@ -72,7 +72,7 @@ static uint16_t arm_trace_yaw_us[128],arm_trace_claw_us[128];
 void entry_host_arm_pwm(uint16_t claw,uint16_t yaw) {arm_claw_us=claw;arm_yaw_us=yaw;}
 void entry_host_arm_platform_pwm(uint16_t pulse) {arm_platform_us=pulse;}
 void Emm_V5_En_Control(uint8_t addr,bool enabled,bool synchronous)
-{CHECK((addr==5 || addr==7) && enabled && !synchronous);arm_enables++;}
+{CHECK((addr==5 || addr==7 || (addr>=1 && addr<=4)) && enabled && !synchronous);arm_enables++;}
 static void arm_fixture_position(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,
                                  uint32_t pulses,bool absolute,bool synchronous)
 {
@@ -172,6 +172,8 @@ void Emm_V5_Synchronous_motion(uint8_t addr)
 void Emm_V5_Stop_Now(uint8_t addr,bool synchronous)
 {if(addr==5 || addr==7){CHECK(!synchronous);arm_stops++;return;}
  CHECK(addr>=1 && addr<=4 && !synchronous);stop_count++;simulated_wheel_rpm[addr-1u]=staged_wheel_rpm[addr-1u]=0;}
+void Emm_V5_Reset_Clog_Pro(uint8_t addr)
+{CHECK(addr>=1 && addr<=4);clog_reset_count++;}
 void Emm_V5_Vel_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,bool synchronous)
 {
     CHECK(addr>=1 && addr<=4 && acc==CAR_STOP_ACCELERATION);velocity_count++;
@@ -208,7 +210,7 @@ static void reset_fixture(void)
     turn_rpm=CAR_TURN_RPM;
     reported_nav=NAV_FAULT;reported_motion=MOTION_FAULT;
     memset((void *)rx_buffer,0,sizeof(rx_buffer));memset(line,0,sizeof(line));
-    memset(sent,0,sizeof(sent));position_count=sync_count=stop_count=velocity_count=0;
+    memset(sent,0,sizeof(sent));position_count=sync_count=stop_count=velocity_count=clog_reset_count=0;
     interrupt_at_position=fail_can_at_position=0;output_size=0;output[0]=0;
     hmi_init(0);memset(&screen_clock,0,sizeof(screen_clock));
     vision_init();station_init();(void)station_command("station auto off");output_size=0;output[0]=0;
@@ -259,8 +261,8 @@ static void direction_tests(void)
     static const char *keys[]={"f","b","l","r"};
     static const uint8_t directions[4][4]={{0,1,1,0},{1,0,0,1},{0,0,1,1},{1,1,0,0}};
     static const uint16_t speeds[]={30,60,90};
-    static const uint32_t pulses[4][4]={{10360,10360,10360,10360},{10360,10360,10360,10360},
-                                       {11260,10845,11260,10845},{10970,11136,10970,11136}};
+    static const uint32_t pulses[4][4]={{10545,10545,10545,10545},{10545,10545,10545,10545},
+                                       {11100,10678,11100,10678},{10805,10974,10805,10974}};
     static const uint16_t low_left[]={29,58,87},low_right[]={30,59,89};
     uint8_t i,j;
     char command_text[20];
@@ -307,7 +309,7 @@ static void range_and_mode_tests(void)
     send_line("f 1000");CHECK(position_count==0);
     send_line("l");CHECK(!run_active && position_count==0 && strstr(output,"[rejected"));
     send_line("r");CHECK(!run_active && position_count==0 && strstr(output,"[rejected"));
-    send_line("f");CHECK(position_count==4 && drive.pulses==20720);
+    send_line("f");CHECK(position_count==4 && drive.pulses==21089);
     send_line("nav");CHECK(!test_mode && drive.state==MOTION_IDLE && !nav.position_confirmed && !pose_set);
     send_line("go B");CHECK(position_count==4 && strstr(output,"[rejected"));
     send_line("pose A");send_line("heading 0");send_line("go B");
@@ -346,12 +348,12 @@ static void navigation_regression(void)
     send_line("heading 0");send_line("rpm 30");send_line("go B");
     CHECK(nav.state==NAV_MOVING && position_count==4 && drive.parameters.axis==BODY_LEFT);
     CHECK(drive.parameters.mm==-60 && drive.parameters.rpm==30);
-    CHECK(drive.pulses==663);
+    CHECK(drive.pulses==653);
     /* A朝图面+Y：到B先右移60mm，使用右移8mm/m预补偿，取整为0mm。 */
-    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==663 && sent[1].pulses==663);
+    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==653 && sent[1].pulses==653);
     await_estimate();CHECK(nav.state==NAV_MOVING && drive.state==MOTION_WAIT_CONFIRM);
     send_line("confirm");CHECK(position_count==8 && drive.parameters.axis==BODY_FORWARD && drive.parameters.mm==1030);
-    pulses=drive.pulses;CHECK(pulses==10671);
+    pulses=drive.pulses;CHECK(pulses==10861);
     await_estimate();send_line("confirm");CHECK(nav.state==NAV_WAIT_NODE && position_count==8);
     send_line("node B");CHECK(nav.state==NAV_ARRIVED && nav.position_confirmed && (nav.passed&1));
     reset_fixture();send_line("pose A");send_line("go B");
@@ -364,18 +366,18 @@ static void trim_tests(void)
     Motion candidate;
     reset_fixture();drive.config.left_forward_mm_per_m=0;drive.config.right_forward_mm_per_m=0;
     send_line("test");position_lateral_fixture('l');
-    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==11053 && sent[1].pulses==11053);
+    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==10889 && sent[1].pulses==10889);
     CHECK(sent[0].rpm==60 && sent[1].rpm==60);
-    stop_request();position_lateral_fixture('r');CHECK(drive.forward_trim_mm==0 && sent[4].pulses==11053);
+    stop_request();position_lateral_fixture('r');CHECK(drive.forward_trim_mm==0 && sent[4].pulses==10889);
     reset_fixture();drive.config.left_forward_mm_per_m=-20;send_line("test");position_lateral_fixture('l');
-    CHECK(drive.forward_trim_mm==-20 && sent[0].pulses==10845 && sent[1].pulses==11260);
+    CHECK(drive.forward_trim_mm==-20 && sent[0].pulses==10678 && sent[1].pulses==11100);
     CHECK(sent[0].dir==0 && sent[1].dir==0 && sent[0].rpm==58 && sent[1].rpm==60);
     reset_fixture();send_line("test");send_line("dist 50");position_lateral_fixture('l');
-    CHECK(drive.forward_trim_mm==1 && sent[0].pulses==563 && sent[1].pulses==542);
+    CHECK(drive.forward_trim_mm==1 && sent[0].pulses==555 && sent[1].pulses==534);
     reset_fixture();send_line("test");send_line("dist 50");position_lateral_fixture('r');
-    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==553 && sent[1].pulses==553);
+    CHECK(drive.forward_trim_mm==0 && sent[0].pulses==544 && sent[1].pulses==544);
     reset_fixture();send_line("test");send_line("dist 2000");position_lateral_fixture('l');
-    CHECK(drive.forward_trim_mm==40 && sent[0].pulses==22520 && sent[1].pulses==21691);
+    CHECK(drive.forward_trim_mm==40 && sent[0].pulses==22200 && sent[1].pulses==21357);
     drive.config.left_forward_mm_per_m=101;
     CHECK(!motion_init(&candidate,&drive.io,&drive.config));
     drive.config.left_forward_mm_per_m=20;drive.config.right_forward_mm_per_m=-101;

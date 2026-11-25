@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+/ {
+    fragment@0 {
+        target-path = "/soc/i2c@4856000";
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            slave@42 {
+                compatible = "slave-24c02";
+                reg = <0x40000042>;
+            };
+        };
+    };
+};

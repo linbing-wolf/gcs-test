@@ -2,6 +2,10 @@
 #define VISION_LINK_H
 #include <stdint.h>
 
+#ifndef VISION_H_MATERIAL_TEST
+#define VISION_H_MATERIAL_TEST 0
+#endif
+
 /* MaixCAM 视觉链路：UART5，PD2=RX / PC12=TX，115200 8N1。
  * 帧格式：AA 55 LEN payload CRC8 0D（CRC8 poly=0x07 init=0x00，范围 LEN+payload）。
  * 原料区由上位机在物块转到固定取料口后回 PICK,<颜色>,x,y；
@@ -38,6 +42,13 @@ int vision_align_state(void);
 int16_t vision_align_offset_px(void);
 /* 一次性取走最新MOVE像素值及接收时刻，0覆盖未执行指令；不累计排队。移车期间的旧数据仍丢弃。 */
 int vision_align_take_move(int16_t *offset, uint32_t *received_ms);
+#if VISION_H_MATERIAL_TEST
+/* H 实验传输会话。READY 表示收到视觉终包，运动状态须由调用方独立确认。 */
+int vision_request_h(uint32_t now);
+int vision_h_state(void);
+int vision_h_colors(uint8_t *first, uint8_t *second);
+int vision_h_take_move(int16_t *offset, uint32_t *received_ms);
+#endif
 const char *vision_last_message(void);
 /* 最近真实观测仅供显示，不消耗MOVE，不修改视觉状态或完成判据。 */
 void vision_display(uint32_t now,int32_t *color,int32_t *dx,int32_t *dy,int32_t *age);

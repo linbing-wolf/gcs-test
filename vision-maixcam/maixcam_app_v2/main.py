@@ -21,6 +21,7 @@ from timing import ticks_ms, sleep_ms
 import sys
 import os
 import time
+import traceback
 # launcher 把 stdout 重定向到 /maixapp/tmp/last_run.log，默认是块缓冲；
 # 改成行缓冲后现场日志/调试信息能实时看到（Python 3.7+）。
 try:
@@ -40,6 +41,7 @@ except Exception:
     pass
 
 import config
+import h_material_config
 import vision
 import ai_model
 import precision
@@ -88,6 +90,8 @@ pline = precision.build_pipeline()
 
 # AI 判色（可选）：USE_AI=False 时 ai 仍会创建但内部不加载模型，ColorClassifier 退回纯 CV
 ai = ai_model.AI()
+if config.STACK_AI_ONLY and not ai.ready():
+    print("[F] AI 模型未就绪，指定颜色的 F 无法定位")
 clf = vision.ColorClassifier(config.THRESHOLDS, config.COLOR_NAMES, ai=ai)
 
 # 任务执行期间的串口看门：R 中断，其它命令回 BUSY
@@ -137,6 +141,7 @@ def reply(payload):
     if ctl.reset_flag:
         ctl.reset_flag = False
         TASK = None
+        tasks.reset_guard()
     link.send_payload(payload)
     screen_echo.set_tx(payload)
 
@@ -201,8 +206,30 @@ def dispatch(cmd, arg):
     elif cmd == protocol.CMD_FORWARD:
         reply(tasks.task_forward(cam, disp, p=pline, ctl=ctl))
 
+    elif cmd == protocol.CMD_MATERIAL_STATE:
+        if arg:
+            reply(pack_error("j_arg"))
+        else:
+            payload = tasks.task_material_state(cam, clf, disp, p=pline, ctl=ctl)
+            reply(payload)
+            if payload.startswith("MSTATE,1,") and isinstance(disp, screen_echo.EchoDisplay):
+                screen_echo.set_state("IDLE")
+                try:
+                    disp.refresh()
+                except Exception as exc:
+                    log("[回显] J 终包刷新失败: %s" % exc)
+
     elif cmd == protocol.CMD_PLATE:
-        reply(tasks.task_plate(cam, disp, p=pline, ctl=ctl))
+        try:
+            settings = h_material_config.read(h_material_config.defaults(config))
+        except (OSError, ValueError) as exc:
+            log("[H] 配置无效: %s" % exc)
+            reply(pack_error("h_config"))
+            return
+        if settings["mode"]:
+            reply(tasks.task_h_material(cam, clf, disp, p=pline, ctl=ctl, settings=settings))
+        else:
+            reply(tasks.task_plate(cam, disp, p=pline, ctl=ctl))
 
     elif cmd == protocol.CMD_RESET:
         log("[R] 复位/握手")
@@ -267,7 +294,20 @@ def ui_run_job(code):
     return None
 
 
-def main():
+def _consume_trigger(path):
+    if not path:
+        return False
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log("[调试] 无法清除触发文件 %s: %s" % (path, exc))
+        return False
+    return True
+
+
+def _serve():
     preflight()
     log("=" * 56)
     log("MaixCAM 视觉端（新流程·上位机服务）")
@@ -275,7 +315,7 @@ def main():
     log("串口: %s @ %d | 分辨率: %dx%d @%dfps"
         % (config.UART_DEV, config.UART_BAUDRATE, config.DET_W, config.DET_H, config.FPS))
     log("精度: %s" % pline.describe())
-    log("命令: A=启停区 T=任务码 C=原料区 D/E=圆盘 F=码垛 G=障碍物 H=物料盘 R=复位 Z=结束")
+    log("命令: A=启停区 T=任务码 C=原料区 D/E=圆盘 F=码垛 G=障碍物 H=物料盘 J=物料停稳查询 R=复位 Z=结束")
     log("握手: 下位机发 R → READY；任务中收到 R 立即中断，收到其它命令回 BUSY")
     log("=" * 56)
 
@@ -306,11 +346,7 @@ def main():
                 # 调试触发：SSH 上 touch /tmp/run_stack_move → 直接跑一次真实 F
                 # （会发 MOVE/MOVEY + STACK，车会动，确保周围留空间）
                 stack_trig = getattr(config, "STACK_DEBUG_TRIGGER_REAL_FILE", "")
-                if stack_trig and os.path.exists(stack_trig):
-                    try:
-                        os.remove(stack_trig)
-                    except Exception:
-                        pass
+                if _consume_trigger(stack_trig):
                     log("[调试] 直接触发一次 F（真实 MOVE/MOVEY + STACK）")
                     tasks.reset_guard()
                     color = getattr(config, "STACK_DEBUG_TRIGGER_COLOR", "") or None
@@ -321,11 +357,7 @@ def main():
                 # 调试触发：SSH 上 touch /tmp/run_disc_move → 直接跑一次真实 D
                 # （会发 MOVE + DISC，车会动，确保周围留空间）
                 real_trig = getattr(config, "DISC_DEBUG_TRIGGER_REAL_FILE", "")
-                if real_trig and os.path.exists(real_trig):
-                    try:
-                        os.remove(real_trig)
-                    except Exception:
-                        pass
+                if _consume_trigger(real_trig):
                     log("[调试] 直接触发一次 D（真实 MOVE + DISC）")
                     tasks.reset_guard()
                     reply(tasks.task_disc(cam, disp, config.ROI_DISC_ROUGH, "D",
@@ -336,11 +368,7 @@ def main():
                 # 调试触发：SSH 上 touch /tmp/run_disc_once → 抓一段 D/E 画面
                 # 只记录，不发 MOVE，不影响正常串口协议。
                 trig = getattr(config, "DISC_DEBUG_TRIGGER_FILE", "")
-                if trig and os.path.exists(trig):
-                    try:
-                        os.remove(trig)
-                    except Exception:
-                        pass
+                if _consume_trigger(trig):
                     tcmd = getattr(config, "DISC_DEBUG_TRIGGER_CMD", "D")
                     log("[调试] 触发一次 %s 抓图（只记录，不发 MOVE）" % tcmd)
                     if tcmd == protocol.CMD_DISC_TEMP:
@@ -373,11 +401,25 @@ def main():
             echo_bad_frames()
             screen_echo.set_state("RUNNING")
             log("[命令] %r" % raw)
-            dispatch(cmd, arg)
-            screen_echo.set_state("IDLE")
+            try:
+                dispatch(cmd, arg)
+            except Exception:
+                log("[任务] %s 执行失败" % cmd)
+                traceback.print_exc()
+                try:
+                    reply(pack_error("task"))
+                except Exception as exc:
+                    log("[任务] 错误回包失败: %s" % exc)
+            finally:
+                screen_echo.set_state("IDLE")
 
-    link.close()
-    log("退出")
+
+def main():
+    try:
+        _serve()
+    finally:
+        link.close()
+        log("退出")
 
 
 if __name__ == "__main__":

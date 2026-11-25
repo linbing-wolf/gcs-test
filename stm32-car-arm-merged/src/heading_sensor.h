@@ -2,11 +2,21 @@
 #define HEADING_SENSOR_H
 #include <stdint.h>
 
+#ifndef CHASSIS_IMU_EXPERIMENT
+#define CHASSIS_IMU_EXPERIMENT 0
+#endif
+
 /* 角度统一为0.01度，逆时针为正；外部适配器只发布真实的新采样。 */
 typedef struct {
     int16_t yaw_cdeg;
     uint32_t received_ms, sequence;
     uint8_t valid;
+#if CHASSIS_IMU_EXPERIMENT
+    int32_t gyro_z_cdeg_s;
+    int16_t accel_mg[3];
+    uint32_t gyro_ms, gyro_sequence, accel_ms, accel_sequence;
+    uint8_t gyro_valid, accel_valid;
+#endif
 } HeadingSample;
 typedef struct {
     volatile HeadingSample sample;

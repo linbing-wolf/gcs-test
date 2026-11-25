@@ -1,7 +1,7 @@
 id: yyb_mover
 name: YYB Mover
 name[zh]: YYB 智能搬运视觉端
-version: 3.9.87
+version: 3.9.96
 icon: assets/yyb_mover.png
 author: YYB Team
 desc: "MaixCAM2 vision head for the STM32 smart-transport robot: 4-color blob (+ optional YOLO11n-cls AI color judgement), disc center, stacking center; distortion-corrected coordinates; variable-length UART frame protocol (request-response, BUSY, R-interrupt)."
@@ -13,8 +13,14 @@ files:
   - assets
   - main.py
   - config.py
+  - h_material_config.py
+  - h_direction.py
+  - material_state.py
+  - i2c_transport.py
+  - gpio_i2c_master.py
   - protocol.py
   - vision.py
+  - disc_template_locator.py
   - tasks.py
   - cam_light.py
   - disc_debug.py

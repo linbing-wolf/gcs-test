@@ -17,6 +17,9 @@ void heading_sensor_reset(HeadingSensor *sensor)
 void heading_sensor_invalidate(HeadingSensor *sensor)
 {
     sensor->sample.valid = 0;
+#if CHASSIS_IMU_EXPERIMENT
+    sensor->sample.gyro_valid = sensor->sample.accel_valid = 0;
+#endif
     sensor->count = 0;
 }
 
@@ -62,5 +65,25 @@ void heading_sensor_byte(HeadingSensor *sensor, uint8_t byte, uint32_t now_ms)
         signed_raw = raw >= 32768u ? (int32_t)raw - 65536 : raw;
         heading_sensor_publish(sensor, (int16_t)(signed_raw * 18000 / 32768), now_ms);
     }
+#if CHASSIS_IMU_EXPERIMENT
+    else if (sensor->packet[1] == 0x52) {
+        raw = (uint16_t)((uint16_t)sensor->packet[6] | ((uint16_t)sensor->packet[7] << 8));
+        signed_raw = raw >= 32768u ? (int32_t)raw - 65536 : raw;
+        sensor->sample.gyro_z_cdeg_s = signed_raw * 3125 / 512;
+        sensor->sample.gyro_ms = now_ms;
+        sensor->sample.gyro_sequence++;
+        sensor->sample.gyro_valid = 1;
+    } else if (sensor->packet[1] == 0x51) {
+        for (i = 0; i < 3u; i++) {
+            raw = (uint16_t)((uint16_t)sensor->packet[2u + 2u * i]
+                            | ((uint16_t)sensor->packet[3u + 2u * i] << 8));
+            signed_raw = raw >= 32768u ? (int32_t)raw - 65536 : raw;
+            sensor->sample.accel_mg[i] = (int16_t)(signed_raw * 16000 / 32768);
+        }
+        sensor->sample.accel_ms = now_ms;
+        sensor->sample.accel_sequence++;
+        sensor->sample.accel_valid = 1;
+    }
+#endif
     sensor->count = 0;
 }

@@ -1,0 +1,26 @@
+{
+  "backup": "/root/yyb-before-3.9.97-20261122-222610",
+  "settings": {
+    "mode": true,
+    "invert_move": false,
+    "target_y": 318,
+    "tol_y": 6,
+    "gain": 0.65,
+    "step_max": 0,
+    "max_moves": 1,
+    "settle_ms": 1200,
+    "timeout_ms": 8000,
+    "color_frames": 3,
+    "center_frames": 3
+  },
+  "hashes_verified": 7,
+  "direction_enabled": true,
+  "fallback": 1,
+  "verified_version": "3.9.97-i2c-gpio",
+  "startup_time_board": "2026-11-22 22:27:00",
+  "active_pid": 55760,
+  "ready_i2c_write_ok": true,
+  "startup_tx_errors": 0,
+  "startup_rx_errors": 0,
+  "hardware_j_h_task_observed": false
+}

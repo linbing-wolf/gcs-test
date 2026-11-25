@@ -13,6 +13,8 @@ void Emm_V5_Pos_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,
                         uint32_t pulses,bool absolute,bool synchronous);
 void Emm_V5_Synchronous_motion(uint8_t addr);
 void Emm_V5_Stop_Now(uint8_t addr,bool synchronous);
+void Emm_V5_Reset_Clog_Pro(uint8_t addr);
+void Emm_V5_En_Control(uint8_t addr,bool enabled,bool synchronous);
 void Emm_V5_Vel_Control(uint8_t addr,uint8_t dir,uint16_t rpm,uint8_t acc,bool synchronous);
 typedef enum {S_VEL=9,S_CPOS=10,S_PERR=11,S_FLAG=13} SysParams_t;
 void Emm_V5_Read_Sys_Params(uint8_t addr,SysParams_t parameter);
