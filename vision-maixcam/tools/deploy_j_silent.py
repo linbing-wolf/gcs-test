@@ -21,6 +21,7 @@ RUNTIME_FILES = (
     "h_packet.py",
     "material_state.py",
     "vision.py",
+    "disc_template_locator.py",
     "disc_debug.py",
     "main.py",
     "screen_echo.py",
