@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-27T06:40:10.4Z",
+  "rule": "distance, then unknown distance, then exactly the current C baseline route",
+  "sourceHashes": {
+    "src/car_config.h": "fd2dc529ed6a9d44933829039667ad6f7ea63e46666e7c5e23afa864262c1508",
+    "src/structure.h": "a8571432b32081aa8b5dbb8627fdffe1fe115d939324c81334ebe968de6baa13",
+    "src/road_map.c": "c8a8144f1caacddb91ccd15cbf09891eaf284b126126528a47036efeb7801ae0",
+    "lookup/route_table.c": "3557e4f4e102356188318332e9e292f5778a1fd99d39ea69fdb2f303814f232b",
+    "tests/export_map.c": "c6bb412406d531b015ed73699b7626e9a8a37921296295daa75fd56b23d939e0",
+    "tests/reference_route.c": "d899ecad22ae873c182c22589c3b5aa92fb96852ee8224c3a9fce17457c5fcf3",
+    "tests/reference_route.h": "50a0fe6f5524b58f98f4ee3ecf4fec3ecc9b638449d38f9ec3934c74524bb421",
+    "tests/verify_route_table.c": "00189205f52fd5e3fca615f796cd159d1d39bcb412a11cd129dce061bf2dbd69",
+    "tools/generate-route-table.cjs": "45d92c461d841cf1956e068362c56cf7b938617880ce1b2575fe67817996765c",
+    "tools/rebuild-route-table.ps1": "1526726af594bf4a82666987656ff610079dad476490b0d1ffad67f443318c44"
+  },
+  "parameters": {
+    "topInsetMm": 90,
+    "bottomInsetMm": 0,
+    "rawExtraInsetMm": 0,
+    "storageInsetMm": 0,
+    "scanTowardAMm": 120,
+    "startInsetMm": 70,
+    "centerXmm": 1180,
+    "leftXmm": 360
+  },
+  "scanWaypoint": [
+    2190,
+    1080
+  ],
+  "nodes": [
+    [
+      2260,
+      170
+    ],
+    [
+      2190,
+      1200
+    ],
+    [
+      2260,
+      2230
+    ],
+    [
+      1180,
+      2060
+    ],
+    [
+      1180,
+      1200
+    ],
+    [
+      1180,
+      290
+    ],
+    [
+      360,
+      290
+    ],
+    [
+      360,
+      1200
+    ],
+    [
+      360,
+      2060
+    ]
+  ],
+  "roads": [
+    [
+      0,
+      1,
+      1100
+    ],
+    [
+      1,
+      2,
+      1100
+    ],
+    [
+      2,
+      3,
+      1250
+    ],
+    [
+      3,
+      8,
+      820
+    ],
+    [
+      8,
+      7,
+      860
+    ],
+    [
+      7,
+      6,
+      910
+    ],
+    [
+      6,
+      5,
+      820
+    ],
+    [
+      5,
+      0,
+      1200
+    ],
+    [
+      5,
+      4,
+      910
+    ],
+    [
+      4,
+      3,
+      860
+    ],
+    [
+      7,
+      4,
+      820
+    ],
+    [
+      4,
+      1,
+      1010
+    ]
+  ],
+  "states": 531441,
+  "nodePairs": 81,
+  "queries": 43046721,
+  "primaryBytes": 331776,
+  "secondaryBytes": 35520,
+  "paths": 653,
+  "decisionClasses": 292,
+  "maxClassesPerPair": 14,
+  "tiedBlockedQueries": 8680,
+  "tableDataSha256": "1b7b06d90513ee3039c76ecaa943de2379e45642156169b43c608bb88532d7b9",
+  "validation": "passed: all 531441 states / 43046721 exact C-reference queries and independent Floyd"
+}
