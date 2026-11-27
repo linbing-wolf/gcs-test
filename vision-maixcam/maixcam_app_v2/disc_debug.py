@@ -48,6 +48,8 @@ class DiscDebug:
     def start(self):
         if not self.enabled:
             return False
+        if self.meta_fp is not None:
+            return True
         try:
             os.makedirs(self.base_dir, exist_ok=True)
             stamp = time.strftime("%Y%m%d-%H%M%S")

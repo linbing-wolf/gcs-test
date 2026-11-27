@@ -15,6 +15,7 @@ files:
   - config.py
   - h_material_config.py
   - h_direction.py
+  - h_packet.py
   - material_state.py
   - i2c_transport.py
   - gpio_i2c_master.py

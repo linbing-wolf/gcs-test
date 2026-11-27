@@ -159,6 +159,15 @@ DISC_START_DELAY_MS    = 600    # 【最长等待】等画面稳定再读第一�
 DISC_LOST_FRAMES       = 2      # 连续 N 帧看不到圆 → 立即回 NONE（1=第一帧就回）
 DISC_TRACK_MAX_JUMP    = 50     # 优先选离上一次圆心 ≤N px 的候选（0=不启用）
 
+# 识别彻底失败时仍保持协议可继续：先发 MOVEXY,0,0，再回一组数值化 DISC。
+# 默认中心坐标与零偏差，外层仍为 DISC,x,y,dx,ok，STM32 解析格式不变。
+DISC_FALLBACK_ON_MISS  = True
+DISC_FALLBACK_AFTER_MS = 1200
+DISC_FALLBACK_X        = 320
+DISC_FALLBACK_Y        = 240
+DISC_FALLBACK_DX       = 0
+DISC_FALLBACK_OK       = 1
+
 # ---- D/E 频率与跑飞保护 ----
 DISC_MIN_INTERVAL_MS   = 100    # 两次 D/E 检测最小间隔；更快的重复 D 直接回 BUSY
 DISC_RUNAWAY_GUARD     = True   # 连续同方向且 |dx| 持续增大 → 判定方向反了/跑飞
@@ -188,6 +197,7 @@ DISC_CENTER_PICK_RADIUS = 20    # 距黑色质心多少 px 内优先取“最小
 # 只有模板匹配通过才画绿圆/回 DISC；否则回 NONE。解决“没圆也产生绿圆”。
 DISC_TEMPLATE_ON        = True
 DISC_TEMPLATE_PATH      = "/maixapp/apps/yyb_mover/assets/target2.png"
+# D/E 共用同一个“2”靶模板；工位差异由多尺度 NCC 和虚线几何回退处理。
 DISC_TEMPLATE_THRESHOLD = 0.55   # NCC 阈值（0~1）；当前物料挡住数字下半部，实测 2 号环 ~0.59，1/3 号环 <0.30
 DISC_TEMPLATE_SCALES    = [0.7, 0.8, 0.9, 1.0, 1.1]  # 远→近多档：E 工位比 D 远，字更小
 DISC_TEMPLATE_ROI_W     = 84     # 在候选圆心周围搜“2”的窗口（环距仅 22px，窗口要小）
@@ -197,6 +207,31 @@ DISC_TEMPLATE_ROI_DY    = 0
 # 匹配点必须离候选圆心足够近，否则当作没匹配（防止锁到旁边别的环上）
 #   实际上限 = min(本值, max(12, 0.35×候选半径))
 DISC_TEMPLATE_MAX_SHIFT = 22
+
+# 虚线圆回退。标准霍夫对虚线覆盖不足时，再降低累加阈值并提高半径分辨率。
+DISC_DASHED_HOUGH_ON       = True
+DISC_DASHED_HOUGH_SCALES   = (0.65, 0.45, 0.30)
+DISC_DASHED_HOUGH_R_STEP   = 2
+
+# 径向虚线评分：允许圆周只被短划线覆盖一部分，优先寻找多圈同心支持。
+DISC_DASHED_RADIAL_ON         = True
+DISC_DASHED_RADIAL_RAYS       = 48
+DISC_DASHED_RADIAL_BAND       = 1
+DISC_DASHED_RADIAL_DARK       = 92
+DISC_DASHED_RADIAL_CENTER_SPAN = 24
+DISC_DASHED_RADIAL_CENTER_STEP = 6
+DISC_DASHED_RADIAL_R_STEP     = 3
+DISC_DASHED_RADIAL_MIN_SUPPORT = 0.16
+DISC_DASHED_RADIAL_MIN_RINGS  = 3
+DISC_DASHED_RADIAL_GEOMETRIC_OK = True
+DISC_DASHED_RADIAL_STRONG_SCORE = 0.30
+DISC_DASHED_RADIAL_STRONG_RINGS = 4
+
+# 多个几何来源（白心、黑色环质心、霍夫簇、径向环）落在同一位置时，
+# 即使新模板 NCC 暂时未覆盖，也允许按几何共识输出中心。
+DISC_GEOMETRIC_CONSENSUS_ON = True
+DISC_GEOMETRIC_CONSENSUS_PX = 12
+DISC_GEOMETRIC_CONSENSUS_MIN_SOURCES = 2
 
 # ---- D/E 调试抓图（现场分析用；正式比赛可关）----
 DISC_DEBUG_SAVE          = True    # 临时开启：排查 E 的模板匹配（排查完关掉）
@@ -211,6 +246,14 @@ DISC_DEBUG_TRIGGER_FILE  = "/tmp/run_disc_once"
 DISC_DEBUG_TRIGGER_REAL_FILE = ""                  # 调试需要时设成 /tmp/run_disc_move
 DISC_DEBUG_TRIGGER_CMD   = "E"    # 临时改成 E：touch /tmp/run_disc_once 即抓一次暂存区
 DISC_DEBUG_TRIGGER_MS    = 2000   # 触发抓图持续时长(ms)
+DISC_TERMINAL_CAPTURE_ENABLED = True
+# 终包发出后按该列表依次拍照；第一张和第二张都保存在原任务的同一目录。
+DISC_TERMINAL_CAPTURE_DELAYS_MS = (6000, 10000)
+# 以下三个单延迟配置仅作旧配置兼容回退，新配置存在时不再参与调度。
+DISC_TERMINAL_CAPTURE_DELAY_MS = 600
+DISC_TERMINAL_CAPTURE_DELAY_D_MS = None
+DISC_TERMINAL_CAPTURE_DELAY_E_MS = None
+DISC_TERMINAL_CAPTURE_LIGHT_ON = True
 
 # ============================== 圆盘对齐（P6：环2 到水平正中心）==============================
 # 视觉端主动发 MOVE,<dx> / MOVEY,<dy> 驱动下位机微调，直到 |x-W/2|<=ALIGN_TOL 且 |y-H/2|<=ALIGN_DY_TOL
@@ -224,19 +267,19 @@ ALIGN_TOL         = 5       # 对齐容差（px）；按 2 环约 4mm 预算取 
 ALIGN_GAIN        = 0.65    # 比例系数：按实测 k≈1.48 取 1/k；先走大部分，第二轮只补残差
 ALIGN_STEP_MIN    = 2       # 单次 MOVE 最小步长(px)，防止小偏差发 0
 ALIGN_STEP_MAX    = 0       # 单次 MOVE/MOVEY 最大步长（px）；0 = 不限制
-MOVE_SCALE        = 1.0     # MOVE 数值系数：最终 MOVE = step × MOVE_SCALE（先改回 1x）
+MOVE_SCALE        = 1.0     # MOVE 数值系数：取消 2% 微调，保持 1x
 ALIGN_DX_OFFSET   = 2       # E 目标 x=318（应用 D 的 21:55 实测修正）
 # 现场反馈「D/E 放置时偏画面右」→ 目标 x 再左移 5px：
 #   dx = cx − 320 + offset，offset +5 → 收敛后 cx ≈ 313（比原来左 5px）
-ALIGN_DX_OFFSET_D = 7       # D 专用：目标 x=313（原 2 → 7，左移 5px）
+ALIGN_DX_OFFSET_D = 0       # D 专用：与 E 相同，目标 x=320
 ALIGN_DX_OFFSET_E = 0       # E 专用：现场指定偏移
 # ---- 垂直方向（MOVEY）：与水平轴独立配置 ----
 ALIGN_DY_ON       = True    # False = 不校正垂直偏差，只发 MOVE
 ALIGN_DY_TOL      = 5       # 垂直对齐容差(px)
-ALIGN_DY_OFFSET   = 40      # E 目标 y=200（应用 D 的 21:55 实测修正）
-ALIGN_DY_OFFSET_D = 40      # D 专用：目标 y=200，恢复前调前的偏移
+ALIGN_DY_OFFSET   = -22     # E 目标 y=262
+ALIGN_DY_OFFSET_D = -25     # D 专用：目标 y=265
 ALIGN_DY_OFFSET_E = None    # E 专用；None = 用 ALIGN_DY_OFFSET
-MOVEY_SCALE       = 1.0     # D/E/F 的 Y 轴附加系数
+MOVEY_SCALE       = 1.0     # D/E/F 的 Y 轴附加系数：取消 2% 微调
 ALIGN_INVERT_DY_D = False   # D：MOVEY 方向（反了就置 True）
 ALIGN_INVERT_DY_E = False   # E：MOVEY 方向（反了就置 True）
 MOVE_ECHO_HOLD_MS = 0       # 发完 MOVE 后屏幕回显停留时间(ms)；0=不停留（响应最快）
@@ -361,6 +404,10 @@ AI_MIN_PROB = 0.60          # AI 判色置信度下限；低于它退回阈值�
 AI_LOCATE_MARGIN = 8        # 送进分类器前把色块外扩的像素（给模型一点上下文）
 AI_PREFER_CV = False        # True=强制以阈值判色为准，AI 只记录（A/B 对比排查用）
 AI_DEBUG_PROB = True        # True=每次 AI 判色都打印 (label, prob)，用来定 AI_MIN_PROB
+AI_CACHE_ENABLED = True     # 同一位置和目标尺寸在短时内复用 AI 判色结果
+AI_CACHE_HOLD_MS = 250      # 缓存有效期；运动目标移出位置桶后会重新推理
+AI_CACHE_GRID_PX = 8        # 中心位置量化格，避免 1~2px 抖动导致缓存失效
+AI_CACHE_SIZE_BUCKET_PX = 12  # 目标宽高量化格，避免不同尺寸目标误复用
 
 # ============================== 障碍物（前进状态，命令字 'G'）==============================
 # 官方赛道障碍物：黑色，φ50×100mm。黑色 = L 很低。
@@ -551,16 +598,24 @@ PLATE_DEBUG_MIN_INTERVAL_MS = 500
 
 # H 物料中心差分档。目标 y 使用对外坐标，与旧 H 盘缘标定独立。
 H_MATERIAL_MODE = False      # 板端 h_material.json 的 mode 可覆盖，下一条 H 起生效
-H_MATERIAL_ROI = ROI_MATERIAL
+H_MATERIAL_ROI = [ROI_MATERIAL[0], H // 3, ROI_MATERIAL[2], H * 2 // 3]
+# H 停稳判定：沿用物料区 X 范围；Y 轴保留下方 2/3，排除上方截断物料
+H_MATERIAL_SINGLE_STOP_MODE = True  # 单件停稳即纠偏一次并返回，不等待第二色
+H_MATERIAL_EXTENDED_PACKET_ENABLED = True  # HDISC2：到达停稳标志 + 校准后可见颜色坐标
 H_MATERIAL_TARGET_Y = 318    # 试调累计前移约 5 cm；gain=0.65 时 Y 指令约减 51
 H_MATERIAL_TOL_Y = 6
 H_MATERIAL_COLOR_FRAMES = 3
-H_MATERIAL_CENTER_FRAMES = 3
+H_MATERIAL_CENTER_FRAMES = 2
+H_MATERIAL_STOP_HOLD_MS = 240  # H 单件停稳观察窗口
 H_MATERIAL_GAIN = 0.65
 H_MATERIAL_INVERT_MOVE = False
 H_MATERIAL_STEP_MAX = 0     # 0 = 不限制单轴步长
 H_MATERIAL_MAX_MOVES = 3
-H_MATERIAL_SETTLE_MS = 1200
+H_MATERIAL_SETTLE_MS = 1200  # 未观察到车体运动的兜底等待，不再作为固定休眠
+H_MATERIAL_SETTLE_MIN_MS = 200      # MOVEXY 后至少观察这么久
+H_MATERIAL_SETTLE_HOLD_MS = 240     # 坐标至少稳定这么久
+H_MATERIAL_SETTLE_STABLE_FRAMES = 3 # 再连续满足多少帧才发终包
+H_MATERIAL_SETTLE_MOTION_PX = 4.0   # 与动作前位置相差多少像素视为车体已开始运动
 H_MATERIAL_TIMEOUT_MS = 8000  # 仅兼容旧配置文件，新 H 不使用总超时
 
 # ============================== 启动延时：改为「画面稳定」判定 ==============================
@@ -581,8 +636,9 @@ H_DIRECTION_FALLBACK = 1  # 0=顺时针，1=逆时针；自动判向不足时采
 
 # J 全图物料停稳查询，单位采用对外图像像素和毫秒。
 MATERIAL_STATE_REPORT_MS = 500  # 本地日志间隔，不再发送过程包
-MATERIAL_STATE_HOLD_MS = 300
+MATERIAL_STATE_HOLD_MS = 240
 MATERIAL_STATE_TOL_PX = 3.0
 MATERIAL_STATE_MIN_FRAMES = 3
 MATERIAL_STATE_MAX_GAP_MS = 150
-MATERIAL_STATE_CONFIRM_MS = 100  # 全部可见物料连续稳定多久后发终包
+MATERIAL_STATE_CONFIRM_MS = 1000  # 全部可见物料连续稳定多久后发终包
+MATERIAL_STATE_SEED_MAX_AGE_MS = 5000  # H/上一轮 J 的稳定坐标最多复用多久

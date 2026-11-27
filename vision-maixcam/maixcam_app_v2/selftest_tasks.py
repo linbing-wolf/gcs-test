@@ -308,7 +308,9 @@ def test_h_material():
         return dict(code=code, cx=x, cy=y, x=x-15, y=max(0,y-15),
                     w=30, h=30, pixels=200, src='ai')
 
-    def run(frames, commands=(), max_moves=2, step_max=12):
+    def run(frames, commands=(), max_moves=2, step_max=12,
+            single_stop=False, direction_enabled=False, disp=None,
+            extended_packet=False, settings=None):
         clock = [0]
         images = iter(frames)
 
@@ -322,13 +324,23 @@ def test_h_material():
         poll = link.poll_command
         link.poll_command = lambda: 'R' if clock[0] >= (len(frames) + 6) * 100 else poll()
         with patch.multiple(config, PLATE_DEBUG_SAVE=False, PLATE_LIGHT_ON=False,
-                            PICK_STOP_HOLD_MS=100, H_MATERIAL_COLOR_FRAMES=2,
+                            PICK_STOP_HOLD_MS=100, H_MATERIAL_STOP_HOLD_MS=100,
+                            H_MATERIAL_COLOR_FRAMES=2,
                             H_MATERIAL_CENTER_FRAMES=2, H_MATERIAL_TARGET_Y=240,
-                            H_MATERIAL_SETTLE_MS=0, H_MATERIAL_MAX_MOVES=max_moves,
+                            H_MATERIAL_SETTLE_MS=0,
+                            H_MATERIAL_SETTLE_MIN_MS=0,
+                            H_MATERIAL_SETTLE_HOLD_MS=100,
+                            H_MATERIAL_SETTLE_STABLE_FRAMES=2,
+                            H_MATERIAL_MAX_MOVES=max_moves,
                             H_MATERIAL_STEP_MAX=step_max,
+                            H_MATERIAL_SINGLE_STOP_MODE=single_stop,
+                            H_MATERIAL_EXTENDED_PACKET_ENABLED=extended_packet,
                             H_MATERIAL_TIMEOUT_MS=1600,
-                            H_DIRECTION_PACKET_ENABLED=False), patch.object(tasks, 'ticks_ms', lambda: clock[0]):
-            result = tasks.task_h_material(cam, clf, None, p=P_ID, ctl=tasks.TaskCtl(link))
+                            H_DIRECTION_PACKET_ENABLED=direction_enabled), \
+                patch.object(tasks, 'ticks_ms', lambda: clock[0]):
+            result = tasks.task_h_material(
+                cam, clf, disp, p=P_ID, ctl=tasks.TaskCtl(link),
+                settings=settings)
         return result, link.sent, clock[0]
 
     first = item('3', 320, 280)
@@ -386,6 +398,89 @@ def test_h_material():
           and result == 'DISC,320,240,0,3,1', (result, sent, elapsed))
     result, sent, _ = run([], ['R'])
     check('H 支持 R 中断', result == 'READY' and not sent, result)
+    single = item('3', 320, 280)
+    class Display:
+        def __init__(self):
+            self.frames = 0
+
+        def show(self, img):
+            self.frames += 1
+
+    display = Display()
+    result, sent, elapsed = run([[single]] * 3, single_stop=True,
+                                direction_enabled=True, disp=display)
+    check('单件停稳：下方物料立即补双色、纠一次并回终包',
+          result == 'HDISC,320,280,0,1,3,1'
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,12'],
+          (result, sent, elapsed))
+    check('单件停稳：绘制调试画面后仍正常回终包',
+          display.frames >= 1, display.frames)
+    moving_pair = [[item('1', 200 + x), item('3', 500 + x)]
+                   for x in (0, 10, 20, 30)]
+    result, sent, _ = run(moving_pair + [[single]] * 3,
+                          single_stop=True, direction_enabled=True)
+    check('单件停稳：运动中的颜色不得提前重复发送 HCOLORS',
+          result == 'HDISC,320,280,0,1,3,1'
+          and sent.count('HCOLORS,1,3,1') == 1
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,12'],
+          (result, sent))
+    old_profile = dict(tasks.h_material_config.defaults(config))
+    old_profile["center_frames"] = 3
+    old_profile["target_y"] = 240
+    old_profile["step_max"] = 12
+    result, sent, elapsed = run(
+        [[single]] * 3,
+        single_stop=True,
+        direction_enabled=True,
+        settings=old_profile,
+    )
+    check('板端旧 center_frames=3 仍按新版 2 帧上限提速',
+          result == 'HDISC,320,280,0,1,3,1'
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,12'],
+          (result, sent, elapsed))
+    failing_display = Display()
+    failing_display.show = lambda img: (_ for _ in ()).throw(RuntimeError("display failed"))
+    result, sent, _ = run([[single]] * 3, single_stop=True,
+                          direction_enabled=True, disp=failing_display)
+    check('单件停稳：屏幕绘制失败仍回终包',
+          result == 'HDISC,320,280,0,1,3,1'
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,12'],
+          (result, sent))
+    after_move = [item('1', 100), item('2', 300), item('3', 500)]
+    result, sent, _ = run([[single]] * 3 + [after_move] * 3,
+                          single_stop=True, direction_enabled=True,
+                          extended_packet=True)
+    check('HDISC2：到达已停稳并返回校准后三色坐标',
+          result == 'HDISC2,1,3,1,100,240,2,300,240,3,500,240'
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,12'],
+          (result, sent))
+    check('HDISC2：H 的运动快照不得播种下一轮 J',
+          not tasks._MATERIAL_STATE_SEED, tasks._MATERIAL_STATE_SEED)
+    moving = [[item('3', x, 280)] for x in (200, 210, 220, 220, 220)]
+    result, sent, _ = run(moving + [after_move] * 3,
+                          single_stop=True, direction_enabled=True,
+                          extended_packet=True)
+    check('HDISC2：到达未停稳标志为 0',
+          result.startswith('HDISC2,0,3,')
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,-12,12'],
+          (result, sent))
+    result, sent, _ = run([[single]] * 10,
+                          single_stop=True, direction_enabled=True,
+                          extended_packet=True)
+    check('HDISC2：未检测到移动时不得发送终包',
+          result == 'READY'
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,12'],
+          (result, sent))
+    result, sent, _ = run([[item('3', 320, 240)]] * 3, single_stop=True,
+                          direction_enabled=True)
+    check('单件已对齐仍强制发一次 MOVEXY 后返回',
+          result == 'HDISC,320,240,0,1,3,1'
+          and sent == ['HCOLORS,1,3,1', 'MOVEXY,0,0'],
+          (result, sent))
+    check('H ROI 保留 X 范围且 Y 轴取下方 2/3',
+          config.H_MATERIAL_ROI == [config.ROI_MATERIAL[0], config.H // 3,
+                                    config.ROI_MATERIAL[2], config.H * 2 // 3],
+          config.H_MATERIAL_ROI)
 
 
 def main():
@@ -546,6 +641,7 @@ def main():
     old_iter = config.ALIGN_MAX_ITER
     old_oneshot = config.ALIGN_ONE_SHOT
     old_oneshot_ok = config.ALIGN_ONE_SHOT_OK
+    old_disc_ok_on_detection = config.DISC_OK_ON_DETECTION
     old_invert_d = config.ALIGN_INVERT_D
     old_echo_hold = config.MOVE_ECHO_HOLD_MS
     old_dx_offset = config.ALIGN_DX_OFFSET
@@ -560,6 +656,7 @@ def main():
     old_dy_offset_d = config.ALIGN_DY_OFFSET_D
     old_dy_offset_e = config.ALIGN_DY_OFFSET_E
     old_movey_scale = config.MOVEY_SCALE
+    old_fallback_after = config.DISC_FALLBACK_AFTER_MS
     try:
         config.ALIGN_SETTLE_MS = 0
         config.ALIGN_GAIN = 0.8          # 控制逻辑测试用固定增益
@@ -576,6 +673,7 @@ def main():
         config.ALIGN_MAX_ITER = 12       # 容差 5px 时从 320px 收敛需要更多次
         config.MOVE_SCALE = 1.0          # 控制逻辑测试先用 1x
         config.ALIGN_STEP_MAX = 0        # 控制逻辑测试先不限幅
+        config.DISC_FALLBACK_AFTER_MS = 0
         tasks.reset_guard()
 
         cam = FakeCam(1, circle_x=640, circle_y=240)      # 目标偏右 320px
@@ -605,33 +703,31 @@ def main():
             check('联调模式：超差仍回真实坐标和 ok=1',
                   result == ','.join([*out2[:-1], '1']), result)
             with patch.object(vision, 'find_disc_center', return_value=None):
+                fallback_link = _Link([])
                 result = tasks.task_disc(cam2, None, config.ROI_DISC_ROUGH, tag,
-                                         p=P_ID, ctl=tasks.TaskCtl(_Link([])))
-            check('无圆盘仍回 NONE,' + tag, result == 'NONE,' + tag, result)
+                                         p=P_ID, ctl=tasks.TaskCtl(fallback_link))
+            check('无圆盘先发 MOVEXY,0,0 再回数值终包',
+                  result == 'DISC,320,240,0,1'
+                  and fallback_link.sent == ['MOVEXY,0,0'],
+                  (result, fallback_link.sent))
 
-        # 一次性模式：只发一条移动指令，复核失败返回 ok=1
+        # 一次性模式：只发一条移动指令，发完立即带动作前坐标返回 ok=1
         config.ALIGN_MAX_ITER = old_iter
         config.ALIGN_ONE_SHOT = True
         config.ALIGN_ONE_SHOT_OK = 0
-        cam5 = FakeCam(1, circle_x=640, circle_y=240)
+        config.DISC_OK_ON_DETECTION = False
+        cam5 = _CountCam(1, circle_x=640, circle_y=240)
         lk5 = _Link([])
         out5 = frame_str(tasks.task_disc(cam5, None, config.ROI_DISC_ROUGH, 'D',
-                                         timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk5))).split(',')
+                                         timeout_ms=0, p=P_ID,
+                                         ctl=tasks.TaskCtl(lk5))).split(',')
         check('一次性模式：只发 1 条 MOVEXY',
               sum(1 for x in lk5.sent if x.startswith('MOVEXY,')) == 1, lk5.sent)
-        check('一次性模式：未移动回 DISC ok=1',
-              out5[0] == 'DISC' and out5[-1] == '1', out5)
-
-        tasks.reset_guard()
-        cam_ok = FakeCam(1, circle_x=345, circle_y=240)
-        lk_ok = _AlignLink(cam_ok)
-        out_ok = frame_str(tasks.task_disc(cam_ok, None, config.ROI_DISC_ROUGH, 'D',
-                                           timeout_ms=1000, p=P_ID,
-                                           ctl=tasks.TaskCtl(lk_ok))).split(',')
-        check('一次性模式：复核后进容差才回 ok=1',
-              out_ok[0] == 'DISC' and out_ok[-1] == '1'
-              and abs(int(out_ok[3])) <= config.ALIGN_TOL
-              and len(lk_ok.sent) == 1, (out_ok, lk_ok.sent))
+        check('一次性模式：MOVEXY 后立即回动作前坐标 ok=1',
+              out5[:4] == ['DISC', '640', '240', '320']
+              and out5[-1] == '1', out5)
+        check('一次性模式：timeout=0 也不进入超时等待',
+              cam5.reads == 1, cam5.reads)
 
 
 
@@ -642,10 +738,10 @@ def main():
         cam6 = FakeCam(1, circle_x=640, circle_y=240)
         lk6 = _Link([])
         out6 = frame_str(tasks.task_disc(cam6, None, config.ROI_DISC_ROUGH, 'D',
-                                         timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
+                                         timeout_ms=0, p=P_ID, ctl=tasks.TaskCtl(lk6))).split(',')
         check('MOVE 100x 系数（无上限）',
               any(x == 'MOVEXY,25600,0' for x in lk6.sent), lk6.sent)
-        check('MOVE 100x 未移动仍回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
+        check('MOVE 100x 发完立即回 ok=1', out6[0] == 'DISC' and out6[-1] == '1', out6)
         config.MOVE_SCALE = 1.0
 
         # 单轴限幅：ALIGN_STEP_MAX=20 → 320px 误差只发 20
@@ -654,7 +750,7 @@ def main():
         cam8 = FakeCam(1, circle_x=640, circle_y=240)
         lk8 = _Link([])
         frame_str(tasks.task_disc(cam8, None, config.ROI_DISC_ROUGH, 'D',
-                                  timeout_ms=40, p=P_ID, ctl=tasks.TaskCtl(lk8)))
+                                  timeout_ms=0, p=P_ID, ctl=tasks.TaskCtl(lk8)))
         check('MOVE 单轴限幅 20', 'MOVEXY,20,0' in lk8.sent, lk8.sent)
 
         # MOVEY 垂直闭环：dy=+60px → 发 MOVEY 并收敛
@@ -693,6 +789,7 @@ def main():
         config.ALIGN_MAX_ITER = old_iter
         config.ALIGN_ONE_SHOT = old_oneshot
         config.ALIGN_ONE_SHOT_OK = old_oneshot_ok
+        config.DISC_OK_ON_DETECTION = old_disc_ok_on_detection
         config.ALIGN_INVERT_D = old_invert_d
         config.MOVE_ECHO_HOLD_MS = old_echo_hold
         config.ALIGN_DX_OFFSET = old_dx_offset
@@ -707,12 +804,20 @@ def main():
         config.ALIGN_DY_OFFSET_D = old_dy_offset_d
         config.ALIGN_DY_OFFSET_E = old_dy_offset_e
         config.MOVEY_SCALE = old_movey_scale
+        config.DISC_FALLBACK_AFTER_MS = old_fallback_after
         tasks.reset_guard()
 
-    # 看不到圆 → 连续 DISC_LOST_FRAMES 帧立即回 NONE，不等 8s 超时
+    # 看不到圆 → 先发 MOVEXY,0,0，再用数值 DISC 兜底，以免 STM32 卡住
     cam3 = FakeCam(1, no_circle=True)
-    out3 = frame_str(tasks.task_disc(cam3, None, config.ROI_DISC_ROUGH, 'D', p=P_ID))
-    check('看不到圆 → NONE,D', out3 == 'NONE,D', out3)
+    fallback_link = _Link([])
+    with patch.object(config, 'DISC_FALLBACK_AFTER_MS', 0):
+        out3 = frame_str(tasks.task_disc(
+            cam3, None, config.ROI_DISC_ROUGH, 'D', p=P_ID,
+            ctl=tasks.TaskCtl(fallback_link)))
+    check('看不到圆 → MOVEXY,0,0 + DISC,320,240,0,1',
+          out3 == 'DISC,320,240,0,1'
+          and fallback_link.sent == ['MOVEXY,0,0'],
+          (out3, fallback_link.sent))
 
     # 调试抓图模式（不发 MOVE）不崩、返回 NONE,D
     out4 = frame_str(tasks.task_snapshot(FakeCam(1), None, config.ROI_DISC_ROUGH, 'D',

@@ -39,7 +39,7 @@ bad, good = Circle(200, 120), Circle(420, 240)
 template_calls = []
 
 
-def verify(img, cx, cy, meta=None, max_shift=None):
+def verify(img, cx, cy, meta=None, max_shift=None, template_paths=None):
     template_calls.append((cx, cy, max_shift))
     if cx == good.x():
         meta['tpl'] = [cx-30, cy-40, 60, 80]
@@ -57,6 +57,8 @@ def detect(frame, refine=False, ring=False):
 with patch.object(config, 'DISC_CENTER_ON', False), \
      patch.object(config, 'DISC_BLACK_CENTER_ON', False), \
      patch.object(config, 'DISC_TEMPLATE_ON', True), \
+     patch.object(config, 'DISC_DASHED_HOUGH_ON', False), \
+     patch.object(config, 'DISC_DASHED_RADIAL_ON', False), \
      patch.object(vision, 'verify_target2', verify), \
      patch.object(disc_template_locator, 'locate', return_value=None) as locate:
     frame = Frame([[bad], [good]])
@@ -162,5 +164,86 @@ with patch.object(maix.image, 'Format', gray_format, create=True), \
     assert disc_template_locator.locate(
         TemplateFrame(matches), prefer=(450, 440), max_jump=50) is None
     print('PASS: work-area and tracking constraints reject unrelated template hits')
+
+
+plans = len(vision._hough_rois(roi)) + 1
+with patch.object(config, 'DISC_CENTER_ON', False), \
+     patch.object(config, 'DISC_BLACK_CENTER_ON', False), \
+     patch.object(config, 'DISC_TEMPLATE_ON', True), \
+     patch.object(config, 'DISC_DASHED_HOUGH_ON', True), \
+     patch.object(config, 'DISC_DASHED_RADIAL_ON', False), \
+     patch.object(vision, 'verify_target2', verify), \
+     patch.object(disc_template_locator, 'locate', return_value=None):
+    frame = Frame([[bad]] * plans + [[good]])
+    result, meta = detect(frame)
+    assert result == (420, 240, 60), (result, meta)
+    assert meta['src'] == 'dashed-hough'
+    assert len(frame.calls) == plans + 1
+    assert meta['dashed_hough_batches'][-1]['count'] == 1
+    print('PASS: low-threshold dashed-circle Hough fallback')
+
+
+class RadialFrame:
+    def __init__(self, center=(320, 200), radii=(34, 49, 64, 79)):
+        self.center = center
+        self.radii = radii
+
+    def width(self): return 640
+    def height(self): return 480
+    def to_format(self, _format): return self
+    def find_circles(self, **kwargs): return []
+
+    def get_pixel(self, x, y):
+        radius = ((x - self.center[0]) ** 2 + (y - self.center[1]) ** 2) ** 0.5
+        return 0 if any(abs(radius - item) <= 1.2 for item in self.radii) else 255
+
+
+def verify_radial(img, cx, cy, meta=None, max_shift=None, template_paths=None):
+    return abs(cx - 320) <= 2 and abs(cy - 200) <= 2
+
+
+with patch.object(config, 'DISC_CENTER_ON', False), \
+     patch.object(config, 'DISC_BLACK_CENTER_ON', False), \
+     patch.object(config, 'DISC_TEMPLATE_ON', True), \
+     patch.object(config, 'DISC_DASHED_HOUGH_ON', False), \
+     patch.object(config, 'DISC_DASHED_RADIAL_ON', True), \
+     patch.object(maix.image, 'Format', gray_format, create=True), \
+     patch.object(vision, 'verify_target2', verify_radial), \
+     patch.object(disc_template_locator, 'locate', return_value=None):
+    result, meta = detect(RadialFrame())
+    assert result is not None and abs(result[0] - 320) <= 6 \
+        and abs(result[1] - 200) <= 6, (result, meta)
+    assert meta['src'].startswith('dashed-radial')
+    print('PASS: interrupted concentric-ring radial fallback')
+
+
+def reject_template(*args, **kwargs):
+    return False
+
+
+with patch.object(config, 'DISC_CENTER_ON', True), \
+     patch.object(config, 'DISC_BLACK_CENTER_ON', True), \
+     patch.object(config, 'DISC_TEMPLATE_ON', True), \
+     patch.object(config, 'DISC_DASHED_HOUGH_ON', False), \
+     patch.object(config, 'DISC_DASHED_RADIAL_ON', False), \
+     patch.object(config, 'DISC_GEOMETRIC_CONSENSUS_ON', True), \
+     patch.object(vision, 'find_disc_center_inner',
+                  return_value=(320, 200, 38)), \
+     patch.object(vision, 'find_disc_center_black',
+                  return_value=(323, 201, 61)), \
+     patch.object(vision, 'verify_target2', reject_template), \
+     patch.object(disc_template_locator, 'locate', return_value=None):
+    result, meta = detect(Frame([[]] * 20))
+    assert result is not None and abs(result[0] - 321) <= 3 \
+        and abs(result[1] - 200) <= 3, (result, meta)
+    assert meta['src'] == 'geometric-consensus'
+    assert len(meta['geometric_consensus']['sources']) >= 2
+    print('PASS: white-core and black-ring geometric consensus')
+
+
+paths = vision.disc_template_paths('D')
+assert len(paths) == 1 and paths[0].endswith('target2.png')
+assert vision.disc_template_paths('E') == paths
+print('PASS: D/E share one target2 template')
 
 print('ALL PASS')

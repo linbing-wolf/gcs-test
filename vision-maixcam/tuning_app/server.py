@@ -38,6 +38,54 @@ def defaults():
     return {k: (values['ALIGN_DY_OFFSET'] if k == 'ALIGN_DY_OFFSET_E' and values[k] is None else values[k]) for k in KEYS}
 
 
+def runtime_summary():
+    """Return the current source baseline shown by the read-only dashboard."""
+    namespace = {}
+    source = (APP_ROOT / 'config.py').read_text(encoding='utf-8-sig')
+    exec(compile(source, str(APP_ROOT / 'config.py'), 'exec'), namespace)
+    configured_delays = namespace.get('DISC_TERMINAL_CAPTURE_DELAYS_MS')
+    if configured_delays is None:
+        configured_delays = (namespace['DISC_TERMINAL_CAPTURE_DELAY_MS'],)
+    capture_delays_ms = sorted({
+        max(0, int(value))
+        for value in configured_delays
+        if max(0, int(value)) > 0
+    })
+    width = int(namespace['W'])
+    height = int(namespace['H'])
+    return {
+        'resolution': [width, height],
+        'h_material_roi': [int(v) for v in namespace['H_MATERIAL_ROI']],
+        'h_direction': {
+            'enabled': bool(namespace['H_DIRECTION_PACKET_ENABLED']),
+            'fallback': int(namespace['H_DIRECTION_FALLBACK']),
+            'format': 'HCOLORS / HDISC',
+        },
+        'h_material': {
+            'single_stop_mode': bool(namespace['H_MATERIAL_SINGLE_STOP_MODE']),
+            'extended_packet': bool(namespace['H_MATERIAL_EXTENDED_PACKET_ENABLED']),
+            'target_y': float(namespace['H_MATERIAL_TARGET_Y']),
+            'center_frames': int(namespace['H_MATERIAL_CENTER_FRAMES']),
+        },
+        'disc': {
+            'one_shot': bool(namespace['ALIGN_ONE_SHOT']),
+            'return_after_move': True,
+            'move_scale': float(namespace['MOVE_SCALE']),
+            'movey_scale': float(namespace['MOVEY_SCALE']),
+            'terminal_capture': {
+                'enabled': bool(namespace['DISC_TERMINAL_CAPTURE_ENABLED']),
+                'delay_ms': int(namespace['DISC_TERMINAL_CAPTURE_DELAY_MS']),
+                'delays_ms': capture_delays_ms,
+            },
+        },
+        'j': {
+            'confirm_ms': int(namespace['MATERIAL_STATE_CONFIRM_MS']),
+            'hold_ms': int(namespace['MATERIAL_STATE_HOLD_MS']),
+            'tolerance_px': float(namespace['MATERIAL_STATE_TOL_PX']),
+        },
+    }
+
+
 def validate(data):
     if set(data) != set(KEYS):
         raise ValueError('必须包含且仅包含十个白名单参数')
@@ -225,6 +273,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, (ROOT / 'index.html').read_bytes(), 'text/html; charset=utf-8')
         if self.path == '/api/defaults':
             return self.reply(200, defaults())
+        if self.path == '/api/runtime':
+            try:
+                return self.reply(200, runtime_summary())
+            except (KeyError, OSError, SyntaxError, TypeError, ValueError) as exc:
+                return self.reply(500, {'error': str(exc)})
         if self.path == '/api/h/defaults':
             try:
                 return self.reply(200, h_defaults())

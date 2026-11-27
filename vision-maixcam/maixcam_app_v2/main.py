@@ -136,14 +136,35 @@ def log(*a):
 # 命令分发
 # ======================================================================
 def reply(payload):
-    """统一发回复：任务若被 R 打断，顺手清掉任务码状态"""
+    """统一发回复：清掉中断状态，并立即刷新屏幕上的最终 TX。"""
     global TASK
     if ctl.reset_flag:
         ctl.reset_flag = False
         TASK = None
         tasks.reset_guard()
     link.send_payload(payload)
-    screen_echo.set_tx(payload)
+    arm_capture = getattr(tasks, "arm_disc_terminal_followup", None)
+    if arm_capture is not None:
+        try:
+            arm_capture(ctl, payload)
+        except Exception as exc:
+            log("[D/E] 终包迟到拍照计时失败: %s" % exc)
+            cancel_capture = getattr(tasks, "cancel_disc_terminal_followup", None)
+            if cancel_capture is not None:
+                try:
+                    cancel_capture(ctl, "arm_failed")
+                except Exception:
+                    pass
+    try:
+        screen_echo.set_tx(payload)
+        screen_echo.set_state("IDLE")
+    except Exception as exc:
+        log("[回显] 回复状态更新失败: %s" % exc)
+    if isinstance(disp, screen_echo.EchoDisplay):
+        try:
+            disp.refresh()
+        except Exception as exc:
+            log("[回显] 回复刷新失败: %s" % exc)
 
 
 _last_disc_ms = 0
@@ -187,12 +208,16 @@ def dispatch(cmd, arg):
 
     elif cmd == protocol.CMD_DISC_ROUGH:
         if _disc_gate():
-            reply(tasks.task_disc(cam, disp, config.ROI_DISC_ROUGH, "D", p=pline, ctl=ctl))
+            payload = tasks.task_disc(
+                cam, disp, config.ROI_DISC_ROUGH, "D", p=pline, ctl=ctl)
+            reply(payload)
             _disc_done()
 
     elif cmd == protocol.CMD_DISC_TEMP:
         if _disc_gate():
-            reply(tasks.task_disc(cam, disp, config.ROI_DISC_TEMP, "E", p=pline, ctl=ctl))
+            payload = tasks.task_disc(
+                cam, disp, config.ROI_DISC_TEMP, "E", p=pline, ctl=ctl)
+            reply(payload)
             _disc_done()
 
     elif cmd == protocol.CMD_STACK:
@@ -210,14 +235,7 @@ def dispatch(cmd, arg):
         if arg:
             reply(pack_error("j_arg"))
         else:
-            payload = tasks.task_material_state(cam, clf, disp, p=pline, ctl=ctl)
-            reply(payload)
-            if payload.startswith("MSTATE,1,") and isinstance(disp, screen_echo.EchoDisplay):
-                screen_echo.set_state("IDLE")
-                try:
-                    disp.refresh()
-                except Exception as exc:
-                    log("[回显] J 终包刷新失败: %s" % exc)
+            reply(tasks.task_material_state(cam, clf, disp, p=pline, ctl=ctl))
 
     elif cmd == protocol.CMD_PLATE:
         try:
@@ -341,12 +359,20 @@ def _serve():
                      and getattr(config, "SCREEN_ECHO", False))
         last_echo = 0
         while not app.need_exit():
+            try:
+                tasks.service_disc_terminal_followup(cam, ctl)
+            except Exception as exc:
+                log("[D/E] 终包后迟拍服务失败: %s" % exc)
             raw = link.poll_command()
             if raw is None:
                 # 调试触发：SSH 上 touch /tmp/run_stack_move → 直接跑一次真实 F
                 # （会发 MOVE/MOVEY + STACK，车会动，确保周围留空间）
                 stack_trig = getattr(config, "STACK_DEBUG_TRIGGER_REAL_FILE", "")
                 if _consume_trigger(stack_trig):
+                    try:
+                        tasks.cancel_disc_terminal_followup(ctl, "debug_stack")
+                    except Exception as exc:
+                        log("[D/E] 终包后迟拍取消失败: %s" % exc)
                     log("[调试] 直接触发一次 F（真实 MOVE/MOVEY + STACK）")
                     tasks.reset_guard()
                     color = getattr(config, "STACK_DEBUG_TRIGGER_COLOR", "") or None
@@ -358,6 +384,10 @@ def _serve():
                 # （会发 MOVE + DISC，车会动，确保周围留空间）
                 real_trig = getattr(config, "DISC_DEBUG_TRIGGER_REAL_FILE", "")
                 if _consume_trigger(real_trig):
+                    try:
+                        tasks.cancel_disc_terminal_followup(ctl, "debug_disc")
+                    except Exception as exc:
+                        log("[D/E] 终包后迟拍取消失败: %s" % exc)
                     log("[调试] 直接触发一次 D（真实 MOVE + DISC）")
                     tasks.reset_guard()
                     reply(tasks.task_disc(cam, disp, config.ROI_DISC_ROUGH, "D",
@@ -396,6 +426,10 @@ def _serve():
                 if raw is None:
                     sleep_ms(idle_poll)
                     continue
+            try:
+                tasks.cancel_disc_terminal_followup(ctl, "next_command")
+            except Exception as exc:
+                log("[D/E] 终包后迟拍取消失败: %s" % exc)
             cmd, arg = parse_command(raw)
             screen_echo.set_rx(raw)
             echo_bad_frames()

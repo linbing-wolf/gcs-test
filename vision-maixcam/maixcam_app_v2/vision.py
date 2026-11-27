@@ -41,6 +41,50 @@ class ColorClassifier:
         self.names = names
         self.codes = [config.COLOR_CODES[n] for n in names]
         self.ai = ai
+        self._ai_cache = {}
+
+    def _ai_cache_key(self, item):
+        grid = max(1, int(getattr(config, "AI_CACHE_GRID_PX", 8)))
+        size = max(1, int(getattr(config, "AI_CACHE_SIZE_BUCKET_PX", 12)))
+        return (
+            item["code"],
+            int(round(item["cx"] / grid)),
+            int(round(item["cy"] / grid)),
+            int(round(item["w"] / size)),
+            int(round(item["h"] / size)),
+        )
+
+    def _restore_ai_cache(self, item, entry):
+        item["ai_code"] = entry["ai_code"]
+        item["ai_label"] = entry["ai_label"]
+        item["ai_prob"] = entry["ai_prob"]
+        item["ai_cached"] = True
+        if entry["code"] == COLOR_NONE:
+            item["src"] = "ai-veto"
+        else:
+            item["src"] = "ai"
+            item["code"] = entry["code"]
+        return entry["code"]
+
+    def _remember_ai_cache(self, key, label, prob, code):
+        now = ticks_ms()
+        hold = max(0, int(getattr(config, "AI_CACHE_HOLD_MS", 250)))
+        if hold <= 0:
+            return
+        if len(self._ai_cache) > 512:
+            self._ai_cache = {
+                cache_key: entry for cache_key, entry in self._ai_cache.items()
+                if now - entry["t"] <= hold
+            }
+        self._ai_cache[key] = {
+            "t": now,
+            "label": label,
+            "prob": prob,
+            "code": code,
+            "ai_code": code if code != COLOR_NONE else None,
+            "ai_label": label,
+            "ai_prob": prob,
+        }
 
     def detect(self, img, roi=None, pixels_threshold=config.MIN_PIXELS, largest_first=True):
         blobs = img.find_blobs(
@@ -94,6 +138,14 @@ class ColorClassifier:
         item["src"] = "cv"
         if ai is None or getattr(config, "AI_PREFER_CV", False):
             return item["code"]
+        cache_key = self._ai_cache_key(item)
+        if getattr(config, "AI_CACHE_ENABLED", True):
+            cached = self._ai_cache.get(cache_key)
+            hold = max(0, int(getattr(config, "AI_CACHE_HOLD_MS", 250)))
+            if cached is not None and ticks_ms() - cached["t"] <= hold:
+                return self._restore_ai_cache(item, cached)
+            if cached is not None:
+                self._ai_cache.pop(cache_key, None)
         try:
             if not ai.ready():
                 return item["code"]
@@ -114,12 +166,14 @@ class ColorClassifier:
                 item["ai_prob"] = prob
                 item["code"] = code
                 item["src"] = "ai"
+                self._remember_ai_cache(cache_key, label, prob, code)
                 return code
             # 判成 background / other：严格模式下直接丢弃这个候选
             if getattr(config, "AI_VETO_OTHER", True):
                 item["ai_label"] = label
                 item["ai_prob"] = prob
                 item["src"] = "ai-veto"
+                self._remember_ai_cache(cache_key, label, prob, COLOR_NONE)
                 return COLOR_NONE
             return item["code"]
         except Exception as e:
@@ -1562,22 +1616,27 @@ def find_disc_center_inner(img, roi=None, meta=None):
     return int(round(c[2])), int(round(c[3])), max(2, int(round(c[4])))
 
 
-_TPL_CACHE = None
+_TPL_CACHE = {}
 
 
-def _load_templates():
-    """加载数字“2”模板（带缓存）；PC 单测没有 image.load 时返回空。"""
-    global _TPL_CACHE
-    if _TPL_CACHE is not None:
-        return _TPL_CACHE
-    _TPL_CACHE = []
+def disc_template_paths(tag=None):
+    """Return the single template shared by D and E."""
+    path = str(getattr(config, "DISC_TEMPLATE_PATH", "") or "")
+    return (path,) if path else ()
+
+
+def _load_templates(template_path):
+    """加载一个数字“2”模板（带缓存）；PC 单测没有 image.load 时返回空。"""
+    if template_path in _TPL_CACHE:
+        return _TPL_CACHE[template_path]
+    templates = []
+    _TPL_CACHE[template_path] = templates
     if not bool(getattr(config, "DISC_TEMPLATE_ON", True)):
-        return _TPL_CACHE
+        return templates
     try:
         if not hasattr(image, "load"):
-            return _TPL_CACHE
-        base = image.load(getattr(config, "DISC_TEMPLATE_PATH",
-                                  "/maixapp/apps/yyb_mover/assets/target2.png"))
+            return templates
+        base = image.load(template_path)
         try:
             base = base.to_format(image.Format.FMT_GRAYSCALE)
         except Exception:
@@ -1587,19 +1646,22 @@ def _load_templates():
         for s in scales:
             s = float(s)
             if abs(s - 1.0) < 0.01:
-                _TPL_CACHE.append(base)
+                tpl = base
             else:
-                _TPL_CACHE.append(base.resize(max(4, int(round(w * s))),
-                                              max(4, int(round(h * s)))))
+                tpl = base.resize(max(4, int(round(w * s))),
+                                  max(4, int(round(h * s))))
+            templates.append((s, tpl))
+        _TPL_CACHE[template_path] = templates
         print("[视觉] 已加载目标模板: %s (%dx%d, %d 个尺度)"
-              % (getattr(config, "DISC_TEMPLATE_PATH", "?"), w, h, len(_TPL_CACHE)))
+              % (template_path, w, h, len(templates)))
     except Exception as e:
         print("[视觉] 模板加载失败，跳过内容校验: %s" % e)
-        _TPL_CACHE = []
-    return _TPL_CACHE
+        _TPL_CACHE[template_path] = []
+    return _TPL_CACHE[template_path]
 
 
-def verify_target2(img, cx, cy, meta=None, max_shift=None):
+def verify_target2(img, cx, cy, meta=None, max_shift=None,
+                   template_paths=None):
     """校验候选圆内部确实有数字“2”。
 
     只有模板匹配通过才认为目标有效；模板缺失时返回 True（不阻断旧行为）。
@@ -1607,8 +1669,8 @@ def verify_target2(img, cx, cy, meta=None, max_shift=None):
     max_shift: 匹配到的“2”中心离候选圆心超过这个距离就**不算匹配**
     （环距只有 RING_SPACING_PX=22px，没有这个限制时会锁到旁边别的环上）。
     """
-    tpls = _load_templates()
-    if not tpls:
+    paths = tuple(template_paths or disc_template_paths())
+    if not paths:
         return True
     rw = int(getattr(config, "DISC_TEMPLATE_ROI_W", 160))
     rh = int(getattr(config, "DISC_TEMPLATE_ROI_H", 140))
@@ -1632,44 +1694,54 @@ def verify_target2(img, cx, cy, meta=None, max_shift=None):
             meta["tpl_error"] = "crop:%s" % e
         return False
     th = float(getattr(config, "DISC_TEMPLATE_THRESHOLD", 0.65))
-    scales = getattr(config, "DISC_TEMPLATE_SCALES", [1.0])
     far = None
-    for i, tpl in enumerate(tpls):
-        try:
-            r = crop.find_template(tpl, th, step=2)
-        except Exception as e:
-            if meta is not None:
-                meta["tpl_error"] = str(e)
-            continue
-        if r:
-            tx = int(r[0]) + x
-            ty = int(r[1]) + y
-            tw, thh = int(r[2]), int(r[3])
-            mx = tx + tw / 2.0
-            my = ty + thh / 2.0
-            if max_shift is not None:
-                d = math.hypot(mx - float(cx), my - float(cy))
-                if d > float(max_shift):
-                    # 离候选圆心太远 → 大概率锁到旁边别的环，换下一个尺度再试
-                    far = [round(mx, 1), round(my, 1), round(d, 1)]
-                    continue
-            if meta is not None:
-                meta["tpl"] = [tx, ty, tw, thh]
-                meta["tpl_scale"] = float(scales[i]) if i < len(scales) else 1.0
-                meta["tpl_roi"] = roi
-                meta.pop("tpl_far", None)
-            return True
+    errors = []
+    had_templates = False
+    for template_path in paths:
+        tpls = _load_templates(template_path)
+        if tpls:
+            had_templates = True
+        for scale, tpl in tpls:
+            try:
+                r = crop.find_template(tpl, th, step=2)
+            except Exception as e:
+                errors.append("%s:%s" % (template_path, e))
+                continue
+            if r:
+                tx = int(r[0]) + x
+                ty = int(r[1]) + y
+                tw, thh = int(r[2]), int(r[3])
+                mx = tx + tw / 2.0
+                my = ty + thh / 2.0
+                if max_shift is not None:
+                    d = math.hypot(mx - float(cx), my - float(cy))
+                    if d > float(max_shift):
+                        # 离候选圆心太远 → 大概率锁到旁边别的环，换下一个模板再试
+                        far = [round(mx, 1), round(my, 1), round(d, 1)]
+                        continue
+                if meta is not None:
+                    meta["tpl"] = [tx, ty, tw, thh]
+                    meta["tpl_scale"] = float(scale)
+                    meta["tpl_roi"] = roi
+                    meta["template_path"] = template_path
+                    meta.pop("tpl_far", None)
+                return True
+    if not had_templates:
+        return True
     if meta is not None:
         meta["tpl"] = None
         meta["tpl_roi"] = roi
         if far is not None:
             meta["tpl_far"] = far
+        if errors:
+            meta["tpl_errors"] = errors
     return False
 
 
 def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R_MAX,
                      threshold=config.DISC_THRESHOLD, refine=None,
-                     ring_fallback=None, prefer=None, meta=None):
+                     ring_fallback=None, prefer=None, meta=None,
+                     template_paths=None):
     """定位圆盘中心（粗加工区/暂存区），三级策略：
 
       1) find_circles 找候选圆（粗定位）
@@ -1687,6 +1759,7 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         refine = bool(getattr(config, "DISC_REFINE_ON", True))
     if ring_fallback is None:
         ring_fallback = bool(getattr(config, "DISC_RING_FALLBACK", True))
+    template_paths = tuple(template_paths or disc_template_paths())
     if meta is not None:
         meta["src"] = "none"
         meta["circles"] = []
@@ -1701,7 +1774,8 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         try:
             from disc_template_locator import locate
             max_jump = float(getattr(config, "DISC_TRACK_MAX_JUMP", 0) or 0)
-            direct = locate(img, meta, roi=roi, prefer=prefer, max_jump=max_jump)
+            direct = locate(img, meta, roi=roi, prefer=prefer, max_jump=max_jump,
+                            template_paths=template_paths)
             if direct is not None:
                 return direct
         except Exception as exc:
@@ -1709,6 +1783,19 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
                 meta["tpl_error"] = "full-template:%s" % exc
     t0 = ticks_ms()
     template_cache = {}
+    geometric_candidates = []
+
+    def _source_family(src):
+        src = str(src)
+        if src.startswith("inner"):
+            return "inner"
+        if src.startswith("black"):
+            return "black"
+        if src.startswith("dashed-radial"):
+            return "dashed-radial"
+        if src.startswith("ring"):
+            return "ring"
+        return "hough"
 
     def _accept(p, src):
         """内容校验：候选圆附近必须能匹配到数字“2”，否则丢弃。
@@ -1728,7 +1815,8 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         cache_key = (float(p[0]), float(p[1]), _lim)
         cached = template_cache.get(cache_key)
         if cached is None:
-            accepted = verify_target2(img, p[0], p[1], meta=m2, max_shift=_lim)
+            accepted = verify_target2(img, p[0], p[1], meta=m2, max_shift=_lim,
+                                      template_paths=template_paths)
             template_cache[cache_key] = (accepted, m2)
         else:
             accepted, m2 = cached
@@ -1746,7 +1834,42 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
             return p
         if meta is not None:
             meta["tpl_reject"] = src
+        geometric_candidates.append((_source_family(src), tuple(p)))
         return None
+
+    def _geometric_consensus():
+        if not bool(getattr(config, "DISC_GEOMETRIC_CONSENSUS_ON", True)):
+            return None
+        if len(geometric_candidates) < 2:
+            return None
+        limit = float(getattr(config, "DISC_GEOMETRIC_CONSENSUS_PX", 12))
+        required = max(2, int(getattr(
+            config, "DISC_GEOMETRIC_CONSENSUS_MIN_SOURCES", 2)))
+        best_group = []
+        for _, base_point in geometric_candidates:
+            group = [
+                (src, point)
+                for src, point in geometric_candidates
+                if math.hypot(point[0] - base_point[0],
+                              point[1] - base_point[1]) <= limit
+            ]
+            if len({src for src, _ in group}) > len(
+                    {src for src, _ in best_group}):
+                best_group = group
+        if len({src for src, _ in best_group}) < required:
+            return None
+        xs = sorted(point[0] for _, point in best_group)
+        ys = sorted(point[1] for _, point in best_group)
+        rs = sorted(point[2] for _, point in best_group)
+        mid = len(best_group) // 2
+        point = (int(round(xs[mid])), int(round(ys[mid])), int(round(rs[mid])))
+        if meta is not None:
+            meta["geometric_consensus"] = {
+                "center": [point[0], point[1], point[2]],
+                "sources": sorted({src for src, _ in best_group}),
+                "spread_px": limit,
+            }
+        return point
 
     # 0) 最优先：最内圈白块（靶心小圆）。只认这一圈，避免在多层环之间跳。
     if bool(getattr(config, "DISC_CENTER_ON", True)):
@@ -1950,6 +2073,98 @@ def find_disc_center(img, roi=None, r_min=config.DISC_R_MIN, r_max=config.DISC_R
         meta["circles"] = [[int(c.x()), int(c.y()), int(c.r()), _circle_mag(c)]
                            for c in sorted(circles, key=lambda c: c.r(), reverse=True)[:12]]
 
+    # Dashed outer rings often score below the regular Hough threshold. Retry
+    # the bounded centre tile with lower accumulators while keeping template
+    # verification, so extra circles cannot become D/E success by themselves.
+    if bool(getattr(config, "DISC_DASHED_HOUGH_ON", True)):
+        dashed_roi = _cap_roi(roi)
+        factors = getattr(config, "DISC_DASHED_HOUGH_SCALES", (0.65, 0.45, 0.30))
+        dashed_step = int(getattr(config, "DISC_DASHED_HOUGH_R_STEP", 2))
+        dashed_batches = []
+        if dashed_roi:
+            for factor in factors:
+                dashed_threshold = max(35, int(float(threshold) * float(factor)))
+                try:
+                    dashed_circles = img.find_circles(
+                        roi=dashed_roi,
+                        threshold=dashed_threshold,
+                        x_stride=2,
+                        y_stride=1,
+                        x_margin=8,
+                        y_margin=8,
+                        r_margin=8,
+                        r_min=r_min,
+                        r_max=r_max,
+                        r_step=max(1, dashed_step),
+                    )
+                except Exception as exc:
+                    if meta is not None:
+                        meta["dashed_hough_error"] = str(exc)[:80]
+                    dashed_circles = []
+                dashed_batches.append({
+                    "factor": float(factor),
+                    "threshold": dashed_threshold,
+                    "count": len(dashed_circles),
+                })
+                p = _accept_hough_batch(dashed_circles)
+                if p is not None:
+                    if meta is not None:
+                        meta["dashed_hough_batches"] = dashed_batches
+                        meta["src"] = "dashed-hough"
+                        meta["ms"] = ticks_ms() - t0
+                    return p
+        if meta is not None and dashed_batches:
+            meta["dashed_hough_batches"] = dashed_batches
+
+    # Last geometric fallback: score interrupted dark circles around a small
+    # centre neighbourhood. This supports dashes with large angular gaps.
+    c = find_dashed_ring_center(
+        img,
+        roi,
+        r_min=r_min,
+        r_max=r_max,
+        prefer=prefer,
+        meta=meta,
+    )
+    if c:
+        cx, cy, r = c
+        if refine:
+            f = refine_disc_center(img, cx, cy, r, meta=meta)
+            if f is not None:
+                p = _accept(f, "dashed-radial-refine")
+                if p is not None:
+                    if meta is not None:
+                        meta["src"] = "dashed-radial-refine"
+                        meta["ms"] = ticks_ms() - t0
+                    return p
+        p = _accept((cx, cy, r), "dashed-radial")
+        if p is not None:
+            if meta is not None:
+                meta["src"] = "dashed-radial"
+                meta["ms"] = ticks_ms() - t0
+            return p
+        detail = meta.get("dashed_radial") if meta is not None else None
+        strong_score = float(getattr(
+            config, "DISC_DASHED_RADIAL_STRONG_SCORE", 0.30))
+        strong_rings = max(3, int(getattr(
+            config, "DISC_DASHED_RADIAL_STRONG_RINGS", 4)))
+        if (bool(getattr(config, "DISC_DASHED_RADIAL_GEOMETRIC_OK", True))
+                and detail is not None
+                and float(detail.get("score", 0)) >= strong_score
+                and len(detail.get("rings", [])) >= strong_rings):
+            if meta is not None:
+                meta["src"] = "dashed-radial-geometric"
+                meta["ms"] = ticks_ms() - t0
+            return cx, cy, r
+
+    consensus = _geometric_consensus()
+    if consensus is not None:
+        if meta is not None:
+            meta["src"] = "geometric-consensus"
+            meta["coarse"] = [int(consensus[0]), int(consensus[1]), int(consensus[2])]
+            meta["ms"] = ticks_ms() - t0
+        return consensus
+
     if ring_fallback:
         c = find_ring_center(
             img, roi,
@@ -2063,6 +2278,131 @@ def _cap_roi(roi, max_w=None, max_h=None):
         return [x + (w - nw) // 2, y + (h - nh) // 2, nw, nh]
     except Exception:
         return roi
+
+
+def _pixel_luma(value):
+    """Normalize a Maix pixel value to grayscale luminance."""
+    if isinstance(value, (tuple, list)):
+        if not value:
+            return 255
+        if len(value) >= 3:
+            return int(round(0.299 * value[0] + 0.587 * value[1] + 0.114 * value[2]))
+        value = value[0]
+    return int(value)
+
+
+def find_dashed_ring_center(img, roi=None, r_min=None, r_max=None,
+                            prefer=None, meta=None):
+    """Locate a target from incomplete, dashed concentric circles.
+
+    The score searches a small center neighbourhood and counts radial dark
+    support. A dash does not need to cover the full circumference. The best
+    candidate must contain several distinct radii, which suppresses isolated
+    marks and the printed digit itself.
+    """
+    if not bool(getattr(config, "DISC_DASHED_RADIAL_ON", True)):
+        return None
+    if not hasattr(img, "get_pixel"):
+        return None
+    roi = _cap_roi(roi if roi is not None else config.ROI_DISC_ROUGH)
+    if not roi or len(roi) != 4:
+        return None
+    try:
+        gray = img.to_format(image.Format.FMT_GRAYSCALE)
+    except Exception:
+        return None
+    rx, ry, rw, rh = [int(v) for v in roi]
+    iw, ih = gray.width(), gray.height()
+    rx = max(0, min(rx, iw - 1))
+    ry = max(0, min(ry, ih - 1))
+    rw = max(1, min(rw, iw - rx))
+    rh = max(1, min(rh, ih - ry))
+
+    span = max(0, int(getattr(config, "DISC_DASHED_RADIAL_CENTER_SPAN", 24)))
+    step = max(2, int(getattr(config, "DISC_DASHED_RADIAL_CENTER_STEP", 6)))
+    rays = max(24, int(getattr(config, "DISC_DASHED_RADIAL_RAYS", 48)))
+    band = max(0, int(getattr(config, "DISC_DASHED_RADIAL_BAND", 1)))
+    dark = int(getattr(config, "DISC_DASHED_RADIAL_DARK", 92))
+    r_step = max(1, int(getattr(config, "DISC_DASHED_RADIAL_R_STEP", 3)))
+    min_support = float(getattr(config, "DISC_DASHED_RADIAL_MIN_SUPPORT", 0.16))
+    min_rings = max(2, int(getattr(config, "DISC_DASHED_RADIAL_MIN_RINGS", 3)))
+    r_lo = max(12, int(r_min if r_min is not None
+                       else getattr(config, "DISC_RING_R_MIN", 20)))
+    r_hi = min(int(r_max if r_max is not None
+                   else getattr(config, "DISC_RING_R_MAX", 140)),
+               max(r_lo, min(rw, rh) // 2 - 2))
+    if r_hi <= r_lo:
+        return None
+    radii = list(range(r_lo, r_hi + 1, r_step))
+    if radii[-1] != r_hi:
+        radii.append(r_hi)
+    angles = [(math.cos(2.0 * math.pi * i / rays),
+               math.sin(2.0 * math.pi * i / rays)) for i in range(rays)]
+
+    if prefer is not None:
+        px, py = float(prefer[0]), float(prefer[1])
+    else:
+        px, py = rx + rw / 2.0, ry + rh / 2.0
+    search = []
+    for oy in range(-span, span + 1, step):
+        for ox in range(-span, span + 1, step):
+            cx = int(round(px + ox))
+            cy = int(round(py + oy))
+            if rx + r_lo <= cx < rx + rw - r_lo and ry + r_lo <= cy < ry + rh - r_lo:
+                search.append((cx, cy))
+    if not search:
+        return None
+
+    best = None
+    best_detail = None
+    for cx, cy in search:
+        supported = []
+        for radius in radii:
+            hits = 0
+            for ux, uy in angles:
+                is_dark = False
+                for dr in range(-band, band + 1):
+                    x = int(round(cx + (radius + dr) * ux))
+                    y = int(round(cy + (radius + dr) * uy))
+                    if not (0 <= x < iw and 0 <= y < ih):
+                        continue
+                    try:
+                        if _pixel_luma(gray.get_pixel(x, y)) < dark:
+                            is_dark = True
+                            break
+                    except Exception:
+                        return None
+                if is_dark:
+                    hits += 1
+            support = hits / float(rays)
+            if support >= min_support:
+                supported.append((support, radius))
+        supported.sort(reverse=True)
+        rings = []
+        for support, radius in supported:
+            if all(abs(radius - used_radius) >= max(3, r_step)
+                   for _, used_radius in rings):
+                rings.append((support, radius))
+            if len(rings) >= max(min_rings, 5):
+                break
+        if len(rings) < min_rings:
+            continue
+        ring_score = sum(item[0] for item in rings[:4]) / float(min(4, len(rings)))
+        center_penalty = math.hypot(cx - px, cy - py) / max(rw, rh)
+        score = ring_score - center_penalty * 0.08
+        if best is None or score > best[0]:
+            best = (score, cx, cy)
+            best_detail = {
+                "score": round(score, 4),
+                "center": [cx, cy],
+                "rings": [[round(s, 3), int(r)] for s, r in rings[:6]],
+            }
+    if best is None:
+        return None
+    radius = sorted(item[1] for item in best_detail["rings"])[len(best_detail["rings"]) // 2]
+    if meta is not None:
+        meta["dashed_radial"] = best_detail
+    return int(best[1]), int(best[2]), int(radius)
 
 
 def find_ring_center(img, roi=None,

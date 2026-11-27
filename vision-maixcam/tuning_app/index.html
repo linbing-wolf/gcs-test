@@ -3,12 +3,21 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#101825;color:#e9eff8;font:16px/1.6 system-ui}main{max-width:1100px;margin:auto;padding:32px}h1{margin-bottom:0}p{color:#b9c8dc}section{background:#1a273a;border:1px solid #30435c;border-radius:16px;padding:24px;margin:20px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}label{display:block;margin:14px 0}input,select,button{font:inherit;border-radius:7px;border:1px solid #526781;padding:8px;background:#111c2b;color:white}input[type=number]{width:100px;float:right}input[type=range]{width:100%;accent-color:#69dfc6}button{cursor:pointer;margin:5px;background:#284764}button.primary{background:#126d60}button:disabled{opacity:.45}canvas{width:100%;background:#101825;border-radius:10px}pre{white-space:pre-wrap;background:#101825;padding:15px;border-radius:8px}output{color:#75ebce;font-weight:bold}#status{white-space:pre-wrap;min-height:30px}small{color:#b9c8dc}@media(max-width:740px){.grid{grid-template-columns:1fr}main{padding:15px}}
 #h-parameters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}#h-parameters label{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:0}#h-parameters input{flex-shrink:0}#h-settings fieldset{border:0;margin:0;padding:0;min-width:0}#h-settings fieldset:disabled{opacity:.65}.h-axis{position:relative;height:20px;background:#111c2b;border:1px solid #526781;border-radius:4px;margin:12px 0 2px}.h-axis span{position:absolute;top:0;bottom:0}.h-band{background:#126d60}.h-target{width:2px;background:#75ebce}.h-axis-labels{display:flex;justify-content:space-between}#h-status{white-space:pre-wrap;min-height:30px}@media(max-width:740px){#h-parameters{grid-template-columns:1fr}}
+.runtime-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.runtime-card{background:#111c2b;border:1px solid #30435c;border-radius:10px;padding:14px}.runtime-card small{display:block}.runtime-card output{display:block;margin-top:4px}@media(max-width:740px){.runtime-grid{grid-template-columns:1fr}}
 #log-question{display:block;width:100%;min-height:5em;resize:vertical;margin-top:6px;font:inherit;color:inherit;background:#111c2b;border:1px solid #526781;border-radius:7px;padding:8px}#log-result pre{overflow-wrap:anywhere;max-height:28rem;overflow:auto}#log-status{min-height:30px}
 </style><main>
-<h1>MaixCAM 落点调节台</h1><p>以像素调节目标，用画面坐标理解偏移。四工位统一临时调参。D / E / F 需先部署本次视觉端扩展；原版 v3.9.87 仅 H 生效。</p>
+<h1>MaixCAM 临时调参台</h1><p>以像素调节落点，并单独维护当前 H 物料模式的持久化参数。所有写操作都需要先读取目标设备。</p>
+<section><h2>当前程序基线</h2><div class="runtime-grid">
+  <div class="runtime-card"><small>图像坐标口径</small><output id="runtime-resolution">读取中…</output></div>
+  <div class="runtime-card"><small>H 停稳 ROI</small><output id="runtime-h-roi">读取中…</output></div>
+  <div class="runtime-card"><small>H 输出格式</small><output id="runtime-h-format">读取中…</output></div>
+  <div class="runtime-card"><small>H 方向兜底</small><output id="runtime-h-fallback">读取中…</output></div>
+  <div class="runtime-card"><small>D/E 指令策略</small><output id="runtime-disc-policy">读取中…</output></div>
+  <div class="runtime-card"><small>J 停稳确认</small><output id="runtime-j-policy">读取中…</output></div>
+</div><small>此区显示本地仓库 config.py 的当前基线，只读。板端持久化覆盖仍以“读取设备”结果为准。</small></section>
 <section><label>工位 <select id="station"><option>H</option><option>D</option><option>E</option><option>F</option></select></label><div class="grid"><div><div id="controls"></div><button id="defaults">恢复本地默认值</button><p>有效目标 <output id="effective"></output></p><small id="hint"></small></div><div><canvas width="640" height="480" id="preview"></canvas><small>虚线：画面中心 · 青色：有效目标 · 灰圈：基础目标<br>此图是坐标示意，不是相机实时图像。</small></div></div></section>
 <section><h2>配置预览</h2><pre id="config"></pre><button id="download">下载配置文本</button><p id="scope"></p></section>
-<section><h2>设备临时配置 · SSH</h2><p><strong>D / E / F 需先部署支持十键覆盖的新视觉代码。旧版只读取 H 四键。应用会写入四工位当前预览值，先读取设备值可保留已有调整。</strong></p><p>留空密码使用系统 ssh 密钥；填写密码使用已有 paramiko。首次请在终端确认主机指纹。密码仅保留在当前页面内存，不写文件或日志，不会启动识别或移动。</p><label>设备地址 <input id="host" value="192.168.3.51" style="float:none;width:240px"></label><label>设备密码（可选） <input id="password" type="password" autocomplete="off" style="float:none;width:240px" placeholder="留空使用 SSH 密钥"></label><button class="remote" id="read">读取当前临时值</button><button class="remote primary" id="apply">应用全部工位临时配置</button><button class="remote" id="reset">清除临时配置（恢复设备默认）</button><div id="status" role="status">仅预览，尚未读取设备。</div><small>应用后最迟约 500 ms 被后续任务读取；正在执行的任务不会重新计算已读取的参数。/tmp 配置重启后消失。</small></section>
+<section><h2>设备临时配置 · SSH</h2><p><strong>应用会写入 H/D/E/F 的十键临时偏移。先读取设备值可保留已有调整。</strong></p><p>留空密码使用系统 ssh 密钥；填写密码使用已有 paramiko。首次请在终端确认主机指纹。密码仅保留在当前页面内存，不写文件或日志，不会启动识别或移动。</p><label>设备地址 <input id="host" value="192.168.3.51" style="float:none;width:240px"></label><label>设备密码（可选） <input id="password" type="password" autocomplete="off" style="float:none;width:240px" placeholder="留空使用 SSH 密钥"></label><button class="remote" id="read">读取当前临时值</button><button class="remote primary" id="apply">应用全部工位临时配置</button><button class="remote" id="reset">清除临时配置（恢复设备默认）</button><div id="status" role="status">仅预览，尚未读取设备。</div><small>应用后最迟约 500 ms 被后续任务读取；正在执行的任务不会重新计算已读取的参数。/tmp 配置重启后消失。</small></section>
 <section id="h-settings" aria-labelledby="h-title">
   <h2 id="h-title">H 物料模式</h2>
   <p>使用上方的 SSH 地址和凭据。收到下一条 H 命令时，视觉端才读取本组配置。</p>
@@ -19,7 +28,7 @@
         <label><input id="h-invert" type="checkbox"> 反转距离修正方向</label>
         <div id="h-parameters"></div>
         <button id="h-forward-preset" type="button">试调累计前移约 5 cm（目标 Y=318）</button>
-        <small>以 Y=240 为基准增加 78 px，增益 0.65 时 Y 指令约减少 51。距离与方向需现场确认，点击后保存到设备。</small>
+      <small>这是目标预览，不会立即保存；确认后点击下方“保存 H 配置并回读”。</small>
       </fieldset>
       <button id="h-defaults" type="button" disabled>恢复本地默认值</button>
     </form>
@@ -35,7 +44,7 @@
   <button type="button" id="h-read">读取设备 H 配置</button>
   <button type="button" id="h-apply" class="primary" disabled>保存 H 配置并回读</button>
   <div id="h-status" role="status">正在读取本地默认值…</div>
-  <small>先读取当前设备，再保存。H 配置重启后保留，下一条 H 生效。新 H 无任务总超时。</small>
+  <small>先读取当前设备，再保存。H 配置重启后保留，下一条 H 生效。新 H 无任务总超时，输出与方向开关以只读基线区为准。</small>
 </section>
 <section aria-labelledby="log-title">
   <h2 id="log-title">OpenCode 日志调查</h2>
@@ -62,7 +71,6 @@
 </main><script>
 const $=id=>document.getElementById(id);let base={},state={},busy=false;
 const fields=['targetX','targetY','offsetX','offsetY'],labels=['基础目标 X','基础目标 Y','dx 偏移','dy 偏移'];
-const initial={D:[320,240,7,40],E:[320,240,7,40],F:[320,240,5,45]};
 const mapping={H:['PLATE_TARGET_X','PLATE_TARGET_Y','PLATE_DX_OFFSET','PLATE_DY_OFFSET'],D:['ALIGN_DX_OFFSET_D','ALIGN_DY_OFFSET_D'],E:['ALIGN_DX_OFFSET_E','ALIGN_DY_OFFSET_E'],F:['STACK_ALIGN_DX_OFFSET','STACK_ALIGN_DY_OFFSET']};
 function vals(){return fields.map(k=>state[$('station').value][k])}
 function payload(){let out={};for(let [s,keys] of Object.entries(mapping)){let a=fields.map(k=>state[s][k]);keys.forEach((k,i)=>out[k]=a[s==='H'?i:i+2])}return out}
@@ -73,6 +81,21 @@ function update(){let s=$('station').value,a=vals(),x=a[0]-a[2],y=a[1]-a[3];$('e
 async function remote(action){busy=true;update();$('status').textContent='正在执行，请稍候…';try{let r=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:$('host').value,password:$('password').value,values:payload()})}),data=await r.json();if(!r.ok)throw Error(data.error);if(data.values){loadValues(data.values);render()}$('status').textContent=action==='read'?(data.temporary?'已读取设备临时覆盖值（未触发识别）。':'设备无临时覆盖，显示仓库默认值；设备自身 config 可能与仓库不同。'):action==='apply'?'四工位预览值已写入临时配置；请现场验证。旧版 v3.9.87 只支持 H。':'临时覆盖已清除。设备将使用自身 config；界面显示仓库默认值。'}catch(e){$('status').textContent='操作失败：'+e.message}finally{busy=false;update()}}
 $('host').oninput=()=>{$('status').textContent='设备地址已修改，尚未读取或应用。'};$('password').oninput=()=>{$('status').textContent='连接凭据已修改，尚未读取或应用。'};$('station').onchange=render;$('defaults').onclick=()=>{let s=$('station').value;state[s]={...base[s]};$('status').textContent='预览已修改，尚未应用。';render()};['read','apply','reset'].forEach(k=>$(k).onclick=()=>remote(k));$('download').onclick=()=>{let url=URL.createObjectURL(new Blob([text()],{type:'text/plain;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='plate_bias';a.click();URL.revokeObjectURL(url)};
 fetch('/api/defaults').then(r=>{if(!r.ok)throw Error('无法读取默认配置');return r.json()}).then(d=>{loadValues(d);for(let s of Object.keys(mapping))base[s]={...state[s]};render()}).catch(e=>$('status').textContent=e.message);
+fetch('/api/runtime').then(r=>{if(!r.ok)throw Error('无法读取运行基线');return r.json()}).then(d=>{
+  $('runtime-resolution').textContent=`${d.resolution[0]} × ${d.resolution[1]}`;
+  const roi=d.h_material_roi;
+  $('runtime-h-roi').textContent=`[${roi.join(', ')}] · X ${roi[0]}..${roi[0]+roi[2]} / Y ${roi[1]}..${roi[1]+roi[3]}`;
+  $('runtime-h-format').textContent=d.h_direction.enabled
+    ?`${d.h_direction.format} · 方向 0/1 · ${d.h_material.single_stop_mode?'单件停稳即回包':'等待双色'}${d.h_material.extended_packet?' · 新 HDISC2':' · HDISC2 待启用'}`
+    :`${d.h_direction.format} · 输出开关关闭`;
+  $('runtime-h-fallback').textContent=d.h_direction.fallback===0?'顺时针 0':'逆时针 1';
+  const cap=d.disc.terminal_capture;
+  const capText=cap.enabled?` · 迟拍 ${(cap.delays_ms||[cap.delay_ms]).join('/')}ms`:' · 迟拍关闭';
+  $('runtime-disc-policy').textContent=(d.disc.return_after_move&&d.disc.one_shot
+    ?`一轮 MOVEXY 后立即回包 · X ${d.disc.move_scale} / Y ${d.disc.movey_scale}`
+    :`连续纠偏 · X ${d.disc.move_scale} / Y ${d.disc.movey_scale}`)+capText;
+  $('runtime-j-policy').textContent=`容差 ${d.j.tolerance_px}px · 保持 ${d.j.hold_ms}ms · 终包确认 ${d.j.confirm_ms}ms`;
+}).catch(e=>{for(const id of ['runtime-resolution','runtime-h-roi','runtime-h-format','runtime-h-fallback','runtime-disc-policy','runtime-j-policy'])$(id).textContent='读取失败';});
 
 const hFields = [
   ['target_y', '目标物料中心 Y（px，可超出画面）', 0, 959, 'any'],

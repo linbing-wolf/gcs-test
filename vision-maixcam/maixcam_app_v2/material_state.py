@@ -29,3 +29,18 @@ class MotionWindow:
         ys = [sample[2] for sample in self.samples]
         span = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
         return 1 if span <= self.tolerance else 0
+
+    def seed_stable(self, now, x, y, step_ms=50):
+        """用上一任务刚确认的稳定位置预热窗口。
+
+        首帧若已经移位，最新样本会立即把跨窗口位移拉大并判为运动。
+        """
+        if self.hold_ms <= 0:
+            return
+        step = max(1, min(int(step_ms), self.max_gap_ms))
+        first = now - self.hold_ms
+        self.samples = []
+        t = first
+        while t < now:
+            self.samples.append((t, x, y))
+            t += step

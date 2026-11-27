@@ -14,7 +14,7 @@ import server
 class CalibrationTests(unittest.TestCase):
     def test_current_defaults_and_round_trip(self):
         values = server.validate(server.defaults())
-        self.assertEqual(values['ALIGN_DY_OFFSET_E'], 40)
+        self.assertEqual(values['ALIGN_DY_OFFSET_E'], -22)
         self.assertEqual(values['PLATE_TARGET_X'] - values['PLATE_DX_OFFSET'], 314)
         self.assertEqual(len(server.serialize(values).splitlines()), 10)
 
@@ -25,6 +25,26 @@ class CalibrationTests(unittest.TestCase):
                 values['ALIGN_DX_OFFSET_D'] = value
                 with self.assertRaises(ValueError):
                     server.validate(values)
+
+    def test_runtime_summary_matches_current_baseline(self):
+        runtime = server.runtime_summary()
+        self.assertEqual(runtime['resolution'], [640, 480])
+        self.assertEqual(runtime['h_material_roi'], [140, 160, 360, 320])
+        self.assertTrue(runtime['h_direction']['enabled'])
+        self.assertEqual(runtime['h_direction']['fallback'], 1)
+        self.assertTrue(runtime['h_material']['single_stop_mode'])
+        self.assertTrue(runtime['h_material']['extended_packet'])
+        self.assertEqual(runtime['h_material']['target_y'], 318)
+        self.assertEqual(runtime['h_material']['center_frames'], 2)
+        self.assertTrue(runtime['disc']['one_shot'])
+        self.assertTrue(runtime['disc']['return_after_move'])
+        self.assertEqual(runtime['disc']['move_scale'], 1.0)
+        self.assertEqual(runtime['disc']['movey_scale'], 1.0)
+        self.assertTrue(runtime['disc']['terminal_capture']['enabled'])
+        self.assertEqual(runtime['disc']['terminal_capture']['delay_ms'], 600)
+        self.assertEqual(
+            runtime['disc']['terminal_capture']['delays_ms'], [6000, 10000])
+        self.assertEqual(runtime['j']['confirm_ms'], 60)
 
     def test_ssh_host_injection_rejected_without_process(self):
         with patch('server.subprocess.run') as run:
@@ -57,6 +77,11 @@ class HCalibrationTests(unittest.TestCase):
         handler.path = '/api/h/defaults'
         handler.do_GET()
         handler.reply.assert_called_once_with(200, profile)
+
+        handler.path = '/api/runtime'
+        handler.reply.reset_mock()
+        handler.do_GET()
+        handler.reply.assert_called_once_with(200, server.runtime_summary())
 
         for route, endpoint in (('read', 'read_h'), ('apply', 'apply_h')):
             with self.subTest(route=route):

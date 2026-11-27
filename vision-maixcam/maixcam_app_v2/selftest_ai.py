@@ -167,6 +167,9 @@ def main():
     calls_after_first = ai.calls
     check("AI 只判了 1 次（命中即返回）", calls_after_first == 1, "calls=%d" % calls_after_first)
     check("按旧阈值色(黄)已找不到", clf2.find_color(img2, vision.COLOR_YELLOW) is None)
+    it_cached = clf2.find_color(img2, vision.COLOR_RED)
+    check("短时同位置复用 AI 结果", ai.calls == 1 and it_cached and it_cached.get("ai_cached"),
+          "calls=%d" % ai.calls)
 
     # ------------------------------------------------------------------
     print("[3] AI 退化时自动回退阈值")
